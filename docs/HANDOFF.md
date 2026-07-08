@@ -181,8 +181,32 @@ PLACED in a CDM viewer are trackable** (registry ≠ placed).
   on its right (`Media/unhidden.png` = shown, `Media/hidden.png` = disabled) that toggles
   `cfg.enabled`. Disabling greys the row + hides the aura (via `CDM:Discover`, which excludes
   disabled auras from the watch set and hides their frames even while the panel forces others shown).
+- ✅ **QA'd 2026-07-07 — Aura rename** — the aura-name title at the top of the editor is a click-to-edit
+  EditBox (faint fill + "click to rename" hint); Enter renames `cfg.label` (list name), independent of
+  the tracked spell + the on-screen text. Left-pane list rows use `SetWordWrap(false)` so long names
+  truncate on one line instead of wrapping.
+- ✅ **QA'd 2026-07-07 — On-screen Text overlay** (the label under each aura, fully configurable) —
+  `cfg.text = { show, str, font, size, outline, anchor, x, y, color }`. Opened via **Text…** on the
+  editor's "Sound & Text" row → a docked **Text drawer**: Show OFF/ON, content box (blank = the aura's
+  name — a SEPARATE field from the list name, the owner's choice), **Font** (a picker previewing bundled
+  GeneralSans/Khand + LSM fonts in their own typeface), Size, **Outline** (None/Outline/Thick), Color
+  (Tint), **Anchor** (Below/Above/On aura/Left/Right via `Displays.LABEL_ANCHOR`), X/Y offset. The
+  on-screen label in `Displays:ApplyConfig` is now fully data-driven (bundled font + outline, NOT the
+  old `GameFontNormal`); no `cfg.text` ⇒ legacy `showLabel` + name (backward-compatible). Drawer follows
+  the panel selection (`C.RefreshTextEditor`, self-guards to when open so it doesn't seed `text` on every
+  select). This closes the deferred "Text overlays + LSM font picker" item.
 
 ## Hard-won LEARNINGS (verified — do NOT rediscover)
+- **`FontString:SetShadowColor` / `SetShadowOffset` render NOTHING in this client** — a drop shadow via
+  the shadow API is invisible at any offset. We dropped the shadow option (outline flags are the text
+  styling). If a shadow is ever truly needed, draw it manually (a black text copy offset behind), but
+  even a behind-sublevel copy layered awkwardly — not worth it; outline suffices.
+- **Lua 5.1 caps a function at 60 UPVALUES (`local`s captured from enclosing scope).** `Config.lua`'s
+  giant `Build()` hit exactly 60 after Phase 1; one more (a `DEFAULT_FONT` ref) → `function ... has
+  more than 60 upvalues` at LOAD time and the panel wouldn't open. **The local `luac` is 5.5 (limit
+  255) so it does NOT catch this** — after adding module-level helpers that `Build` references, count
+  by hand (a function's upvalues = every module-scope `local` it or its nested closures reference).
+  Fix pattern: extract chunks of `Build` into their own module-level functions (`BuildGroupSection`,
 - **Lua 5.1 caps a function at 60 UPVALUES (`local`s captured from enclosing scope).** `Config.lua`'s
   giant `Build()` hit exactly 60 after Phase 1; one more (a `DEFAULT_FONT` ref) → `function ... has
   more than 60 upvalues` at LOAD time and the panel wouldn't open. **The local `luac` is 5.5 (limit
@@ -295,7 +319,10 @@ PLACED in a CDM viewer are trackable** (registry ≠ placed).
   visibility = { combat="in"|"out"|nil, target="has"|"none"|nil, casting/mounted/vehicle/
     instance/encounter/resting/stealthed/group/raid/warmode/alive = true/nil,
     specs = { [specID]=true } or nil, spellKnown = spellID or nil },
-  group = <groupID> or nil }   -- Phase 1: which group this aura belongs to (nil = Ungrouped)
+  group = <groupID> or nil,   -- which group this aura belongs to (nil = Ungrouped)
+  text = { show=bool, str="custom text"|nil(=aura name), font=path|nil, size=N|nil,
+    outline="NONE"|"OUTLINE"|"THICKOUTLINE"|nil, anchor="BOTTOM"|"TOP"|"CENTER"|"LEFT"|"RIGHT"|nil,
+    x=N|nil, y=N|nil, color={r,g,b}|nil } }   -- on-screen label; nil ⇒ legacy showLabel+name
 ```
 `GloomsAurasDB.groups[<groupID>] = { id, name, order, enabled (false=off), collapsed (bool),
 visibility = <same shape as an aura's visibility> or nil }` and `GloomsAurasDB.groupSeq` (the "gN"
@@ -346,7 +373,7 @@ The owner approved every recommendation, so all design decisions are RESOLVED (s
 - **Deferred texture transforms** — Mirror, Rotation, Texture Wrap (SetRotation interacts with SetTexCoord).
 - **Visibility Phase 2** — rarer load conditions (Race/Faction/Level, Zone/Instance/difficulty, M+ affix,
   Equipment, Spec Role, PvP talent). Dropped Skyriding (no reliable "am I skyriding now" API).
-- **Text overlays** (manual text e.g. keybind) + LSM **font** picker.
+- ~~Text overlays + LSM font picker~~ ✅ DONE 2026-07-07 (see BUILT list — on-screen Text overlay).
 - **Export/import** strings for sharing (later; naturally follows Profiles).
 
 ## Current in-game context
@@ -361,8 +388,10 @@ The owner approved every recommendation, so all design decisions are RESOLVED (s
   engine, skinned name dialog) AND **Phase 2** (grouped/collapsible left pane with custom triangle +
   settings-gear icons, gear→Manage Group drawer for rename/rule/on-off/reorder/delete, group settings
   moved out of the aura editor) PLUS a **per-aura eye toggle** (`hidden/unhidden.png`). Hit + fixed the
-  **Lua 5.1 60-upvalue limit** on `Build()` (extracted sub-functions). All QA'd, no open bugs. **Next:
-  Phase 3 — Profiles.**
+  **Lua 5.1 60-upvalue limit** on `Build()` (extracted sub-functions). THEN added **aura rename**
+  (click-to-edit title + list truncation) and the full **on-screen Text overlay** (Text drawer + font
+  picker; dropped shadow — `SetShadow*` renders nothing here). All QA'd, no open bugs. `Build()` at ~57
+  upvalues (watch the 60 cap). **Next: Phase 3 — Profiles.**
 - **Session end 2026-07-07 (second session):** shipped the **Hide-Blizzard-CDM toggle**, **aspect-ratio
   lock** (custom lock PNGs), **custom flat sliders**, **Duplicate Aura** (multi-per-spell via display-id
   re-key), **drag-selected-only**, **font preload** (first-login blank-label fix), a **UI-cleanup batch**
