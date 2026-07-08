@@ -84,7 +84,7 @@ PLACED in a CDM viewer are trackable** (registry ≠ placed).
   frames **un-clamped** so auras can sit partially/fully off-screen. X/Y offset **slider** range is
   **±2000** (narrowed from ±4000 on 2026-07-07 — ±4000 made the slider too coarse; drag-to-move and
   `/ga pos` stay un-clamped for bigger moves).
-- ⏳ **BUILT 2026-07-07, awaiting QA** — **Custom flat sliders** (dropped `OptionsSliderTemplate` for a
+- ✅ **QA'd 2026-07-07** — **Custom flat sliders** (dropped `OptionsSliderTemplate` for a
   plain Slider: dark track = input-field fill, no border, bright-purple vertical marker thumb) +
   **aspect-ratio lock** on Width/Height (thin 1px purple bracket in the right margin joining the two
   boxes; when engaged, scaling one scales the other by `cfg.aspect`, the w/h ratio captured at lock
@@ -92,10 +92,10 @@ PLACED in a CDM viewer are trackable** (registry ≠ placed).
   (colors baked in → shown **untinted**, `SetVertexColor(1,1,1,1)`; state = which texture, not tint).
   **Texture facts (verified this client):** PNG loads fine AND non-power-of-two is fine — `Media/
   bg_flame.png` is 5000×4107 and renders. SVG unsupported.
-- ⏳ **Panel tweaks 2026-07-07, awaiting QA** — **Remove** button moved from the editor pane to the
+- ✅ **Panel tweaks (QA'd 2026-07-07)** — **Remove** button moved from the editor pane to the
   LEFT pane; all button labels to **Title Case**. Left pane now stacks **Add / Duplicate / Remove**
   (`LIST_ROWS` → 17).
-- ⏳ **Duplicate Aura 2026-07-07, awaiting QA (REGRESSION-SENSITIVE)** — "Duplicate Aura" button makes
+- ✅ **Duplicate Aura (QA'd 2026-07-07, REGRESSION-SENSITIVE)** — "Duplicate Aura" button makes
   an exact copy of the selected aura, INCLUDING on the same spell. Required re-keying `db.displays`
   from spellID → display id (see data-model note above); done backward-compatibly (originals keep
   their spellID key + `cfg.spellID`, so existing auras behave identically). Copy is deep-copied
@@ -106,6 +106,16 @@ PLACED in a CDM viewer are trackable** (registry ≠ placed).
     list is mouse-draggable on screen (others are visible but click-through) — so overlapping
     duplicates don't fight for the cursor. `D.selectedID` + `D:ApplyInteractivity`; Config sets it in
     `SetSelected` and clears it on panel close (nil ⇒ `/ga preview` back-door still drags all).
+- ✅ **QA'd 2026-07-07 — Docked side-panel (drawer)** — the Trigger/Visibility/Sound/Texture editors
+  attach flush to the main panel's RIGHT edge (parented to it → follows on drag, closes with it),
+  flipping LEFT if they'd run off-screen. One at a time (`CloseSubWindows`/`DockRight`). Drag disabled
+  when docked (`SetMovable(false)` + `if f:IsMovable()` guards on each titlebar). The aura picker stays
+  floating (it can overlay the Trigger editor when adding a condition).
+- ✅ **QA'd 2026-07-07 — UI cleanup batch** — borderless text inputs (focus brightens the fill);
+  lighter button font (GeneralSans-Medium); **Blend + Strata are dropdown menus** (`MakeDropdown`),
+  Blend trimmed to Blend/Add(glow)/Modulate; "Choose…" inline with the path field (no preview swatch);
+  Game-Icons texture search is a **"Spell ID"** lookup (icons are nameless fileIDs); Title Case labels;
+  X/Y offset slider ±2000; Trigger editor footer width-capped so it stops overrunning the frame.
 - ✅ **QA'd** Per-display sound picker (2026-07-07) — "Sound" button → picker window (LibSharedMedia
   sounds + None, click-to-preview, draggable scrollbar) + a Test button. `cfg.sound = {file,name,
   channel}`; fires on hidden→shown via `CDM:PlaySound` (throttled). NOTE: **no per-sound volume** —
@@ -118,7 +128,7 @@ PLACED in a CDM viewer are trackable** (registry ≠ placed).
   encounter, resting, stealthed, group, raid, warmode, alive), **Specialization** multi-select,
   **Spell/Talent known**. Engine = `CDM:VisibilityGate` + a 0.2s poll (`UpdateVisibilityPoll`) that
   runs only while some display uses visibility. All plain game APIs (no secret data). See learnings.
-- 🟡 **Hide Blizzard's Cooldown Manager** (global toggle): checkbox in the panel's bottom strip +
+- ✅ **QA'd — Hide Blizzard's Cooldown Manager** (global toggle): checkbox in the panel's bottom strip +
   `/ga hidecdm`. Drives the four viewers' **alpha** only (0 = hidden), NEVER `Hide()` — because
   `CooldownViewerMixin:OnHide()` unregisters UNIT_AURA/SPELL_UPDATE_COOLDOWN (client source), so a real
   hide would silently break our mirror. `IsShown()` stays true → tracking keeps running. Suspended while
@@ -135,10 +145,27 @@ PLACED in a CDM viewer are trackable** (registry ≠ placed).
     `editModeActive` on its FIRST line, THEN tears down the sample data, so those teardown transitions
     saw `EditModeActive()==false` and slipped a stray show/sound through. Fix: a `CDM._emSettling`
     window (set on `EditMode.Exit`, cleared after 0.4s) extends the freeze past exit, then a silent
-    `Discover` re-syncs. ⏳ verify no sound on EM enter OR exit.
-  - ⏳ **Still to QA**: the panel checkbox reflects/toggles state; persistence across `/reload`.
+    `Discover` re-syncs. ✅ QA'd — no sound on EM enter OR exit.
+  - ✅ **QA'd**: the panel checkbox reflects/toggles state; persists across `/reload`.
 
 ## Hard-won LEARNINGS (verified — do NOT rediscover)
+- **1-charge spells are NORMAL cooldowns, not the "unreadable charge" wall (fixed 2026-07-07):**
+  `cooldownInfo.charges` just means "uses the charge system". What matters is **maxCharges**:
+  **1 ⇒ track like any cooldown** (Kill Shot, most executes); **≥2 ⇒ genuinely unreadable in combat**
+  (Aimed Shot). We were bucketing *any* charge flag as unreadable, so a 1-charge cd's availability
+  stayed `nil` forever and never wired into the cooldown-widget hook path → `cd_ready` was stuck.
+  Fix: read `GetSpellCharges().maxCharges` (readable OOC), cache it in `CDM.maxCharges` (persists
+  across Discover), classify `isCharge = maxCharges>=2`. **This also transparently handles spell
+  OVERRIDES** (Black Arrow replacing Kill Shot via a hero talent): the CDM item's cooldown widget
+  reflects the override, and we match the item by base spellID (`InfoMatchesSpell` checks
+  spellID/override/linked), so tracking Kill Shot mirrors Black Arrow with no override-specific code.
+- **`item.isOnActualCooldown` is SECRET in combat when off-GCD (verified via /ga trace 2026-07-07):**
+  it's `not isOnGCD and cooldownIsActive`; on the GCD it short-circuits to a plain `false`, but OFF
+  the GCD it evaluates `cooldownIsActive` (a secret in combat) → returns SECRET *exactly when the real
+  cooldown matters*. So it is NOT a combat availability source (unlike `item:IsActive()` for buffs).
+  `CDM:SyncCooldowns` uses it only as an OUT-OF-COMBAT accuracy pass; **in-combat availability comes
+  from the `CooldownFrame_Set/Clear` widget hooks.** TRADE-OFF still stands: right after casting the
+  tracked cd spell, during its ~1.5s GCD the hook skips (isOnGCD) so it briefly reads "available".
 - **Blank labels on the FIRST login of a session (2026-07-07):** WoW sometimes hasn't finished
   loading a bundled runtime TTF when the panel is built on an early `/ga`, so *some* labels render
   BLANK (button backgrounds fine, glyphs missing) until a `/reload` caches the font. `setFont`'s
@@ -239,32 +266,46 @@ passes AND its **Visibility** gate passes (no visibility set ⇒ always eligible
   `StoneTweaksDB.graphics` = array of `{name,file}`, path `Interface\AddOns\StoneTweaks\Graphics\<file>`.
   We read that table live at picker-open (reading another addon's SavedVariables global is fine).
 
-## NEXT / pending (the owner: "build order doesn't matter, whatever makes sense")
-1. ✅ DONE (2026-07-07) — Full QA sweep of the Trigger system (all 4 leaf types + AND/OR).
-2. ✅ DONE (2026-07-07) — Texture picker + render options (tint/desaturate/blend/strata) + shapes.
-3. ✅ DONE (2026-07-07) — Sound picker, Minimap button, Visibility system.
-4. **Deferred texture transforms** — Mirror, Rotation, Texture Wrap (skipped; SetRotation interacts
-   with SetTexCoord so test carefully). Rotation is useful for orienting shapes/beams.
-5. **Visibility Phase 2** (if wanted) — the rarer WeakAuras load conditions: Player Race/Faction/
-   Level, Zone/Instance-type/difficulty, Mythic+ affix, Equipment, Spec Role, PvP talent. All plain
-   APIs; just longer UI. (Dropped **Skyriding** — no reliable "am I skyriding now" API; only
-   `IsAdvancedFlyableArea` which is about the zone.)
-6. **Text overlays** (manual text e.g. keybind) + LSM **font** picker (would also surface the owner's
-   StoneTweaks fonts, already in LSM as "font").
-7. ⏳ **BUILT 2026-07-07, awaiting QA** — toggle to hide the Blizzard CDM viewers (alpha-0, NOT Hide();
-   suspends during Edit Mode; re-asserts after Blizzard's Opacity setting). See BUILT list above.
-8. Export/import strings for sharing (later).
+## NEXT / pending
+
+### ▶▶ START HERE NEXT SESSION: Groups + Profiles (APPROVED, design done)
+**Read [docs/GROUPS-PROFILES-DESIGN.md](GROUPS-PROFILES-DESIGN.md) first — it is the spec.**
+The owner approved every recommendation, so all design decisions are RESOLVED (see §6 there). Build in
+phases, each its own QA gate + restore-point commit:
+- **Phase 1 — Groups data + engine** (start here): `profile.groups`, `cfg.group`, `CDM:GroupGate`
+  (group visibility ANDs in front of aura trigger+visibility — reuses `VisibilityGate`), poll hook.
+  Aura "Group" dropdown + a minimal "+ New Group". Group on/off toggle. QA: a "Marksmanship" group
+  whose load rule = spec, gating the whole set.
+- **Phase 2 — Grouped left pane** (headers/collapse/nesting/Ungrouped, rename/delete→auras-to-Ungrouped/
+  up-down reorder, group load-rule button).
+- **Phase 3 — Profiles** (schema-2 migration, `GA.global`/`GA.db`=active-profile split, switcher UI:
+  switch/new/copy/rename/delete; per-character default `"Name - Realm"`). Key trick: `GA.db` repoints to
+  the active profile so most existing `GA.db.displays` code is untouched; only `panelPos`+`minimap` move
+  to `GA.global`. `hideBlizzardCDM` stays in the profile.
+
+### Other pending / deferred
+- **Override display polish (optional, offered, the owner didn't decide):** show a spell's **override** name+
+  icon in the picker/list when `info.overrideSpellID ~= spellID` (e.g. "Black Arrow" not "Kill Shot"),
+  storing the **base** spellID for stable matching. Cosmetic — tracking already follows overrides.
+- **Deferred texture transforms** — Mirror, Rotation, Texture Wrap (SetRotation interacts with SetTexCoord).
+- **Visibility Phase 2** — rarer load conditions (Race/Faction/Level, Zone/Instance/difficulty, M+ affix,
+  Equipment, Spec Role, PvP talent). Dropped Skyriding (no reliable "am I skyriding now" API).
+- **Text overlays** (manual text e.g. keybind) + LSM **font** picker.
+- **Export/import** strings for sharing (later; naturally follows Profiles).
 
 ## Current in-game context
-- The owner plays **Marksmanship Hunter**. Relevant IDs: Trick Shots buff **257621**, Rapid Fire
-  **257044** (non-charge cd, works), Aimed Shot **19434** (2 charges — availability walled),
-  Lock and Load **194595** (a buff). His SavedVariables currently has displays for Trick Shots,
-  Rapid Fire, and Aimed Shot (the Aimed Shot one has a compound trigger that can't work due to
-  charges — fine to reconfigure), plus texture/visibility experiments from this session.
-- **Session end 2026-07-07:** shipped the texture picker + 254 bundled shapes, display render
-  options, per-display sound picker, minimap button, and the Visibility system — all QA'd. Repo is
-  now under **git** (first commit this session). No open bugs. Next feature is the owner's pick from the
-  pending list (deferred texture transforms / Visibility Phase 2 / text overlays are the front-runners).
+- The owner plays **Marksmanship Hunter** (**Dark Ranger** hero talents). Relevant IDs: Trick Shots buff
+  **257621**, Rapid Fire **257044** (non-charge cd, works), Aimed Shot **19434** (2 charges — availability
+  walled), Precise Shots **260240** (buff), **Kill Shot 53351 → override Black Arrow 466930** (Black Arrow
+  replaces Kill Shot; a **1-charge** cd — see the charge learning above; his working aura = "Precise Shots
+  active AND Kill Shot cd_ready"). His SavedVariables has displays incl. Trick Shots, Rapid Fire, Kill Shot,
+  Aimed Shot, plus experiments.
+- **Session end 2026-07-07 (second session):** shipped the **Hide-Blizzard-CDM toggle**, **aspect-ratio
+  lock** (custom lock PNGs), **custom flat sliders**, **Duplicate Aura** (multi-per-spell via display-id
+  re-key), **drag-selected-only**, **font preload** (first-login blank-label fix), a **UI-cleanup batch**
+  (borderless inputs, lighter button font, Blend/Strata **dropdowns**, inline Choose, Spell-ID icon search,
+  Title Case), the **docked side-panel drawer** for the editors, and fixed the **Black Arrow / 1-charge
+  cooldown** tracking bug. All QA'd, committed, pushed. **No open bugs.** Next: Groups + Profiles Phase 1.
 
 ## Git / packaging
 Now a **git repo** (initialized 2026-07-07). Mirrors GloomsBuildBarn's setup:
