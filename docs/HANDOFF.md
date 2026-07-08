@@ -51,8 +51,10 @@ PLACED in a CDM viewer are trackable** (registry ≠ placed).
   trigger editor.
 - `Media/TextureManifest.lua` — auto-generated `GA.TextureShapes` (254 aura shapes). Regenerate via
   `scratchpad/gen_manifest.py` if the bundled art changes.
-- `Media/` — bundled Khand/GeneralSans fonts, `bg_flame.png`, `Textures/` (107 shape files) +
-  `PowerAurasMedia/Auras/` (145 curls) — copied from ThisWeeksAuras.
+- `Media/` — bundled Khand/GeneralSans fonts, `bg_flame.png`, `minimap.png`, the owner's custom UI icons
+  (`lock_locked/unlocked.png`, `triangle.png` = collapse caret, `settings.png` = group gear,
+  `hidden/unhidden.png` = per-aura eye), `Textures/` (107 shape files) + `PowerAurasMedia/Auras/`
+  (145 curls) — copied from ThisWeeksAuras.
 - `MinimapButton.lua` — `GA:InitMinimapButton` / `GA:ToggleMinimapButton` (LibDBIcon launcher).
 - `Libs/` — embedded LibStub, CallbackHandler-1.0, LibDataBroker-1.1, LibDBIcon-1.0,
   LibSharedMedia-3.0 (source: TWA's copies).
@@ -163,8 +165,37 @@ PLACED in a CDM viewer are trackable** (registry ≠ placed).
   to fit the section. **Gating only applies with the panel CLOSED** (auras are force-shown while
   it's open — same as trigger/visibility), so QA it on a dummy in combat. QA passed: spec load-rule
   gates the whole set both ways; on/off switch hides/shows the set; create/delete/name all clean.
+- ✅ **QA'd 2026-07-07 — Groups Phase 2 (grouped left pane + Manage drawer)** — the LEFT pane now
+  renders **group headers** (custom triangle caret `Media/triangle.png`, rotated 90° for expanded;
+  a **settings gear** `Media/settings.png` on the right) with their auras nested beneath, then an
+  **Ungrouped** section, then the Add/Duplicate/Remove stack. Clicking a header collapses/expands
+  (`group.collapsed`; Ungrouped uses `db.ungroupedCollapsed`). The gear opens a docked **Manage
+  Group drawer** (`OpenGroupManager`) — **Rename** (reuses `OpenNameDialog`), **Load Rule…**
+  (`OpenGroupVisibilityEditor`), an OFF/ON **switch**, **Move Up/Down** (`MoveGroup`, normalizes
+  `group.order` then swaps), **Delete Group** (`DeleteGroup` → members to Ungrouped). The aura
+  editor's GROUP section shrank to just the **assign dropdown + hint** (group settings moved to the
+  drawer). Render model = `BuildLeftPaneEntries()` (typed rows: group / aura / ungrouped) fed to a
+  reused row pool in `RefreshList`. QA passed: collapse, gear→drawer, rename, load rule, on/off,
+  reorder, delete all clean.
+- ✅ **QA'd 2026-07-07 — Per-aura eye toggle** (owner-requested) — each aura row has an **eye icon**
+  on its right (`Media/unhidden.png` = shown, `Media/hidden.png` = disabled) that toggles
+  `cfg.enabled`. Disabling greys the row + hides the aura (via `CDM:Discover`, which excludes
+  disabled auras from the watch set and hides their frames even while the panel forces others shown).
 
 ## Hard-won LEARNINGS (verified — do NOT rediscover)
+- **Lua 5.1 caps a function at 60 UPVALUES (`local`s captured from enclosing scope).** `Config.lua`'s
+  giant `Build()` hit exactly 60 after Phase 1; one more (a `DEFAULT_FONT` ref) → `function ... has
+  more than 60 upvalues` at LOAD time and the panel wouldn't open. **The local `luac` is 5.5 (limit
+  255) so it does NOT catch this** — after adding module-level helpers that `Build` references, count
+  by hand (a function's upvalues = every module-scope `local` it or its nested closures reference).
+  Fix pattern: extract chunks of `Build` into their own module-level functions (`BuildGroupSection`,
+  `BuildGroupManager`) so each gets its own 60 budget. Build sits ~55 now; keep it there.
+- **Game fonts lack the ▼/▶ unicode triangles → they render as a tofu box.** Don't use unicode
+  glyphs (or native Blizzard textures — the owner's rule) for UI marks. Use the owner's bundled PNG icons in
+  `Media/` shown untinted (`SetVertexColor(1,1,1,1)`): `triangle.png` (collapse caret, rotated via
+  `Texture:SetRotation` — right=collapsed, -pi/2=down=expanded), `settings.png` (gear), `hidden/
+  unhidden.png` (eye), `lock_locked/unlocked.png`. Ask the owner to make an icon rather than reaching for
+  a glyph or Blizzard art.
 - **StaticPopup edit box is `dialog.EditBox` (PascalCase) in Midnight, NOT `dialog.editBox`** — the
   lowercase alias is GONE (GameDialog.xml system), so `OnShow`/`OnAccept` referencing `self.editBox`
   throw `attempt to index field 'editBox' (a nil value)`. We sidestepped StaticPopup entirely with a
@@ -266,10 +297,11 @@ PLACED in a CDM viewer are trackable** (registry ≠ placed).
     specs = { [specID]=true } or nil, spellKnown = spellID or nil },
   group = <groupID> or nil }   -- Phase 1: which group this aura belongs to (nil = Ungrouped)
 ```
-`GloomsAurasDB.groups[<groupID>] = { id, name, order, enabled (false=off), visibility = <same
-shape as an aura's visibility> or nil }` and `GloomsAurasDB.groupSeq` (the "gN" id counter). A
-grouped aura shows only when its **group is on AND the group's load rule passes** — ANDed in
-front of the aura's own Visibility + Trigger. (Phase 3 moves `groups`/`groupSeq` into the profile.)
+`GloomsAurasDB.groups[<groupID>] = { id, name, order, enabled (false=off), collapsed (bool),
+visibility = <same shape as an aura's visibility> or nil }` and `GloomsAurasDB.groupSeq` (the "gN"
+id counter) + `GloomsAurasDB.ungroupedCollapsed` (bool). A grouped aura shows only when its **group
+is on AND the group's load rule passes** — ANDed in front of the aura's own Visibility + Trigger.
+(Phase 3 moves `groups`/`groupSeq` into the profile; `ungroupedCollapsed` is UI state.)
 `GloomsAurasDB.hideBlizzardCDM = true/nil` (global; hides the four Blizzard CDM viewers via alpha-0).
 `GloomsAurasDB.minimap = { hide, minimapPos }` (LibDBIcon). Display shows when its **Trigger**
 passes AND its **Visibility** gate passes (no visibility set ⇒ always eligible).
@@ -294,19 +326,14 @@ passes AND its **Visibility** gate passes (no visibility set ⇒ always eligible
 
 ## NEXT / pending
 
-### ▶▶ START HERE NEXT SESSION: Groups + Profiles — Phase 2 (Phase 1 DONE)
+### ▶▶ START HERE NEXT SESSION: Groups + Profiles — Phase 3 (Phases 1 & 2 DONE)
 **Read [docs/GROUPS-PROFILES-DESIGN.md](GROUPS-PROFILES-DESIGN.md) first — it is the spec.**
 The owner approved every recommendation, so all design decisions are RESOLVED (see §6 there).
-- **Phase 1 — Groups data + engine.** ✅ **DONE + QA'd 2026-07-07** (see BUILT list above). Groups,
-  `cfg.group`, `CDM:GroupGate`, poll hook, editor GROUP section (dropdown + Load Rule… + OFF/ON switch
-  + Delete Group), skinned name dialog. Committed as the Phase-1 restore point.
-- **Phase 2 — Grouped left pane** (START HERE): the LEFT pane becomes group **headers** (name ·
-  collapse ▸/▾ · load-rule button · rename · delete) with each group's auras indented beneath, then an
-  **Ungrouped** section, then the Add/Duplicate/Remove stack. Rename (reuse `OpenNameDialog`), delete
-  (→ auras to Ungrouped, reuse `DeleteGroup`), up/down reorder (`group.order` already exists). The
-  editor's Group dropdown + Load Rule… + switch + Delete built in Phase 1 can move/mirror into the
-  header. QA: manage groups entirely from the list.
-- **Phase 3 — Profiles** (schema-2 migration — **must move `groups`+`groupSeq` into the profile**,
+- **Phase 1 — Groups data + engine.** ✅ **DONE + QA'd 2026-07-07** (see BUILT list). Committed.
+- **Phase 2 — Grouped left pane + Manage drawer.** ✅ **DONE + QA'd 2026-07-07** (see BUILT list).
+  Grouped/collapsible left pane, gear→Manage drawer (rename/rule/on-off/reorder/delete), group
+  settings out of the editor, per-aura eye toggle. Committed as the Phase-2 restore point.
+- **Phase 3 — Profiles** (START HERE) (schema-2 migration — **must move `groups`+`groupSeq` into the profile**,
   see design §3; `GA.global`/`GA.db`=active-profile split, switcher UI: switch/new/copy/rename/delete;
   per-character default `"Name - Realm"`). Key trick: `GA.db` repoints to the active profile so most
   existing `GA.db.displays` code is untouched; only `panelPos`+`minimap` move to `GA.global`.
@@ -330,11 +357,12 @@ The owner approved every recommendation, so all design decisions are RESOLVED (s
   active AND Kill Shot cd_ready"). His SavedVariables has displays incl. Trick Shots, Rapid Fire, Kill Shot,
   Aimed Shot, plus experiments. He now also has a **"Marksmanship"** group (load rule = spec) with
   Rapid Fire assigned, from Phase 1 QA.
-- **Session end 2026-07-07 (third session):** shipped **Groups Phase 1** — group data + `CDM:GroupGate`
-  engine, the editor **GROUP** section (assign dropdown + Load Rule… + OFF/ON `makeSwitch` + Delete
-  Group), a **skinned name dialog** (dodging the Midnight StaticPopup `EditBox` change), the panel grown
-  to fit. All QA'd on a dummy (spec load-rule + on/off both gate the whole set). No open bugs. **Next:
-  Phase 2 — grouped left pane.**
+- **Session end 2026-07-07 (third session):** shipped **Groups Phase 1** (group data + `CDM:GroupGate`
+  engine, skinned name dialog) AND **Phase 2** (grouped/collapsible left pane with custom triangle +
+  settings-gear icons, gear→Manage Group drawer for rename/rule/on-off/reorder/delete, group settings
+  moved out of the aura editor) PLUS a **per-aura eye toggle** (`hidden/unhidden.png`). Hit + fixed the
+  **Lua 5.1 60-upvalue limit** on `Build()` (extracted sub-functions). All QA'd, no open bugs. **Next:
+  Phase 3 — Profiles.**
 - **Session end 2026-07-07 (second session):** shipped the **Hide-Blizzard-CDM toggle**, **aspect-ratio
   lock** (custom lock PNGs), **custom flat sliders**, **Duplicate Aura** (multi-per-spell via display-id
   re-key), **drag-selected-only**, **font preload** (first-login blank-label fix), a **UI-cleanup batch**
