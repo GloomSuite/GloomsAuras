@@ -5,6 +5,15 @@
 > one instruction at a time, verify-before-claiming, ask for BugSack), and the next steps.
 > Then this file (conventions) + [docs/API-NOTES.md](docs/API-NOTES.md) (verified API facts).
 
+> **▶ PART OF THE GLOOM SUITE.** GloomsAuras is being unified with Gloom's Bars + Gloom's
+> Overlays under a shared base addon, **GloomsHub** (`~/GloomsHub`). All cross-cutting suite
+> facts — the plan, current phase status, and shared runtime contracts (design tokens, the
+> tabbed-shell API, the media resolver) — live THERE and are the single source of truth; this
+> repo does not keep its own copy. Before any *suite* work (mounting GA's config into the shared
+> tabbed window, the shared toolkit/tokens, redirecting the `CatStoneTweaks` media reads to
+> `GloomsHub:ListMedia`), read `~/GloomsHub/docs/SUITE-STATE.md` first, then SUITE-PLAN.md /
+> CONTRACTS.md. Normal GA-only work proceeds here as usual. **Gloom's Build Barn is NOT in the suite.**
+
 Bespoke WoW addon: shows custom textures + sounds when specific buffs/cooldowns are
 active, tracked via the Blizzard **Cooldown Manager** (CDM). Target: **Midnight 12.0.7**
 (Interface `120007`), retail only. Sibling to GloomsBuildBarn (same author "Gloom").
