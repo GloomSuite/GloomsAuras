@@ -256,7 +256,12 @@ PLACED in a CDM viewer are trackable** (registry ≠ placed).
   **OnShow/OnHide hooks** (starts on show, stops on hide, no per-poll churn since those fire only on real
   transitions) and re-applies on any config change (`ApplyConfig` calls `ApplyGlow`). **Pure rendering, no
   aura data.** LibCustomGlow-1.0 embedded like our other libs (TOC loads it after LibStub; `.pkgmeta`
-  fetches it — URL flagged to confirm before first release). Panel grew 704→740 / `PANE_H` 600→636 for the
+  fetches it). ★ **That flagged URL was in fact DEAD, caught at the first release (Phase G, 2026-07-24):**
+  the wowace SVN path `wow/libcustomglow-1-0/trunk` **404s** — the lib is not hosted there, so GA's very
+  first packaged build would have failed. Repointed at `https://github.com/Stanzilla/LibCustomGlow`, whose
+  repo root holds exactly what `Libs/LibCustomGlow-1.0` holds locally; the fetch is confirmed working in
+  the shipped `v1.0.0` zip. **Probe every external URL before a repo's first release** — the wowace
+  front-end 301s for a project that exists, 404s for one that doesn't. Panel grew 704→740 / `PANE_H` 600→636 for the
   Effects row; `MakeColor` gained an optional label (reused as "Custom Color"); glow UI state on `C._glow`.
   **KNOWN + inherent:** the glow traces the aura's **frame rectangle** (bounding box), NOT the texture's
   alpha shape — so it looks best on square-ish icons and boxy on non-square/irregular art. Not fixable
@@ -955,8 +960,15 @@ real proc is **aura-only (no matching cooldown entry)**; a cooldown-buff appears
 Now a **git repo** (initialized 2026-07-07). Mirrors GloomsBuildBarn's setup:
 - `.gitignore` excludes `.DS_Store`, `/.release/`, `Libs/` (see below), `.claude/settings.local.json`.
 - `.pkgmeta` (BigWigs packager) `package-as: GloomsAuras`; **`Libs/` is NOT committed** — the packager
-  fetches LibStub/CallbackHandler/LibDataBroker/LibDBIcon/LibSharedMedia into `Libs/` at release time.
-  The owner's live working copy keeps its `Libs/` (gitignore doesn't delete), so nothing breaks locally.
+  fetches **LibStub / CallbackHandler / LibSharedMedia / LibCustomGlow** into `Libs/` at release time.
+  (LibDataBroker + LibDBIcon were **dropped in Phase D** with GA's minimap button — the Hub owns the one
+  suite launcher now.) The owner's live working copy keeps its `Libs/` (gitignore doesn't delete), so
+  nothing breaks locally.
+- **`.github/workflows/release.yml` added in Phase G (2026-07-24)** — GA had a `.pkgmeta` but no workflow
+  to run it, so it could never publish. It must keep `permissions: contents: write`; the org sets
+  `default_workflow_permissions: read` and a workflow without that block fails at publish time.
+- ★ **Release state is a SUITE fact — home of record `~/GloomsHub/docs/SUITE-STATE.md` (Phase G row).**
+  GA shipped its first release, `v1.0.0`, on 2026-07-24 alongside the rest of the suite.
 - **Committed** bundled art: `Media/` (fonts, `bg_flame.png`, `minimap.png`, `Textures/`,
   `TextureManifest.lua`) + `PowerAurasMedia/Auras/`. These are ours, not packager-fetched.
 - **Push status:** LIVE on GitHub — https://github.com/HandofDevastation/GloomsAuras (created + pushed
