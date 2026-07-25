@@ -1,3 +1,11 @@
+> # ⚠ SUPERSEDED IN PART (2026-07-25) — the DATA MODEL stands, the UI does not
+> The group/profile **data model and engine** described here are live and correct
+> (`GA.db.groups`, the group gate ANDing in front of each aura's own rules, per-character
+> profile keys). **The UI is not:** the ⚙ gear → "Manage Group drawer", the docked Profiles
+> drawer, and the green "Group:" assign button were all retired in the 2026-07-25 layout
+> rework. Groups are now selected in the rail like auras are, and their settings fill the
+> editor pane; profiles live permanently at the top of the rail. See [HANDOFF.md](HANDOFF.md).
+
 # GloomsAuras — Groups & Profiles design  (ALL PHASES SHIPPED 2026-07-08)
 
 > **Status: FULLY BUILT + QA'd.** All three phases (Groups data/engine, grouped left pane, Profiles)

@@ -16,6 +16,13 @@
 > never re-add them). Before any *suite* work read `~/GloomsHub/docs/HANDOFF.md` first, then
 > SUITE-STATE.md / SUITE-PLAN.md / CONTRACTS.md. Normal GA-only work (CDM engine, displays,
 > bugs) proceeds here as usual. **Gloom's Build Barn is NOT in the suite.**
+>
+> **The Auras tab was fully REWORKED on 2026-07-25** (suite to-do item 1, now closed): a
+> flush-left rail (shared tab header + profile block + the aura tree) beside a full-width
+> editor pane; the landing splash, the aura-name banner, the profile drawer, the group gear
+> and three more drawers are all GONE. `Config.lua` declares **`SKIN_NEEDS = 4`** — bump it in
+> the same commit that first calls a newer LibGloomSkin widget (CONTRACTS §6). Details +
+> settled decisions: the block at the top of [docs/HANDOFF.md](docs/HANDOFF.md).
 
 > ## ★★ ROUTE THE REQUEST BEFORE YOU DO THE WORK (the owner, 2026-07-25)
 > **All four suite repos are in the session's working directories, so a request aimed at another
@@ -80,17 +87,21 @@ common-patterns, widget-framework, toc-structure, + a `secret-aware-addon` templ
 - Match GloomsBuildBarn idioms (colored `PREFIX`, `Media\`, bundled TTF fonts, tokens).
 
 ## Files
-- `GloomsAuras.toc` — manifest (Interface 120007).
-- `Core.lua` — namespace, SavedVariables, `/ga` slash router.
-- `CDM.lua` — the Cooldown Manager mirror engine (`GA.CDM`).
-- (Phase 3+) `Scanner.lua`, `Displays.lua`, `Sound.lua`, `ReportUI.lua`, `MediaManifest.lua`, `Media/`, `Libs/`.
+- `GloomsAuras.toc` — manifest (Interface 120007). Load order: `Libs\*` → Core → Displays →
+  CDM → `Media\TextureManifest.lua` → Config.
+- `Core.lua` — namespace `GA`, SavedVariables + profiles, design tokens, `/ga` slash router.
+- `CDM.lua` — the Cooldown Manager mirror engine (`GA.CDM`): state tracking, grouped trigger
+  eval, visibility/group gates, discovery, hooks.
+- `Displays.lua` — `GA.Displays`: the on-screen frames (texture/bar/text/glow, drag, preview).
+- `Config.lua` — `GA.Config`: the AURAS tab (rail + editor pane) and everything in it.
+- `Media/TextureManifest.lua` — auto-generated `GA.TextureShapes` (254 aura shapes).
+- `Media/`, `Libs/` — bundled art/fonts, and the embedded libs (`Libs/` is gitignored).
 
-## Build phases (one session each; see docs/HoDTracker-SPEC intent)
-1. **[current] Skeleton + Trick Shots proof** — TOC/Core/CDM; mirror one tracked buff
-   (Trick Shots 257622) to one texture + one sound; `/ga debug`, `/ga test`.
-2. Scanner + DB — passive aura probe, secrecy classification, `/ga scan`.
-3. Displays engine — data-driven displays, `/ga new`, unlock/drag, styling, LSM + custom media.
-4. Report UI + export/import strings.
+## Where the build actually is
+**Far past the original 4-phase plan** (skeleton → scanner → displays → report UI), which is
+retired. Buffs, cooldowns, charges, target DoTs, bars, groups, profiles, triggers and the
+suite migration are all shipped and QA'd. **[docs/HANDOFF.md](docs/HANDOFF.md) is the single
+answer to "where are we?"** — do not infer status from this file.
 
 ## Testing workflow
 The repo root **is** the addon folder. Symlinked into the client at

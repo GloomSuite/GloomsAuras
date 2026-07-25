@@ -1,3 +1,20 @@
+> # ⚠⚠ SUPERSEDED IN PART — READ THIS FIRST (2026-07-25)
+> **The Figma mocks this document was written against are RETIRED** (the owner, 2026-07-25:
+> "the mocks no longer matter and are now hopelessly out of date... I'd prefer the suite be
+> consistent with itself"). **The suite's own language — Gloom's Bars and Overlays — is the
+> spec now.** Do not pull a Figma node and build to it.
+>
+> Specifically DEAD from the text below: the **landing/splash state machine** (`C:ShowLanding`,
+> `C:BuildLanding`, `ga_logo_full.png`, "View All Auras"), the **aura NAME banner**, the
+> **620-wide panel geometry** (`PANEL_W=620 … EDITOR_W=360 … FOOTER_H=86`), the **purple
+> scrollbar**, and every reference to the **Visibility / Text / Glow / Manage Group / Profiles
+> drawers** — all four drawers are deleted and their content is inline.
+>
+> Still TRUE and worth reading: the **control language** (fills, fonts, accent colours), the
+> **GAMMA note**, the **Lua caps** discipline, the **accordion architecture**, the **bar-type
+> design decisions**, and the **Learnings** at the bottom. The live picture of the tab is the
+> block at the top of [HANDOFF.md](HANDOFF.md).
+
 # UI Redesign — design decisions (2026-07-09, session 8)
 
 **NEXT SESSION'S JOB: build the redesigned options panel PIXEL-PERFECT to the owner's Figma mocks.**

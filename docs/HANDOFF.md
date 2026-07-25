@@ -923,6 +923,33 @@ real proc is **aura-only (no matching cooldown entry)**; a cooldown-buff appears
 - His Warlock (main) character/profile is **"Gloomwick - Stormrage"**; his Hunter is **"Gloomvale - Stormrage"**
   (account folder `AELWYN`; both profiles exist and are correctly populated). After Phase-3 QA he may have
   leftover test profiles (e.g. "Copy Test") — harmless; deletable from the Profiles drawer.
+- **Session end 2026-07-25 (TWELFTH session) — THE AURAS TAB LAYOUT REWORK. Suite to-do item 1,
+  closed.** Everything below was QA'd in-game by the owner, one step at a time, before the next step
+  started. Full detail + settled decisions: the block at the TOP of this file. Nine commits:
+  1. **Splash + name banner retired** (`95de8f2`) — the tab opens on the last-edited aura; renaming
+     moved to the rail (button + double-click) via `UI.nameDialog`; buttons restyled to the suite's
+     language (22px, Title Case, bodyM 11, purple create / heroic secondary / red delete).
+  2. **The rail + groups as a first-class selection** (`480e721`) — the big one. Flush-left 240 rail
+     with `UI.tabHeader` (gate → MINOR 4) and the shared `UI.profileBlock`; clicking a group's NAME
+     fills the editor pane with its settings, retiring the ⚙ gear, the Manage Group drawer and the
+     green "Group:" button; the Visibility drawer died too, because the group's load rule is now the
+     SAME inline block the aura editor uses (built twice from one implementation via `o.target`).
+     **Delete Aura gained its missing confirmation here** — the owner caught it.
+  3. **Build-failure fix** (`c9ad9ec`) — see the ⚠ orphaned-local trap at the top of this file.
+  4. **Editor sections re-laid for the 560 pane** (`109377f`) — `MakeSlider` measures its parent, so
+     one change widened every slider; paired controls went two-column; Effects and Sounds each got a
+     row back. The Text and Glow drawers (dead since the accordion) were deleted here.
+  5. **Eye icons** (`cf051eb`) — report `selected OR preview`, orange/purple, on WHITE art.
+  6–9. **The Trigger section**, rebuilt to the owner's mocks over four passes (`12acfe7`, `e641364`,
+     `d29f505`, `8023082`, `e322ff0`): condition CARDS, then bracket connectors with the one nesting
+     rule (every operand inset 52/14), then the bracket proportions — which took three tries because
+     we were measuring in different units, and landed only when the owner gave a RULE ("the stub
+     above and below the label should be about as tall as the label") instead of a number.
+  Plus: **all four scrollbars → orange** (`e60efac`), and a **rail-tree scrollbar** that appears only
+  past 11 entries (`dff7b63`). **`Config.lua` chunk locals 193 → ~170 of 200** — four deleted drawers.
+  **Left open, owner's call:** modal dimming in `~/GloomsHub/Skin.lua` (the shared `UI.nameDialog` /
+  `UI.confirm` blend into the panel behind them — his words, and it now affects every delete), and
+  the condition-card height (40 built vs ~48 mocked). **No open bugs.** All committed, NOT pushed.
 - **Session end 2026-07-13 (ELEVENTH session) — Sound-timing feature + tracking fix SHIPPED; UI batch BUILT
   (pending in-game reconfirm).** TWO commits' worth, but note the UI half wasn't re-QA'd before close.
   1. **Per-timing aura sounds + target-debuff tracking fix — DONE, QA'd, committed + pushed (`55a2d97`).**
