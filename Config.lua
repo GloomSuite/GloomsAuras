@@ -2465,21 +2465,50 @@ end
 -- ===========================================================================
 local TRIG_LOGICS = { { "AND", "ALL" }, { "OR", "ANY" }, { "NONE", "NONE" } }
 
--- One condition row: right-aligned [name] [icon] = [STATE pill] [X]. Works at the top
--- level (ci=nil) and inside a group (ci set). Shift-clicking a TOP-LEVEL row selects it
--- (→ "Add to Trigger Group" moves the selection into a new group).
-function C:MakeTrigRow(parent)
+-- The word drawn on the chip BETWEEN two conditions. Purely a label — it reports the
+-- containing group's Match setting, it doesn't set it (the owner, 2026-07-25).
+-- ★ NONE reads "NOR", not "AND NOT": NONE negates BOTH sides equally, while "AND NOT"
+-- reads as "the first thing and not the second" (the owner spotted exactly this).
+-- Per-CONDITION negation never needs a chip — the state pill already carries it
+-- ("INACTIVE on You", "ON COOLDOWN", "CHARGES NOT MAX").
+local TRIG_JOIN = { AND = "AND", OR = "OR", NONE = "NOR" }
+
+-- One condition CARD: right-aligned [name] [icon] = [STATE pill] [X] on its own filled
+-- block, plus the operator chip that sits above it (every card but the first shows one).
+-- Works at the top level (ci=nil, purple) and inside a group (ci set, orange).
+-- Shift-clicking a TOP-LEVEL card selects it (→ "Add a TRIGGER GROUP" groups them).
+local TRIG_ROW_H, TRIG_ROW_PITCH = 40, 44
+
+function C:MakeTrigRow(parent, inGroup)
   local H = COLOR.heroic
-  local row = CreateFrame("Button", nil, parent); row:SetSize(EDITOR_W - 20, 20); row:RegisterForClicks("LeftButtonUp")
-  local selTex = row:CreateTexture(nil, "BACKGROUND"); selTex:SetPoint("TOPLEFT", -2, 2); selTex:SetPoint("BOTTOMRIGHT", 2, -2)
-  selTex:SetColorTexture(COLOR.purple.r, COLOR.purple.g, COLOR.purple.b, 0.25); selTex:Hide(); row.selTex = selTex
-  local x = flatButton(row, 20, 20, H, "X", 11); x:SetBase(0.5); x:SetPoint("TOPRIGHT", 0, 0); row.x = x
-  local pill = flatButton(row, 170, 20, H, "", 11); pill:SetBase(0.5); pill:SetPoint("RIGHT", x, "LEFT", -8, 0); pill.text:Hide()
+  local A = inGroup and COLOR.orange or H          -- the context's accent
+  local row = CreateFrame("Button", nil, parent); row:SetHeight(TRIG_ROW_H); row:RegisterForClicks("LeftButtonUp")
+  -- The card itself. Cards replaced bare rows so each condition reads as one object
+  -- and the operator chips have something to sit between.
+  local card = row:CreateTexture(nil, "BACKGROUND")
+  card:SetAllPoints(); card:SetColorTexture(A.r, A.g, A.b, inGroup and 0.14 or 0.22)
+  local selTex = row:CreateTexture(nil, "BORDER"); selTex:SetAllPoints()
+  selTex:SetColorTexture(COLOR.purple.r, COLOR.purple.g, COLOR.purple.b, 0.3); selTex:Hide(); row.selTex = selTex
+
+  local x = flatButton(row, 20, 20, A, "X", 11); x:SetBase(inGroup and 1 or 0.5)
+  x:SetPoint("RIGHT", -12, 0); row.x = x
+  local pill = flatButton(row, 190, 24, A, "", 11); pill:SetBase(inGroup and 1 or 0.85)
+  pill:SetPoint("RIGHT", x, "LEFT", -10, 0); pill.text:Hide()
   row.pillLbl = twoWeightLabel(pill, 11, nil, true); row.pill = pill
-  local eq = newText(row, FONT.body, 11, TEXT, "LEFT"); eq:SetPoint("RIGHT", pill, "LEFT", -4, 0); eq:SetText("="); row.eq = eq
-  local icon = row:CreateTexture(nil, "ARTWORK"); icon:SetSize(20, 19); icon:SetPoint("RIGHT", eq, "LEFT", -4, 0)
+  local eq = newText(row, FONT.body, 11, TEXT, "LEFT"); eq:SetPoint("RIGHT", pill, "LEFT", -6, 0); eq:SetText("="); row.eq = eq
+  local icon = row:CreateTexture(nil, "ARTWORK"); icon:SetSize(20, 19); icon:SetPoint("RIGHT", eq, "LEFT", -6, 0)
   icon:SetTexCoord(0.08, 0.92, 0.08, 0.92); row.icon = icon
-  local name = newText(row, FONT.body, 11, TEXT, "RIGHT"); name:SetPoint("RIGHT", icon, "LEFT", -4, 0); name:SetWordWrap(false); row.name = name
+  local name = newText(row, FONT.body, 12, TEXT, "RIGHT"); name:SetPoint("RIGHT", icon, "LEFT", -8, 0); name:SetWordWrap(false); row.name = name
+
+  -- Operator chip, straddling the gap above this card. Orange in both contexts.
+  local O = COLOR.orange
+  local chip = CreateFrame("Frame", nil, row); chip:SetSize(40, 20)
+  chip:SetPoint("TOPLEFT", 12, 10)
+  chip:SetFrameLevel(row:GetFrameLevel() + 5)   -- it straddles the card above; draw over it
+  local cbg = chip:CreateTexture(nil, "ARTWORK"); cbg:SetAllPoints(); cbg:SetColorTexture(O.r, O.g, O.b, 1)
+  chip.text = newText(chip, FONT.label, 11, { r = 1, g = 1, b = 1 }, "CENTER"); chip.text:SetPoint("CENTER")
+  chip:Hide(); row.chip = chip
+
   x:SetScript("OnClick", function() C:TrigRemove(row._ti, row._ci) end)
   pill:SetScript("OnClick", function() C:TrigCycleState(row._ti, row._ci) end)
   row:SetScript("OnClick", function()
@@ -2493,7 +2522,7 @@ function C:MakeTrigRow(parent)
   return row
 end
 
-function C:FillTrigRow(row, ti, ci, leaf)
+function C:FillTrigRow(row, ti, ci, leaf, join)
   row._ti, row._ci, row._leaf = ti, ci, leaf
   local ic = leaf.spellID and C_Spell and C_Spell.GetSpellTexture and C_Spell.GetSpellTexture(leaf.spellID)
   row.icon:SetTexture(ic or 134400)
@@ -2501,23 +2530,61 @@ function C:FillTrigRow(row, ti, ci, leaf)
   local main, suf = TrigPill(leaf.state, leaf.k)
   row.pillLbl:Set(main, suf)
   row.selTex:SetShown(ci == nil and C._trigUI.selected[leaf] and true or false)
+  -- `join` = the operator to show ABOVE this card; nil on the first one in its list.
+  if join then row.chip.text:SetText(join); row.chip:Show() else row.chip:Hide() end
 end
 
--- A nested TRIGGER GROUP box (orange): "TRIGGER GROUP N" + Match: ALL/ANY/NONE + its own
--- condition rows + a remove-group X. Its own row pool lives on g._rows.
+-- A nested TRIGGER GROUP box (orange). Header: "Match: ALL/ANY/NONE" on the LEFT,
+-- "TRIGGER GROUP N" on the RIGHT with "Add Trigger | Delete Group" links beneath it
+-- (the owner's mock, 2026-07-25 — they replace the header X and the old bottom
+-- "+ Add to Group" bar, so a group's two actions live with its name).
+-- Its own row pool lives on g._rows.
+local TRIG_GHDR_H = 56
+
+-- A text hyperlink in the group header: orange label, brightens on hover.
+local function TrigLink(parent, text, onClick)
+  local O = COLOR.orange
+  local b = CreateFrame("Button", nil, parent)
+  local fs = newText(b, FONT.body, 11, O, "LEFT"); fs:SetPoint("LEFT"); fs:SetText(text)
+  b:SetSize(math.max(10, fs:GetStringWidth() + 2), 16)
+  b:SetScript("OnEnter", function() fs:SetTextColor(1, 1, 1) end)
+  b:SetScript("OnLeave", function() fs:SetTextColor(O.r, O.g, O.b) end)
+  b:SetScript("OnClick", onClick)
+  return b
+end
+
 function C:MakeTrigGroupBox(parent)
   local O = COLOR.orange
   local g = CreateFrame("Frame", nil, parent)
   local bg = g:CreateTexture(nil, "BACKGROUND"); bg:SetAllPoints(); bg:SetColorTexture(O.r, O.g, O.b, 0.1)
-  g.label = newText(g, FONT.label, 11, O, "LEFT"); g.label:SetPoint("TOPLEFT", 12, -12)
-  g.rem = flatButton(g, 20, 20, O, "X", 11); g.rem:SetBase(0.5); g.rem:SetPoint("TOPRIGHT", -8, -8)
-  g.rem:SetScript("OnClick", function() C:TrigRemove(g._ti, nil) end)
-  local ml = newText(g, FONT.label, 11, { r = 1, g = 1, b = 1 }, "LEFT"); ml:SetPoint("TOPLEFT", 150, -13); ml:SetText("Match:")
+  g.label = newText(g, FONT.label, 12, O, "RIGHT"); g.label:SetPoint("TOPRIGHT", -14, -12)
+
+  -- Add Trigger | Delete Group. Delete CONFIRMS — it discards every condition in the
+  -- group, and CONTRACTS §4 puts destructive actions behind the shared modal.
+  g.delLink = TrigLink(g, "Delete Group", function()
+    local n = g._n or 1
+    C:OpenConfirm(("Delete TRIGGER GROUP %d?  Its conditions are removed with it."):format(n),
+      function() C:TrigRemove(g._ti, nil) end)
+  end)
+  g.delLink:SetPoint("TOPRIGHT", -14, -32)
+  local sep = newText(g, FONT.body, 11, MUTE, "RIGHT"); sep:SetText("|")
+  sep:SetPoint("RIGHT", g.delLink, "LEFT", -6, 0)
+  g.addLink = TrigLink(g, "Add Trigger", function() C:TrigAddToExistingGroup(g._ti) end)
+  g.addLink:SetPoint("RIGHT", sep, "LEFT", -6, 0)
+
+  -- A group is an operand of the level above, so it carries an operator chip too.
+  local chip = CreateFrame("Frame", nil, g); chip:SetSize(40, 20); chip:SetPoint("TOPLEFT", 12, 10)
+  chip:SetFrameLevel(g:GetFrameLevel() + 5)
+  local cbg = chip:CreateTexture(nil, "ARTWORK"); cbg:SetAllPoints(); cbg:SetColorTexture(O.r, O.g, O.b, 1)
+  chip.text = newText(chip, FONT.label, 11, { r = 1, g = 1, b = 1 }, "CENTER"); chip.text:SetPoint("CENTER")
+  chip:Hide(); g.chip = chip
+
+  local ml = newText(g, FONT.label, 11, { r = 1, g = 1, b = 1 }, "LEFT"); ml:SetPoint("TOPLEFT", 14, -15); ml:SetText("Match:")
   g.mpills = {}
-  local mx = 194
+  local mx = 62
   for _, lg in ipairs(TRIG_LOGICS) do
-    local logic, w = lg[1], ({ ALL = 34, ANY = 37, NONE = 48 })[lg[2]] or 40
-    local mp = CreateFrame("Button", nil, g); mp:SetSize(w, 20); mp:SetPoint("TOPLEFT", mx, -11); mx = mx + w + 6
+    local logic, w = lg[1], ({ ALL = 52, ANY = 52, NONE = 62 })[lg[2]] or 52
+    local mp = CreateFrame("Button", nil, g); mp:SetSize(w, 24); mp:SetPoint("TOPLEFT", mx, -13); mx = mx + w + 6
     mp.fill = mp:CreateTexture(nil, "BACKGROUND"); mp.fill:SetAllPoints(); mp.fill:SetColorTexture(O.r, O.g, O.b, 0.8)
     mp.edges = addEdges(mp, { r = O.r, g = O.g, b = O.b, a = 1 }, 1)
     local ll = newText(mp, FONT.label, 11, { r = 1, g = 1, b = 1 }, "CENTER"); ll:SetPoint("CENTER"); ll:SetText(lg[2])
@@ -2530,31 +2597,32 @@ function C:MakeTrigGroupBox(parent)
     end)
     g.mpills[#g.mpills + 1] = mp
   end
-  g.add = flatButton(g, 100, 22, O, "+ Add to Group", 11); g.add:SetBase(0.35)
-  g.add:SetScript("OnClick", function() C:TrigAddToExistingGroup(g._ti) end)
   g._rows = {}
   return g
 end
 
 function C:FillTrigGroupBox(g, ti, n, group)
-  g._ti = ti
+  g._ti, g._n = ti, n
   g.label:SetText("TRIGGER GROUP " .. n)
+  local logic = group.logic or "OR"
   for _, mp in ipairs(g.mpills) do
-    local sel = (mp._logic == (group.logic or "OR"))
+    local sel = (mp._logic == logic)
     mp.fill:SetShown(sel); mp:SetAlpha(sel and 1 or 0.5)
     for _, key in ipairs({ "top", "bottom", "left", "right" }) do mp.edges[key]:SetShown(not sel) end
   end
-  local pitch, headerH = 30, 36
+  local join = TRIG_JOIN[logic] or "OR"
   local leaves = group.conditions or {}
   for i, leaf in ipairs(leaves) do
-    local row = g._rows[i]; if not row then row = C:MakeTrigRow(g); g._rows[i] = row end
-    C:FillTrigRow(row, ti, i, leaf)
-    row:ClearAllPoints(); row:SetPoint("TOPRIGHT", -8, -(headerH + (i - 1) * pitch)); row:Show()
+    local row = g._rows[i]; if not row then row = C:MakeTrigRow(g, true); g._rows[i] = row end
+    C:FillTrigRow(row, ti, i, leaf, (i > 1) and join or nil)
+    row:ClearAllPoints()
+    row:SetPoint("TOPLEFT", 14, -(TRIG_GHDR_H + (i - 1) * TRIG_ROW_PITCH))
+    row:SetPoint("TOPRIGHT", -14, -(TRIG_GHDR_H + (i - 1) * TRIG_ROW_PITCH))
+    row:Show()
   end
   for i = #leaves + 1, #g._rows do g._rows[i]:Hide() end
-  local h = headerH + #leaves * pitch + 6 + 22 + 6   -- rows + gap + "+ Add to Group" bar
+  local h = TRIG_GHDR_H + #leaves * TRIG_ROW_PITCH + 8
   g:SetHeight(h)
-  g.add:ClearAllPoints(); g.add:SetPoint("BOTTOMLEFT", 8, 6); g.add:SetPoint("BOTTOMRIGHT", -8, 6)
   return h
 end
 
@@ -2583,20 +2651,21 @@ function C:BuildTriggerSection(ct)
   addEdges(box, { r = COLOR.purple.r, g = COLOR.purple.g, b = COLOR.purple.b, a = 0.2 }, 1)
   C._trigUI.box = box
 
-  -- "Add a Trigger" bar (bottom of the box).
-  local addBar = flatButton(box, EDITOR_W, 28, H, "Add a TRIGGER", 11); addBar:SetBase(0.5)
-  setFont(addBar.text, FONT.label, 11)
-  addBar:SetPoint("BOTTOMLEFT", 0, 0); addBar:SetPoint("BOTTOMRIGHT", 0, 0)
-  addBar:SetScript("OnClick", function() OpenPicker(function(item) C:TrigAddLeaf(item, nil) end) end)
-  C._trigUI.addBar = addBar
+  -- The two add-buttons sit BELOW the box, side by side (the owner's mock): purple
+  -- "Add a TRIGGER", orange "Add a TRIGGER GROUP" — the colour saying which context
+  -- each one creates. "Add a Trigger" used to be a bar inside the box.
+  local addT = flatButton(ct, COL_W, 34, H, "Add a TRIGGER", 12); addT:SetBase(0.5)
+  setFont(addT.text, FONT.label, 12)
+  addT:SetScript("OnClick", function() OpenPicker(function(item) C:TrigAddLeaf(item, nil) end) end)
+  C._trigUI.addTrig = addT
 
-  -- "Add to Trigger Group" bar (below the box) + shift-click hint.
-  local addG = flatButton(ct, EDITOR_W, 28, H, "", 11); addG:SetBase(0.5); addG.text:Hide()
-  addG._lbl = twoWeightLabel(addG, 11); addG._lbl:Set("Add to", "TRIGGER GROUP")
+  local addG = flatButton(ct, COL_W, 34, COLOR.orange, "Add a TRIGGER GROUP", 12); addG:SetBase(0.5)
+  setFont(addG.text, FONT.label, 12)
   addG:SetScript("OnClick", function() C:TrigAddToGroup() end)
   C._trigUI.addGroup = addG
+
   local hint = newText(ct, FONT.body, 11, MUTE, "CENTER"); hint:SetWidth(EDITOR_W)
-  hint:SetText("Shift-click multiple condition names above to add to a group")
+  hint:SetText("When adding a Trigger GROUP, use SHIFT+CLICK to select multiple triggers.")
   C._trigUI.hint = hint
 end
 
@@ -2660,33 +2729,42 @@ function C:TrigInlineRender()
     pill:SetBase(sel and 0.8 or 0.5); pill:SetAlpha(sel and 1 or 0.5)
   end
 
-  local topPad, pitch, gap = 12, 30, 8
-  local y, nr, ng = topPad, 0, 0
+  -- Cards and group boxes stack in one column, each carrying the operator chip that
+  -- joins it to the one above. `first` (not the index) decides whether a chip is drawn,
+  -- because a top-level GROUP counts as an operand too.
+  local join = TRIG_JOIN[logic] or "AND"
+  local topPad, gap = 12, 4
+  local y, nr, ng, first = topPad, 0, 0, true
   for ti, node in ipairs(conditions) do
     if node.conditions then
       ng = ng + 1
       local gbox = ui.groups[ng]; if not gbox then gbox = C:MakeTrigGroupBox(ui.box); ui.groups[ng] = gbox end
       local gh = C:FillTrigGroupBox(gbox, ti, ng, node)
-      gbox:ClearAllPoints(); gbox:SetPoint("TOPLEFT", 0, -y); gbox:SetPoint("TOPRIGHT", 0, -y); gbox:Show()
+      gbox:ClearAllPoints()
+      gbox:SetPoint("TOPLEFT", 14, -y); gbox:SetPoint("TOPRIGHT", -14, -y); gbox:Show()
+      gbox.chip.text:SetText(join); gbox.chip:SetShown(not first)
       y = y + gh + gap
     else
       nr = nr + 1
       local row = ui.rows[nr]; if not row then row = C:MakeTrigRow(ui.box); ui.rows[nr] = row end
-      C:FillTrigRow(row, ti, nil, node)
-      row:ClearAllPoints(); row:SetPoint("TOPRIGHT", -8, -y); row:Show()
-      y = y + pitch
+      C:FillTrigRow(row, ti, nil, node, (not first) and join or nil)
+      row:ClearAllPoints()
+      row:SetPoint("TOPLEFT", 14, -y); row:SetPoint("TOPRIGHT", -14, -y); row:Show()
+      y = y + TRIG_ROW_PITCH
     end
+    first = false
   end
   for i = nr + 1, #ui.rows do ui.rows[i]:Hide() end
   for i = ng + 1, #ui.groups do ui.groups[i]:Hide() end
 
-  local boxH = y + gap + 28   -- content + gap + Add-a-Trigger bar
+  local boxH = y + 8              -- content + bottom pad (the add-bars moved outside)
   ui.box:SetHeight(boxH)
-  ui.addGroup:ClearAllPoints()
-  ui.addGroup:SetPoint("TOPLEFT", 0, -(48 + boxH + 10)); ui.addGroup:SetPoint("TOPRIGHT", 0, -(48 + boxH + 10))
-  ui.hint:ClearAllPoints(); ui.hint:SetPoint("TOP", 0, -(48 + boxH + 10 + 28 + 8))
+  local btnY = -(48 + boxH + 12)
+  ui.addTrig:ClearAllPoints();  ui.addTrig:SetPoint("TOPLEFT", 0, btnY)
+  ui.addGroup:ClearAllPoints(); ui.addGroup:SetPoint("TOPLEFT", COL2_X, btnY)
+  ui.hint:ClearAllPoints(); ui.hint:SetPoint("TOP", 0, btnY - 34 - 10)
 
-  C:AccordionSetHeight("trigger", 48 + boxH + 10 + 28 + 8 + 15)   -- box + AddToGroup + hint
+  C:AccordionSetHeight("trigger", 48 + boxH + 12 + 34 + 10 + 26)   -- box + buttons + hint
 end
 
 -- Inline TEXT section (redesign). Content field + Show/Charge toggles + Font pill +
