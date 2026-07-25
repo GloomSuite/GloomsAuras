@@ -1645,6 +1645,19 @@ local EDITOR_W = CONTENT_W - EDITOR_X - 30 -- 560 — fills the pane; the old 36
 local FOOTER_H = 52                       -- footer strip (GB's height; was 86 when it held Profile)
 local PANE_H = 626 + CONTENT_TOP - FOOTER_H  -- 562: editor pane height
 
+-- The player's specs, for the Load Conditions spec multi-select. (It lived inside
+-- the Visibility drawer that the group pane retired; the inline Load Conditions
+-- block — the drawer's replacement, now built for BOTH auras and groups — is its
+-- only caller, so it moved out here rather than dying with the drawer.)
+local function PlayerSpecs()
+  local out = {}
+  local n = (GetNumSpecializations and GetNumSpecializations()) or 0
+  for i = 1, n do
+    local id, name, _, icon = GetSpecializationInfo(i)
+    if id then out[#out + 1] = { id = id, name = name, icon = icon } end
+  end
+  return out
+end
 
 -- --------------------------------------------------------------------------
 -- Profiles (Phase 3B): named, switchable configs with a per-character default.
