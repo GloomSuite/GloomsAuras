@@ -327,49 +327,11 @@ local function BuildLeftPaneEntries()
   return entries
 end
 
--- Small skinned text-entry dialog (matches the panel) for naming a group. Reused
--- for Phase 2 rename. Avoids StaticPopup (default chrome + its editBox/EditBox field
--- name shifts between clients). onAccept(name) fires on OK / Enter.
-local nameDlgFrame, nameDlgBox, nameDlgTitle, nameDlgOnAccept
-
-local function BuildNameDialog()
-  local W, H = 300, 132
-  local f = CreateFrame("Frame", "GloomsAurasNameDialog", UIParent)
-  f:SetSize(W, H); f:SetPoint("CENTER"); f:SetFrameStrata("FULLSCREEN_DIALOG"); f:EnableMouse(true)
-  skinPlate(f)
-  nameDlgTitle = newText(f, FONT.title, 17, COLOR.purple, "CENTER")
-  nameDlgTitle:SetPoint("TOP", 0, -14); nameDlgTitle:SetText("New Group")
-  nameDlgBox = flatEditBox(f, W - 48, 24); nameDlgBox:SetPoint("TOP", 0, -50)
-  local okB = flatButton(f, 100, 26, COLOR.purple, "OK", 13); okB:SetPoint("BOTTOMLEFT", 26, 16)
-  local cancelB = flatButton(f, 100, 26, COLOR.heroic, "Cancel", 13); cancelB:SetPoint("BOTTOMRIGHT", -26, 16)
-  local function accept()
-    local name = nameDlgBox:GetText()
-    local cb = nameDlgOnAccept; nameDlgOnAccept = nil
-    f:Hide()
-    if cb then cb(name) end
-  end
-  local function cancel() nameDlgOnAccept = nil; f:Hide() end
-  okB:SetScript("OnClick", accept)
-  cancelB:SetScript("OnClick", cancel)
-  nameDlgBox:SetScript("OnEnterPressed", accept)
-  nameDlgBox:SetScript("OnEscapePressed", cancel)
-  tinsert(UISpecialFrames, "GloomsAurasNameDialog")   -- ESC closes it
-  f:Hide()
-  nameDlgFrame = f
-  return f
-end
-
-local function OpenNameDialog(titleText, initial, onAccept)
-  if not nameDlgFrame then
-    local ok, err = pcall(BuildNameDialog)
-    if not ok then GA.msg("|cffff5555name dialog failed to build|r: " .. tostring(err)); return end
-  end
-  nameDlgOnAccept = onAccept
-  nameDlgTitle:SetText(titleText or "Name")
-  nameDlgBox:SetText(initial or ""); nameDlgBox:SetCursorPosition(0)
-  nameDlgFrame:Show(); nameDlgFrame:Raise()
-  nameDlgBox:SetFocus(); nameDlgBox:HighlightText()
-end
+-- The skinned text-entry dialog (for naming/renaming a group) is LibGloomSkin's
+-- shared widget as of MINOR 3 (Phase E). GA and GB each carried a near-identical
+-- private copy and Overlays would have been a third; there is now exactly ONE.
+-- Same signature, so the call sites below are unchanged.
+local OpenNameDialog = UI.nameDialog
 
 local function SummaryText(cfg)
   local t = cfg and cfg.trigger
@@ -2061,67 +2023,32 @@ end
 -- --------------------------------------------------------------------------
 -- State + UI hang on the C table (not module-level locals) — the file chunk is
 -- near Lua's 200-locals-per-function cap, so new module locals would overflow it.
-C._prof = { offset = 0, rows = {}, ROWS = 8 }
-C._confirm = {}
+C._prof = {}
 
--- Small skinned yes/no confirm (Delete is destructive) — modeled on OpenNameDialog.
-function C:BuildConfirm()
-  local W, H = 330, 144
-  local f = CreateFrame("Frame", "GloomsAurasConfirm", UIParent)
-  f:SetSize(W, H); f:SetPoint("CENTER"); f:SetFrameStrata("FULLSCREEN_DIALOG"); f:EnableMouse(true)
-  skinPlate(f)
-  local title = newText(f, FONT.title, 17, COLOR.orange, "CENTER")
-  title:SetPoint("TOP", 0, -14); title:SetText("Are you sure?")
-  C._confirm.body = newText(f, FONT.body, 12, TEXT, "CENTER")
-  C._confirm.body:SetPoint("TOP", 0, -46); C._confirm.body:SetWidth(W - 36)
-  local yesB = flatButton(f, 124, 26, COLOR.orange, "Delete", 13); yesB:SetPoint("BOTTOMLEFT", 26, 16)
-  local noB = flatButton(f, 124, 26, COLOR.heroic, "Cancel", 13); noB:SetPoint("BOTTOMRIGHT", -26, 16)
-  yesB:SetScript("OnClick", function() local cb = C._confirm.onYes; C._confirm.onYes = nil; f:Hide(); if cb then cb() end end)
-  noB:SetScript("OnClick", function() C._confirm.onYes = nil; f:Hide() end)
-  tinsert(UISpecialFrames, "GloomsAurasConfirm")
-  f:Hide(); C._confirm.frame = f
-  return f
-end
+-- The skinned yes/no confirm is LibGloomSkin's shared widget as of MINOR 3
+-- (Phase E) — the same modal GB and Overlays use for their deletes.
 function C:OpenConfirm(bodyText, onYes)
-  if not C._confirm.frame then local ok = pcall(function() C:BuildConfirm() end); if not ok then return end end
-  C._confirm.onYes = onYes
-  C._confirm.body:SetText(bodyText or "Are you sure?")
-  C._confirm.frame:Show(); C._confirm.frame:Raise()
+  UI.confirm(bodyText, onYes)
 end
 
 function C:RefreshProfileList()
   local pr = C._prof
-  if not (pr.frame and pr.frame:IsShown()) then return end
-  local names = GA:ProfileNames()
-  local active = GA:ActiveProfileName()
-  local n = #names
-  local maxOff = math.max(0, n - pr.ROWS)
-  if pr.offset > maxOff then pr.offset = maxOff end
-  if pr.offset < 0 then pr.offset = 0 end
-  for i = 1, pr.ROWS do
-    local row = pr.rows[i]
-    local name = names[i + pr.offset]
-    if name then
-      row.pname = name
-      row.text:SetText(name .. (name == active and "  |cff936bff(active)|r" or ""))
-      row.sel:SetShown(name == active)
-      row:Show()
-    else
-      row.pname = nil; row:Hide()
-    end
-  end
+  if pr.block then pr.block:refresh() end
 end
 
+-- The drawer now hosts LibGloomSkin's shared profileBlock (MINOR 3) — the SAME
+-- control Gloom's Bars puts in its left rail and Overlays puts in its own
+-- (the owner 2026-07-24: this mechanism must be identical everywhere). The old
+-- click-a-row list + four bespoke buttons are gone; delete still routes through
+-- the confirm modal, which is now the shared one.
+-- NOTE: the drawer itself stays — moving Auras to a GB-style always-visible rail
+-- is a layout change that belongs with the Auras landing-page rethink already on
+-- the polish backlog, not buried in this pass.
 function C:BuildProfileManager()
   local pr = C._prof
   local W = 264
-  local yList = -60
-  local listH = pr.ROWS * 24
-  local yBtns = yList - listH - 14          -- first button row (below the list)
-  local yFoot = yBtns - 32 - 26 - 16        -- footer top: below the 2nd button row + a gap
-  local H = -yFoot + 34                      -- room for a (possibly 2-line) footer + bottom pad
   local f = CreateFrame("Frame", "GloomsAurasProfileManager", UIParent)
-  f:SetSize(W, H); f:SetPoint("CENTER"); f:SetFrameStrata("FULLSCREEN_DIALOG"); f:EnableMouse(true)
+  f:SetSize(W, 220); f:SetPoint("CENTER"); f:SetFrameStrata("FULLSCREEN_DIALOG"); f:EnableMouse(true)
   skinPlate(f)
   local title = newText(f, FONT.title, 16, COLOR.purple, "LEFT")
   title:SetPoint("TOPLEFT", 14, -14); title:SetPoint("RIGHT", -36, 0); title:SetText("Profiles")
@@ -2133,62 +2060,47 @@ function C:BuildProfileManager()
   tb:SetScript("OnDragStart", function() if f:IsMovable() then f:StartMoving() end end)
   tb:SetScript("OnDragStop", function() f:StopMovingOrSizing() end)
 
-  local hint = newText(f, FONT.body, 11, MUTE, "LEFT")
-  hint:SetPoint("TOPLEFT", 16, -42); hint:SetText("Click a profile to switch to it.")
-
-  -- Scrollable list of profiles (mouse wheel; profiles are usually few).
-  local list = CreateFrame("Frame", nil, f)
-  list:SetPoint("TOPLEFT", 14, yList); list:SetSize(W - 28, listH)
-  list:EnableMouse(true); list:EnableMouseWheel(true)
-  list:SetScript("OnMouseWheel", function(_, d) pr.offset = pr.offset - d; C:RefreshProfileList() end)
-  for i = 1, pr.ROWS do
-    local row = CreateFrame("Button", nil, list)
-    row:SetSize(W - 28, 24); row:SetPoint("TOPLEFT", 0, -(i - 1) * 24)
-    local sel = row:CreateTexture(nil, "BACKGROUND"); sel:SetAllPoints()
-    sel:SetColorTexture(COLOR.purple.r, COLOR.purple.g, COLOR.purple.b, 0.28); sel:Hide(); row.sel = sel
-    local hl = row:CreateTexture(nil, "HIGHLIGHT"); hl:SetAllPoints(); hl:SetColorTexture(1, 1, 1, 0.08)
-    local t = newText(row, FONT.body, 12, TEXT, "LEFT"); t:SetPoint("LEFT", 8, 0); t:SetPoint("RIGHT", -8, 0)
-    t:SetWordWrap(false); row.text = t
-    row:SetScript("OnClick", function(self)
-      if self.pname and self.pname ~= GA:ActiveProfileName() then GA:SwitchProfile(self.pname) end
-    end)
-    pr.rows[i] = row
-  end
-
-  -- Action buttons (two rows of two).
-  local newB = flatButton(f, 116, 26, COLOR.heroic, "New…", 12); newB:SetPoint("TOPLEFT", 16, yBtns)
-  newB:SetScript("OnClick", function()
-    OpenNameDialog("New Profile", "", function(name)
+  pr.block = UI.profileBlock(f, W - 28, {
+    noun   = "profile",
+    names  = function() return GA:ProfileNames() end,
+    active = function() return GA:ActiveProfileName() or "?" end,
+    switch = function(v) if v ~= GA:ActiveProfileName() then GA:SwitchProfile(v) end end,
+    create = function(name)
       local ok, why = GA:CreateProfile(name)
-      if not ok then GA.msg(why == "exists" and "a profile with that name already exists." or "enter a profile name.") end
-    end)
-  end)
-  local copyB = flatButton(f, 116, 26, COLOR.heroic, "Copy Current…", 12); copyB:SetPoint("LEFT", newB, "RIGHT", 8, 0)
-  copyB:SetScript("OnClick", function()
-    OpenNameDialog("Copy Profile", (GA:ActiveProfileName() or "") .. " copy", function(name)
+      if ok then return true end
+      return false, (why == "exists") and "A profile with that name already exists." or "Enter a profile name."
+    end,
+    copy = function(name)
       local ok, why = GA:CopyProfile(name)
-      if not ok then GA.msg(why == "exists" and "a profile with that name already exists." or "enter a profile name.") end
-    end)
-  end)
-  local renB = flatButton(f, 116, 26, COLOR.heroic, "Rename…", 12); renB:SetPoint("TOPLEFT", 16, yBtns - 32)
-  renB:SetScript("OnClick", function()
-    OpenNameDialog("Rename Profile", GA:ActiveProfileName() or "", function(name)
+      if ok then return true end
+      return false, (why == "exists") and "A profile with that name already exists." or "Enter a profile name."
+    end,
+    rename = function(name)
       local ok, why = GA:RenameActiveProfile(name)
-      if not ok then GA.msg(why == "exists" and "a profile with that name already exists." or "enter a profile name.") end
-    end)
-  end)
-  local delB = flatButton(f, 116, 26, COLOR.orange, "Delete", 12); delB:SetPoint("LEFT", renB, "RIGHT", 8, 0)
-  delB:SetScript("OnClick", function()
-    local active = GA:ActiveProfileName()
-    if not active then return end
-    if #GA:ProfileNames() <= 1 then GA.msg("can't delete your only profile."); return end
-    C:OpenConfirm(("Delete profile \"%s\"?  This can't be undone."):format(active), function()
-      if GA:DeleteProfile(active) then GA.msg(("deleted profile |cffffffff%s|r."):format(active)) end
-    end)
-  end)
+      if ok then return true end
+      return false, (why == "exists") and "A profile with that name already exists." or "Enter a profile name."
+    end,
+    delete = function()
+      if #GA:ProfileNames() <= 1 then return false, "Can't delete your only profile." end
+      local active = GA:ActiveProfileName()
+      if not GA:DeleteProfile(active) then return false, "" end
+      GA.msg(("deleted profile |cffffffff%s|r."):format(active))
+      return true
+    end,
+    -- Core calls C:OnProfileSwitched after any repoint, which rebuilds the pane
+    -- and refreshes this block — no extra work needed here.
+    tips = {
+      dropdown = "The active profile. Each character defaults to its own.",
+      new      = "Creates a profile and switches to it.",
+      copy     = "Duplicates this profile — every aura and group — and switches to the copy.",
+      rename   = "Renames this profile. Characters using it follow the new name.",
+      delete   = "Deletes this profile (you'll be asked to confirm). Your only profile can't be deleted.",
+    },
+  })
+  pr.block.frame:SetPoint("TOPLEFT", 14, -48)
 
   local foot = newText(f, FONT.body, 11, MUTE, "CENTER")
-  foot:SetPoint("TOPLEFT", 12, yFoot); foot:SetWidth(W - 24)
+  foot:SetPoint("TOPLEFT", 12, -178); foot:SetWidth(W - 24)
   foot:SetText("Each character defaults to its own profile.")
 
   tinsert(UISpecialFrames, "GloomsAurasProfileManager")
@@ -2219,7 +2131,6 @@ end
 -- pane + editor for the new profile and re-shows its auras (while the panel is open).
 function C:OnProfileSwitched()
   if not container then return end
-  C._prof.offset = 0
   listOffset = 0
   selectedID = nil
   if container:IsVisible() and GA.Displays then
