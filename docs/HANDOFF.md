@@ -947,9 +947,13 @@ real proc is **aura-only (no matching cooldown entry)**; a cooldown-buff appears
      above and below the label should be about as tall as the label") instead of a number.
   Plus: **all four scrollbars → orange** (`e60efac`), and a **rail-tree scrollbar** that appears only
   past 11 entries (`dff7b63`). **`Config.lua` chunk locals 193 → ~170 of 200** — four deleted drawers.
-  **Left open, owner's call:** modal dimming in `~/GloomsHub/Skin.lua` (the shared `UI.nameDialog` /
-  `UI.confirm` blend into the panel behind them — his words, and it now affects every delete), and
-  the condition-card height (40 built vs ~48 mocked). **No open bugs.** All committed, NOT pushed.
+  **Left open, owner's call:** modal dimming in `~/GloomsHub/Skin.lua` — the shared `UI.nameDialog` /
+  `UI.confirm` blend into the panel behind them (his words), and it now affects every delete in the
+  tab. **SETTLED, do not reopen:** the trigger condition-card height stays **40** (the owner mocked
+  ~48 and, shown the difference, said "I'm fine with how it is"). Note the bracket arms land on a
+  40px card's exact centre line — a coincidence of that height, since the bracket rule is derived
+  from the LABEL's height; changing the card height would need that checked.
+  **No open bugs.** All committed, NOT pushed.
 - **Session end 2026-07-13 (ELEVENTH session) — Sound-timing feature + tracking fix SHIPPED; UI batch BUILT
   (pending in-game reconfirm).** TWO commits' worth, but note the UI half wasn't re-QA'd before close.
   1. **Per-timing aura sounds + target-debuff tracking fix — DONE, QA'd, committed + pushed (`55a2d97`).**
