@@ -651,9 +651,18 @@ local function RefreshList()
       row.icon:SetTexture(icon)
       if row.eye then
         row.eye:Show()
-        -- Eye = show THIS aura on screen while the panel is open (editor preview only).
-        local prev = cfg and cfg.preview
-        row.eye.icon:SetTexture(MEDIA .. (prev and "unhidden.png" or "hidden.png"))
+        -- The eye states what is ACTUALLY on screen, not just what was toggled. The
+        -- preview engine draws `selected OR preview` (Displays:RefreshForced), so the
+        -- SELECTED aura reads as visible without being toggled, and reverts the moment
+        -- another aura is picked. On = orange, no slash; off = purple, slashed.
+        -- The owner re-exported both eyes as WHITE art (2026-07-25) precisely so they
+        -- tint exactly, the way the shared caret does. Don't re-bake a colour into
+        -- these two files: SetVertexColor multiplies, so coloured art can only ever
+        -- darken (the purple originals tinted orange came out #873F15, a muddy brown).
+        local on = (sid == selectedID) or (cfg and cfg.preview)
+        local tint = on and COLOR.orange or COLOR.purple
+        row.eye.icon:SetTexture(MEDIA .. (on and "unhidden.png" or "hidden.png"))
+        row.eye.icon:SetVertexColor(tint.r, tint.g, tint.b)
       end
       row.name:ClearAllPoints(); row.name:SetPoint("LEFT", 40, 0); row.name:SetPoint("RIGHT", -24, 0)
       row.name:SetText((cfg and cfg.label) or ("Spell " .. tostring(sid)))
