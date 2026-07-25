@@ -413,11 +413,6 @@ local function SlashHandler(input)
     PosDisplay(rest)
   elseif cmd == "size" then
     SizeDisplay(rest)
-  elseif cmd == "bracket" then
-    -- TEMPORARY (2026-07-25): live-tune the trigger bracket while the owner and I
-    -- settle its proportions. Delete with C._brk in Config.lua once baked in.
-    local x, bite, t = rest:match("^(%S*)%s*(%S*)%s*(%S*)$")
-    if GA.Config and GA.Config.SetBracket then GA.Config:SetBracket(x, bite, t) end
   elseif cmd == "preview" then
     if GA.Displays then GA.Displays:Preview() end
   elseif cmd == "test" then
