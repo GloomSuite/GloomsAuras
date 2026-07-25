@@ -17,6 +17,28 @@
 > SUITE-STATE.md / SUITE-PLAN.md / CONTRACTS.md. Normal GA-only work (CDM engine, displays,
 > bugs) proceeds here as usual. **Gloom's Build Barn is NOT in the suite.**
 
+> ## ★★ ROUTE THE REQUEST BEFORE YOU DO THE WORK (the owner, 2026-07-25)
+> **All four suite repos are in the session's working directories, so a request aimed at another
+> repo can be silently fulfilled from here. Don't let that happen.** Before starting any change,
+> decide which repo OWNS it. **If it isn't this one, STOP and say so BEFORE editing anything** —
+> name the repo, say in one line what it would touch, and let the owner switch. Do not "just do it
+> from here", do not make a partial edit first, do not quietly edit across repos.
+>
+> **Belongs HERE (`~/GloomsAuras`):** the CDM engine, displays, aura textures/sounds, the contents
+> of the Auras tab.
+> **Belongs in `~/GloomsHub`:** the Suite window/shell + tab API · the shared `LibGloomSkin` toolkit
+> (tokens, widgets, `UI.*`) · media registration/catalog/resolver + the Media tab · the one minimap
+> launcher · the suite docs + phase ledger.
+> **Belongs in `~/GloomsBars` / `~/GloomsOverlays`:** anything about those tools.
+> **Test:** changes how ONE tool looks/behaves → that tool's repo. Changes something all three share,
+> or the window they live in → the Hub.
+>
+> **Carve-outs (correct, not violations):** updating the Hub's SUITE-STATE ledger from here is
+> *required* after suite work — just say you're doing it; a shared-contract change must update its
+> consumers in the same session (say which repos up front); and read-only cross-repo grepping is
+> always fine — the rule is about WRITING. **Ambiguous?** Say so, recommend, don't guess silently.
+> Full rule + ownership table: `~/GloomsHub/CLAUDE.md`.
+
 Bespoke WoW addon: shows custom textures + sounds when specific buffs/cooldowns are
 active, tracked via the Blizzard **Cooldown Manager** (CDM). Target: **Midnight 12.0.7**
 (Interface `120007`), retail only. Sibling to GloomsBuildBarn (same author "Gloom").
