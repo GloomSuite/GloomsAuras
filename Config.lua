@@ -71,7 +71,7 @@ UI.RegisterWarmPairs({
   { FONT.label, 11 }, { FONT.label, 12 }, -- two-weight labels / switches / left-pane buttons
 })
 
-local container, selectedID, editorName, triggerSummary, visibilitySummary
+local container, selectedID, triggerSummary, visibilitySummary
 local pickerFrame, pickerOnPick
 local rows = {}
 -- Trigger editor state hangs on C._trig (chunk-local cap): { editID, frame, title,
@@ -713,10 +713,6 @@ local function SetSelected(sid)
   if C._trig then C._trig.editID = sid end   -- inline Trigger section edits the selected aura
   if GA.Displays then GA.Displays:SetSelectedDisplay(sid) end  -- only this one is draggable
   local cfg = Cfg()
-  if editorName then
-    if cfg then editorName:SetText(cfg.label or tostring(sid)); editorName:SetCursorPosition(0); editorName:Enable()
-    else editorName:SetText(""); editorName:ClearFocus(); editorName:Disable() end
-  end
   if triggerSummary then triggerSummary:SetText(cfg and SummaryText(cfg) or "") end
   if visibilitySummary then visibilitySummary:SetText(cfg and VisibilitySummary(cfg) or "") end
   for _, r in ipairs(rows) do r:refresh(); r:setEnabled(cfg ~= nil) end
@@ -724,7 +720,7 @@ local function SetSelected(sid)
   if C.RefreshGlowEditor then C:RefreshGlowEditor() end   -- glow drawer follows selection too
   if C.RefreshGroupButton then C:RefreshGroupButton() end -- left-pane Group button label
   if C.TrigInlineRender then C:TrigInlineRender() end     -- inline Trigger section follows selection
-  if C.UpdateNameHint then C:UpdateNameHint() end          -- hide "CLICK TO RENAME" under a long name
+  if C.UpdateEmptyState then C:UpdateEmptyState() end     -- no auras ⇒ prompt instead of a dead editor
   RefreshList()
   if GA.Displays then GA.Displays:RefreshForced() end   -- preview: show the selected + eye-on, hide the rest
 end
@@ -2161,7 +2157,7 @@ function C:OnProfileSwitched()
     GA.Displays.forced = true
     GA.Displays:SetInteractive(true)
   end
-  SetSelected(DisplayList()[1])   -- also refreshes the left list + editor (+ preview via RefreshForced)
+  C:SelectInitial()   -- first aura of the new profile; refreshes list + editor + empty state
   if C.RefreshGroupControl then C:RefreshGroupControl() end
   if self._hideCDM then self._hideCDM:Set(GA.db and GA.db.hideBlizzardCDM) end
   self:UpdateProfileButton()
@@ -2457,33 +2453,29 @@ function C:RefreshGlowEditor()
 end
 
 -- ---------------------------------------------------------------------------
--- Landing (Default State) + panel mode switch. The panel opens to the landing:
--- a big logo + three "Add ‹type› Aura" create buttons + "View All Auras". Picking
--- a type (or View All) swaps to the editor; the left pane's "New Aura" swaps back.
--- The list + editor panes and the landing overlay share one content area (toggled);
--- the footer (Hide-CDM + Profile) and the dividers stay visible in both states.
+-- Opening the tab. The LANDING SPLASH IS RETIRED (2026-07-25, the owner: "the splash
+-- page is going to have to go away") — with it went `ga_logo_full.png`, the three
+-- "Add ‹type› Aura" buttons, "View All Auras" and the landing/editor mode switch.
+-- The tab now opens straight into the editor on the last-edited aura (or the first
+-- one), and creating an aura happens at "+ New Aura" in the left pane. The only
+-- special state left is "this profile has no auras yet" — see C:UpdateEmptyState.
 -- These live on the C table (methods, not chunk locals) to stay under the Lua caps.
 -- ---------------------------------------------------------------------------
-function C:ShowLanding()
-  C.mode = "landing"
-  if listFrame then listFrame:Hide() end
-  if C._editor then C._editor:Hide() end
-  if C._editorTrack then C._editorTrack:Hide(); C._editorThumb:Hide() end
-  if C._landing then C._landing:Show() end
-  selectedID = nil
-  if GA.Displays then
-    GA.Displays:SetSelectedDisplay(nil)   -- nothing selected → nothing forced-draggable
-    GA.Displays:RefreshForced()           -- preview shows only eye-on auras
-  end
+function C:SelectInitial()
+  local db = DB()
+  local keep = (selectedID and db and db[selectedID]) and selectedID or DisplayList()[1]
+  RefreshList()
+  SetSelected(keep)      -- nil is fine: the empty state takes over
+  C:AccordionLayout()    -- recompute the scroll extent + show the scrollbar if it overflows
 end
 
-function C:ShowEditor()
-  C.mode = "editor"
-  if C._landing then C._landing:Hide() end
-  if listFrame then listFrame:Show() end
-  if C._editor then C._editor:Show() end
-  RefreshList()          -- populate the left list (was blank until the first wheel scroll)
-  C:AccordionLayout()    -- recompute the scroll extent + show the scrollbar if it overflows
+-- With no auras in the profile there is nothing to edit, so the accordion would sit
+-- there fully disabled. Swap it for one line telling the owner what to click.
+function C:UpdateEmptyState()
+  local empty = (DisplayList()[1] == nil)
+  if C._empty then C._empty:SetShown(empty) end
+  if C._editor then C._editor:SetShown(not empty) end
+  if empty and C._editorTrack then C._editorTrack:Hide(); C._editorThumb:Hide() end
 end
 
 -- Create a blank aura of the chosen type and open it in the editor. Icon + Texture are
@@ -2506,40 +2498,33 @@ function C:CreateAura(uiType)
     }
   end
   if GA.CDM then GA.CDM:Discover() end
-  C:ShowEditor()
-  SetSelected(id)
+  RefreshList()
+  SetSelected(id)          -- also clears the empty state via C:UpdateEmptyState
+  C:AccordionLayout()
 end
 
--- The landing overlay: a transparent, mouse-transparent frame filling the panel so the
--- footer + X below stay clickable. Holds the logo and the create / View All buttons.
-function C:BuildLanding(p)
-  local L = CreateFrame("Frame", nil, p)
-  L:SetAllPoints(p)
-  C._landing = L
-
-  -- Logo (monogram + wordmark) — transparent PNG at the Figma position (197x248 @ 317,187).
-  local logo = L:CreateTexture(nil, "ARTWORK")
-  logo:SetTexture(MEDIA .. "ga_logo_full.png")
-  logo:SetSize(197, 248)
-  logo:SetPoint("TOPLEFT", 317, -187)
-
-  -- Three create buttons (bright purple), stacked in the left pane.
-  local defs = { { "Add Icon Aura", "icon", 216 }, { "Add Texture Aura", "texture", 264 }, { "Add Bar Aura", "bar", 312 } }
-  for _, d in ipairs(defs) do
-    local uiType = d[2]
-    local b = flatButton(L, LIST_W, 28, COLOR.heroic, d[1], 12)   -- Figma: #8031ff @ 0.2 fill
-    setFont(b.text, FONT.label, 12)   -- General Sans Semibold 12
-    b:SetBase(0.2); b:SetPoint("TOPLEFT", PAD_L, -d[3])
-    b:SetScript("OnClick", function() C:CreateAura(uiType) end)
+-- The type menu behind "+ New Aura" (opens upward from the button, same shape as the
+-- group-assign menu). Replaces the splash's three "Add ‹type› Aura" buttons.
+function C:OpenNewAuraMenu(anchor)
+  local menu = C._newMenu
+  if menu and menu:IsShown() then menu:Hide(); return end
+  if not menu then
+    menu = CreateFrame("Frame", nil, container); C._newMenu = menu
+    menu:SetFrameStrata("FULLSCREEN_DIALOG"); skinPlate(menu); addEdges(menu, COLOR.rim, 1)
+    menu._rows = {}
   end
-
-  -- View All Auras — de-emphasised (orange @ 0.2), lower in the left pane.
-  -- Anchored ABOVE the footer divider (the tab column is shorter than the old
-  -- 740px window, where this sat at a fixed -592).
-  local viewAll = flatButton(L, LIST_W, 28, COLOR.orange, "View All Auras", 11)
-  setFont(viewAll.text, FONT.body, 11)   -- General Sans Regular 11
-  viewAll:SetBase(0.2); viewAll:SetPoint("BOTTOMLEFT", PAD_L, FOOTER_H + 12)
-  viewAll:SetScript("OnClick", function() C:ShowEditor(); SetSelected(DisplayList()[1]) end)
+  local items = { { "icon", "Icon Aura" }, { "texture", "Texture Aura" }, { "bar", "Bar Aura" } }
+  local W = anchor:GetWidth()
+  menu:SetSize(W, #items * 24 + 8)
+  menu:ClearAllPoints(); menu:SetPoint("BOTTOMLEFT", anchor, "TOPLEFT", 0, 4)
+  for i, it in ipairs(items) do
+    local r = menu._rows[i]
+    if not r then r = flatButton(menu, W - 8, 20, COLOR.heroic, "", 11); r:SetBase(0.15); menu._rows[i] = r end
+    r:SetText(it[2]); r:ClearAllPoints(); r:SetPoint("TOPLEFT", 4, -4 - (i - 1) * 24); r:Show()
+    local uiType = it[1]
+    r:SetScript("OnClick", function() menu:Hide(); C:CreateAura(uiType) end)
+  end
+  menu:Show()
 end
 
 -- ===========================================================================
@@ -2550,7 +2535,7 @@ end
 -- so Build() stays under Lua 5.1's 60-upvalue cap.  [Slice 2: Appearance is inline;
 -- the other sections open their existing drawers for now — inlined in Slice 3.]
 -- ===========================================================================
-local ACC_HDR_H, ACC_GAP, ACC_NAME_H = 20, 10, 32
+local ACC_HDR_H, ACC_GAP = 20, 10
 
 -- Add a section under the name field. builder(content) populates it; height = its
 -- fixed content height. Sections live on C._acc.sections in insertion order.
@@ -2727,37 +2712,14 @@ function C:BuildAppearanceSection(ct)
     function(v) local c = Cfg(); if c then c.point = { "CENTER", (c.point and c.point[2]) or 0, v } end end)
 end
 
--- Show "CLICK TO RENAME" only when the current name is short enough not to run under it.
-function C:UpdateNameHint()
-  if not (C._nameHint and C._nameMeasure) then return end
-  local c = Cfg(); C._nameMeasure:SetText((c and c.label) or "")
-  C._nameHint:SetShown((C._nameMeasure:GetStringWidth() or 0) <= (EDITOR_W - 120))
-end
-
--- Build the editor: the name field + the icon-section accordion.
+-- Build the editor: the icon-section accordion.
+-- The big Khand-20 aura-NAME banner with "CLICK TO RENAME" is GONE (the owner,
+-- 2026-07-25: "a waste of space and, more importantly, confusing and nonintuitive").
+-- Renaming is now a rail action on the SELECTED aura — the Rename button in the left
+-- pane (and double-clicking its row), through the suite's shared UI.nameDialog, which
+-- is the same gesture GB's profile/preset blocks use. The accordion starts at the top.
 function C:BuildEditor(editor)
-  C._acc = { editor = editor, sections = {}, top = -54 }   -- top = first header y (below the name)
-
-  -- Aura NAME field — prominent + editable. Khand SemiBold 20 white on a heroic-8%
-  -- fill; "CLICK TO RENAME" in orange @ 30% on the right. (Renames cfg.label.)
-  editorName = CreateFrame("EditBox", nil, editor)
-  editorName:SetPoint("TOPLEFT", 0, -2); editorName:SetSize(EDITOR_W, ACC_NAME_H)
-  editorName:SetAutoFocus(false); editorName:SetTextInsets(10, 92, 0, 0)
-  setFont(editorName, FONT.title, 20); editorName:SetTextColor(1, 1, 1)
-  local nameBG = editorName:CreateTexture(nil, "BACKGROUND"); nameBG:SetAllPoints()
-  nameBG:SetColorTexture(COLOR.heroic.r, COLOR.heroic.g, COLOR.heroic.b, 0.08)
-  local nameHint = newText(editorName, FONT.body, 11, COLOR.orange, "RIGHT")
-  nameHint:SetPoint("RIGHT", -10, 0); nameHint:SetText("CLICK TO RENAME"); nameHint:SetAlpha(0.3)
-  C._nameHint = nameHint
-  -- Hidden string to measure the name width (so the hint hides when a long name would collide).
-  C._nameMeasure = editor:CreateFontString(nil, "OVERLAY"); setFont(C._nameMeasure, FONT.title, 20); C._nameMeasure:Hide()
-  editorName:SetScript("OnEditFocusGained", function() nameBG:SetColorTexture(COLOR.heroic.r, COLOR.heroic.g, COLOR.heroic.b, 0.18); nameHint:Hide() end)
-  editorName:SetScript("OnEditFocusLost",  function() nameBG:SetColorTexture(COLOR.heroic.r, COLOR.heroic.g, COLOR.heroic.b, 0.08); C:UpdateNameHint() end)
-  editorName:SetScript("OnEnterPressed", function(self)
-    local c = Cfg(); if c then local txt = self:GetText(); if txt and txt:gsub("%s", "") ~= "" then c.label = txt end end
-    self:ClearFocus(); local c2 = Cfg(); self:SetText((c2 and c2.label) or ""); RefreshList(); ReapplySelected()
-  end)
-  editorName:SetScript("OnEscapePressed", function(self) local c = Cfg(); self:SetText((c and c.label) or ""); self:ClearFocus() end)
+  C._acc = { editor = editor, sections = {}, top = -8 }   -- top = first header y
 
   -- Icon-aura sections. Appearance is inline; the rest bridge to their drawers for now.
   C:AccordionAddSection("trigger", "Aura Trigger(s)", 120, function(ct) C:BuildTriggerSection(ct) end)
@@ -2770,18 +2732,30 @@ function C:BuildEditor(editor)
   C:AccordionOpen("trigger")   -- icon aura default-opens its Trigger section (matches the mock)
 end
 
--- Left-pane button stack (Figma): New / Duplicate / Delete (dark red) / Group (dark
--- green, two-weight label). 28px tall, 10px gaps, anchored above the footer divider.
--- Fills: heroic@0.5 / heroic@0.5 / red@0.3 / green@0.3; labels General Sans Semibold 11.
+-- Left-pane button stack, restyled to the SUITE's button language (the owner,
+-- 2026-07-25: "the buttons should match the button styling from the other addons.
+-- GA predates them, and things evolved"). GB and Overlays both use 22px-tall,
+-- Title Case, 11px GeneralSans-Medium (flatButton's own default — no setFont
+-- override), heroic @0.2 for secondary actions and the ONE create action in
+-- purple @0.35 ("+ New Overlay" is the reference). Delete keeps its red @0.3 —
+-- the owner explicitly kept that. Was: 28px tall, ALL CAPS, semibold, heroic @0.5.
 function C:BuildLeftButtons(listFrame)
   local H = COLOR.heroic
-  local function mk(label, cc, base, yBot, onClick)
-    local b = flatButton(listFrame, LIST_W, 28, cc, label, 11); b:SetBase(base)
-    setFont(b.text, FONT.label, 11); b:SetPoint("BOTTOMLEFT", 0, yBot); b:SetScript("OnClick", onClick)
+  local function mk(label, cc, base, w, x, yBot, onClick)
+    local b = flatButton(listFrame, w, 22, cc, label, 11); b:SetBase(base)
+    b:SetPoint("BOTTOMLEFT", x, yBot); b:SetScript("OnClick", onClick)
     return b
   end
-  mk("NEW AURA", H, 0.5, 148, function() C:ShowLanding() end)
-  mk("DUPLICATE AURA", H, 0.5, 110, function()
+  local half = math.floor((LIST_W - 4) / 2)
+
+  local newBtn = mk("+ New Aura", COLOR.purple, 0.35, LIST_W, 0, 118, nil)
+  newBtn:SetScript("OnClick", function() C:OpenNewAuraMenu(newBtn) end)
+  UI.attachTip(newBtn, "New aura", "Creates a blank aura in this profile and opens it for editing. Pick the kind: Icon, Texture or Bar.")
+
+  local ren = mk("Rename", H, 0.2, half, 0, 90, function() C:RenameSelected() end)
+  UI.attachTip(ren, "Rename aura", "Renames the selected aura in this list. (The on-screen text an aura draws is a separate setting, under Text.)")
+
+  mk("Duplicate", H, 0.2, LIST_W - half - 4, half + 4, 90, function()
     if not (selectedID and DB() and DB()[selectedID]) then return end
     local copy = DeepCopy(DB()[selectedID]); copy.label = (copy.label or "Aura") .. " (copy)"
     local p = copy.point or { "CENTER", 0, 0 }; copy.point = { "CENTER", (p[2] or 0) + 24, (p[3] or 0) - 24 }
@@ -2789,7 +2763,8 @@ function C:BuildLeftButtons(listFrame)
     if GA.CDM then GA.CDM:Discover() end
     SetSelected(id)
   end)
-  mk("DELETE AURA", COLOR.red, 0.3, 72, function()
+
+  mk("Delete Aura", COLOR.red, 0.3, LIST_W, 0, 62, function()
     if selectedID and DB() then
       local gone = selectedID; DB()[gone] = nil
       if GA.Displays and GA.Displays.frames[gone] then GA.Displays.frames[gone]:Hide() end
@@ -2798,11 +2773,23 @@ function C:BuildLeftButtons(listFrame)
     end
   end)
 
-  local gb = flatButton(listFrame, LIST_W, 28, COLOR.green, "", 11); gb:SetBase(0.3)
+  local gb = flatButton(listFrame, LIST_W, 22, COLOR.green, "", 11); gb:SetBase(0.3)
   gb:SetPoint("BOTTOMLEFT", 0, 34); gb.text:Hide()
   C._groupBtn, C._groupLabel = gb, twoWeightLabel(gb, 11)
   gb:SetScript("OnClick", function() C:OpenGroupAssignMenu(gb) end)
   C:RefreshGroupButton()
+end
+
+-- Rename the SELECTED aura through the suite's shared name dialog — the replacement
+-- for the retired editor name banner. Renames cfg.label (the list name) ONLY; the
+-- on-screen text an aura draws is cfg.text.str, a deliberately separate field.
+function C:RenameSelected()
+  local c = Cfg(); if not c then return end
+  OpenNameDialog("Rename Aura", c.label or "", function(nm)
+    if not nm or nm:gsub("%s", "") == "" then return end
+    c.label = nm
+    RefreshList(); ReapplySelected()
+  end)
 end
 
 -- Group button label = the selected aura's group (Ungrouped if none). Hidden with no selection.
@@ -3376,6 +3363,13 @@ local function BuildTab(c)
       RefreshList()
     end)
     eye:Hide(); row.eye = eye
+    -- Double-click an aura row = rename it (the gesture people try first; the
+    -- Rename button below is the discoverable one). OnClick still fires first,
+    -- so the row is selected before the dialog opens.
+    row:RegisterForClicks("LeftButtonUp")
+    row:SetScript("OnDoubleClick", function(self)
+      if self.kind == "aura" and self.id then SetSelected(self.id); C:RenameSelected() end
+    end)
     row:SetScript("OnClick", function(self)
       if self.kind == "aura" then
         SetSelected(self.id)
@@ -3451,7 +3445,13 @@ local function BuildTab(c)
   C._profileBtn = profileBtn
   C:UpdateProfileButton()
 
-  C:BuildLanding(p)   -- the landing overlay (logo + create buttons + View All)
+  -- Empty state: shown in place of the accordion when the profile has no auras
+  -- (the splash used to cover this case). Parented to the column, not the scroll
+  -- frame, so it survives that frame being hidden.
+  local empty = newText(p, FONT.body, 12, MUTE, "CENTER")
+  empty:SetPoint("TOPLEFT", EDITOR_X, CONTENT_TOP - 40); empty:SetWidth(EDITOR_W)
+  empty:SetText("No auras in this profile yet.\n\nClick |cff936bff+ New Aura|r to make one.")
+  empty:Hide(); C._empty = empty
 
   -- OnShow/OnHide live on the CONTAINER: they fire when the tab gains/loses
   -- visibility — window open/close AND tab switches — which is exactly when
@@ -3464,7 +3464,7 @@ local function BuildTab(c)
       GA.Displays.forced = true
       GA.Displays:SetInteractive(true)
     end
-    C:ShowLanding()   -- the tab opens to the landing (Default State): pick a type or View All
+    C:SelectInitial()   -- straight into the editor on the last-edited aura (splash retired)
   end)
   c:HookScript("OnHide", function()
     CloseSubWindows()   -- close any docked drawer so it doesn't linger/reappear
