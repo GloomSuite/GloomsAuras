@@ -28,7 +28,31 @@ local issecret = _G.issecretvalue or function() return false end
 -- stays GA's own art (triangle/eye/lock/checkmark icons, logo, shapes).
 -- Surface pinned in GloomsHub/docs/CONTRACTS.md §4.
 -- --------------------------------------------------------------------------
-local Skin = LibStub("LibGloomSkin-1.0")
+-- --------------------------------------------------------------------------
+-- ★ SHARED-TOOLKIT VERSION GATE — see GloomsHub/docs/CONTRACTS.md §6.
+-- LibGloomSkin lives in GloomsHub and GROWS: each MINOR adds widgets this file
+-- may call. WoW's "## Dependencies: GloomsHub" only checks that the Hub is
+-- PRESENT, never that it is NEW ENOUGH — so a Hub a release or two behind would
+-- let this file load and then die on the first nil widget, spraying Lua errors
+-- at someone who has no idea what a MINOR is. Check first, and fail with ONE
+-- actionable sentence instead.
+-- ★ BUMP SKIN_NEEDS IN THE SAME COMMIT that first calls a newer widget.
+-- --------------------------------------------------------------------------
+local SKIN_MAJOR, SKIN_NEEDS = "LibGloomSkin-1.0", 3
+
+local Skin, skinMinor = LibStub(SKIN_MAJOR, true)
+if not Skin or (skinMinor or 0) < SKIN_NEEDS then
+  local found = Skin and ("v" .. tostring(skinMinor or 0)) or "none"
+  local warn = CreateFrame("Frame")
+  warn:RegisterEvent("PLAYER_LOGIN")
+  warn:SetScript("OnEvent", function(self)
+    self:UnregisterAllEvents()
+    print("|cffff7729Gloom's Auras:|r please update |cff936bffGloom's Hub|r. This version of "
+      .. "Auras needs a newer Hub toolkit (needs v" .. SKIN_NEEDS .. ", found " .. found
+      .. "), so the AURAS tab is unavailable. Your auras keep working normally.")
+  end)
+  return   -- chunk-level return: the tab is never registered; the display/CDM ENGINES are untouched
+end
 local UI = Skin.UI
 local COLOR, FONT, MEDIA = Skin.COLOR, Skin.FONT, GA.MEDIA
 local TEXT, MUTE = COLOR.text, COLOR.mute      -- lib tokens (promoted from the old locals)
