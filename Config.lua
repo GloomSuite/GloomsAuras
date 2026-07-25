@@ -628,6 +628,7 @@ local function RefreshList()
   local maxOff = math.max(0, n - LIST_ROWS)
   if listOffset > maxOff then listOffset = maxOff end
   if listOffset < 0 then listOffset = 0 end
+  if C.SyncListScroll then C:SyncListScroll(n, maxOff) end
   for i = 1, LIST_ROWS do
     local row = listRows[i]
     if not row then break end
@@ -2365,6 +2366,61 @@ function C:BuildLeftButtons(listFrame)
   C:SyncRailButtons()
 end
 
+-- The rail tree's scrollbar. The tree is NOT a ScrollFrame (it's a fixed pool of rows
+-- windowed by `listOffset`), so the shared UI.makeScrollbar — which drives a real
+-- ScrollFrame — doesn't apply; this is the same track+thumb the editor pane uses,
+-- driven by the offset. It lives in the rail's right MARGIN, never over a row's eye
+-- icon, and it only exists while there is something to scroll (the owner, 2026-07-25:
+-- "only when there are more than 10 items necessitating a scrollbar").
+function C:BuildListScrollbar(rail, listFrame)
+  local rowsTop, rowsH = -24, LIST_ROWS * LIST_ROW_H
+  local track = rail:CreateTexture(nil, "ARTWORK"); track:SetColorTexture(1, 1, 1, 0.06)
+  track:SetWidth(6)
+  track:SetPoint("TOPLEFT", listFrame, "TOPRIGHT", 4, rowsTop)
+  track:SetHeight(rowsH)
+  local thumb = CreateFrame("Button", nil, rail); thumb:SetWidth(6); thumb:EnableMouse(true)
+  local tt = thumb:CreateTexture(nil, "OVERLAY"); tt:SetAllPoints()
+  tt:SetColorTexture(COLOR.orange.r, COLOR.orange.g, COLOR.orange.b, 1)
+  thumb:SetPoint("TOPLEFT", track, "TOPLEFT")
+  track:Hide(); thumb:Hide()
+  C._listTrack, C._listThumb, C._listRowsH = track, thumb, rowsH
+
+  local dragging, startCY, startOff = false, 0, 0
+  thumb:SetScript("OnMouseDown", function()
+    dragging = true; startOff = listOffset
+    local _, cy = GetCursorPosition(); startCY = cy / rail:GetEffectiveScale()
+  end)
+  thumb:SetScript("OnMouseUp", function() dragging = false end)
+  thumb:SetScript("OnUpdate", function()
+    if not dragging then return end
+    local maxOff = math.max(0, #listData - LIST_ROWS)
+    local range = rowsH - thumb:GetHeight()
+    if maxOff <= 0 or range <= 0 then return end
+    local _, cy = GetCursorPosition()
+    local moved = startCY - (cy / rail:GetEffectiveScale())
+    local want = math.floor(startOff + (moved / range) * maxOff + 0.5)
+    if want ~= listOffset then
+      listOffset = math.max(0, math.min(maxOff, want))
+      RefreshList()
+    end
+  end)
+end
+
+-- Called from RefreshList: show the bar only when the tree overflows, and size the
+-- thumb to the visible fraction.
+function C:SyncListScroll(n, maxOff)
+  local track, thumb = C._listTrack, C._listThumb
+  if not (track and thumb) then return end
+  if maxOff <= 0 then track:Hide(); thumb:Hide(); return end
+  track:Show(); thumb:Show()
+  local rowsH = C._listRowsH
+  local h = math.max(24, rowsH * LIST_ROWS / n)
+  thumb:SetHeight(h)
+  local frac = listOffset / maxOff
+  thumb:ClearAllPoints()
+  thumb:SetPoint("TOPLEFT", track, "TOPLEFT", 0, -(rowsH - h) * frac)
+end
+
 -- Rename / Duplicate / Delete act on the selected AURA, so they grey out while a
 -- GROUP is selected (a group's own Rename / Delete live in its pane, where its
 -- other settings are). flatButton's OnDisable does the greying.
@@ -3175,6 +3231,8 @@ local function BuildTab(c)
     end)
     listRows[i] = row
   end
+
+  C:BuildListScrollbar(rail, listFrame)   -- appears only when the tree overflows
 
   -- Rail button stack (New Aura / New Group · Rename / Duplicate · Delete Aura).
   C:BuildLeftButtons(listFrame)
