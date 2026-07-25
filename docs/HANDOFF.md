@@ -142,10 +142,14 @@ PLACED in a CDM viewer are trackable** (registry ≠ placed).
   (NOT clamped), Cooldown swipe (OOC), **`RefreshForced`** (editor preview = selected + eye-on only).
 - `CDM.lua` — `GA.CDM`: the mirror engine — state tracking, **recursive grouped trigger eval** (AND/OR/
   NONE), discovery, hooks.
-- `Config.lua` — `GA.Config`: the whole GUI toolkit (`flatButton/flatCheck/flatEditBox/MakeSlider/
-  MakeColor/MakeCycle/makeSwitch/MakeDropdown/skinPlate/addEdges`) + two-pane panel + aura picker +
-  **texture picker** + **grouped trigger tree editor** (`C._trig`) + visibility/sound/text/**glow**/profile
-  drawers. Much drawer/editor state hangs on the `C` table (chunk-local cap).
+- `Config.lua` — `GA.Config`: the Auras TAB (layout rework, 2026-07-25) — a flush-left **rail**
+  (`UI.tabHeader` + the shared `UI.profileBlock` + the GROUPS & AURAS tree + New/Rename/Duplicate/
+  Delete) beside an **editor pane** that fills the container. The pane shows the ACCORDION for a
+  selected aura or the **GROUP PANE** for a selected group. Local helpers on top of LibGloomSkin
+  (`MakeSlider/MakeColor/MakeCycle/MakeDropdown/twoWeightLabel`) + the four remaining PICKERS
+  (spell/trigger · texture · sound · font — transient by nature, so still docked windows).
+  **The Manage Group, Visibility, Text and Glow drawers are DELETED**; their content is inline.
+  Much editor state hangs on the `C` table (chunk-local cap — ~170/200, watch it).
 - `Media/TextureManifest.lua` — auto-generated `GA.TextureShapes` (254 aura shapes). Regenerate via
   `scratchpad/gen_manifest.py` if the bundled art changes.
 - `Media/` — bundled Khand/GeneralSans fonts, `bg_flame.png`, `minimap.png`, the owner's custom UI icons
