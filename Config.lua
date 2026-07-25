@@ -368,13 +368,22 @@ local function MakeSlider(parent, yOff, label, minV, maxV, step, get, set)
   local title = newText(parent, FONT.body, 12, TEXT, "LEFT")
   title:SetPoint("LEFT", parent, "TOPLEFT", 4, yOff - 10); title:SetText(label)
 
+  -- The row SPANS ITS PANE rather than sitting at a fixed 360 (the width the retired
+  -- Figma column dictated): label · − · track · + · value box, with the track taking
+  -- all the slack. Measured off the parent, so this one line widened every slider in
+  -- the tab when the editor pane grew — and a longer track is finer control, which
+  -- matters most on the ±2000 X/Y offsets. Falls back to the old 360 geometry exactly.
+  local W = math.max(360, parent:GetWidth() or 0)
+  local trackW = W - 194
+  local plusX, editX = 100 + trackW + 10, 100 + trackW + 40
+
   local minus = flatButton(parent, 20, 20, H, "−", 16); minus:SetBase(0.5)
   minus:SetPoint("TOPLEFT", 70, yOff); setFont(minus.text, FONT.head, 16)
 
   local slider
   pcall(function() slider = CreateFrame("Slider", nil, parent) end)
   if slider then
-    slider:SetOrientation("HORIZONTAL"); slider:SetSize(166, 20)
+    slider:SetOrientation("HORIZONTAL"); slider:SetSize(trackW, 20)
     slider:SetPoint("TOPLEFT", 100, yOff); slider:SetHitRectInsets(0, 0, -6, -6)
     local track = slider:CreateTexture(nil, "BACKGROUND")
     track:SetPoint("LEFT", 0, 0); track:SetPoint("RIGHT", 0, 0); track:SetHeight(6)
@@ -386,10 +395,10 @@ local function MakeSlider(parent, yOff, label, minV, maxV, step, get, set)
   end
 
   local plus = flatButton(parent, 20, 20, H, "+", 16); plus:SetBase(0.5)
-  plus:SetPoint("TOPLEFT", 276, yOff); setFont(plus.text, FONT.head, 16)
+  plus:SetPoint("TOPLEFT", plusX, yOff); setFont(plus.text, FONT.head, 16)
 
   local edit = CreateFrame("EditBox", nil, parent)
-  edit:SetSize(54, 20); edit:SetPoint("TOPLEFT", 306, yOff); edit:SetAutoFocus(false)
+  edit:SetSize(54, 20); edit:SetPoint("TOPLEFT", editX, yOff); edit:SetAutoFocus(false)
   setFont(edit, FONT.body, 11); edit:SetTextColor(1, 1, 1); edit:SetJustifyH("CENTER"); edit:SetTextInsets(2, 2, 0, 0)
   local ebg = edit:CreateTexture(nil, "BACKGROUND"); ebg:SetAllPoints(); ebg:SetColorTexture(H.r, H.g, H.b, 0.08)
 
@@ -1644,6 +1653,11 @@ local EDITOR_X = RAIL_W + 30              -- editor content x (30px right of the
 local EDITOR_W = CONTENT_W - EDITOR_X - 30 -- 560 — fills the pane; the old 360 column is retired
 local FOOTER_H = 52                       -- footer strip (GB's height; was 86 when it held Profile)
 local PANE_H = 626 + CONTENT_TOP - FOOTER_H  -- 562: editor pane height
+-- Two-column geometry inside the editor pane. Paired controls (Blend|Strata,
+-- Outline|Anchor, the Load Conditions toggles) sit one per column instead of
+-- crowding the left half — which is how the pane fills without dead space.
+local COL_W = math.floor((EDITOR_W - 20) / 2)   -- 270
+local COL2_X = COL_W + 20                       -- second column x
 
 -- The player's specs, for the Load Conditions spec multi-select. (It lived inside
 -- the Visibility drawer that the group pane retired; the inline Load Conditions
@@ -1752,8 +1766,6 @@ end
 -- live via ReapplySelected → Displays:ApplyConfig. Docks like the other editors.
 -- (Font picker comes next.)
 -- --------------------------------------------------------------------------
-local textFrame, teTitle
-local teRows = {}
 local TE_ANCHOR = { { "BOTTOM", "Below" }, { "TOP", "Above" }, { "CENTER", "On aura" }, { "LEFT", "Left" }, { "RIGHT", "Right" } }
 local TE_OUTLINE = { { "NONE", "None" }, { "OUTLINE", "Outline" }, { "THICKOUTLINE", "Thick" } }
 
@@ -1763,13 +1775,6 @@ local function TE_Text()
   return c.text
 end
 
-local function RefreshTextEditor()
-  if not (textFrame and textFrame:IsShown()) then return end   -- only when open (avoids seeding cfg.text on every select)
-  local c = Cfg()
-  if teTitle then teTitle:SetText("Text: " .. ((c and c.label) or "")) end
-  for _, r in ipairs(teRows) do r:refresh() end
-end
-C.RefreshTextEditor = RefreshTextEditor
 
 -- Font picker: bundled fonts (GeneralSans / Khand) + LSM "font" media, each row
 -- previewed in its own typeface. Opened from the Text drawer (which stays open).
@@ -1867,172 +1872,12 @@ local function OpenFontPicker(onPick, current)
     if not ok then GA.msg("|cffff5555font picker failed to build|r: " .. tostring(err)); return end
   end
   fontData = BuildFontData(); fontOffset = 0
-  CloseSubWindows(fontPickerFrame, textFrame)   -- keep the Text drawer open underneath
+  CloseSubWindows(fontPickerFrame)
   fontPickerFrame:Show(); fontPickerFrame:Raise()
   RefreshFontList()
 end
 
-local function BuildTextEditor()
-  local W, H = 380, 346
-  local f = CreateFrame("Frame", "GloomsAurasText", UIParent)
-  f:SetSize(W, H); f:SetPoint("CENTER"); f:SetFrameStrata("FULLSCREEN_DIALOG"); f:EnableMouse(true)
-  skinPlate(f)
-  teTitle = newText(f, FONT.title, 17, COLOR.purple, "LEFT")
-  teTitle:SetPoint("TOPLEFT", 14, -12); teTitle:SetPoint("RIGHT", -36, 0); teTitle:SetText("Text")
-  local close = flatButton(f, 22, 20, COLOR.heroic, "X", 12)
-  close:SetPoint("TOPRIGHT", -8, -8); close:SetScript("OnClick", function() f:Hide() end)
-  f:SetMovable(true); f:SetClampedToScreen(true)
-  local tb = CreateFrame("Frame", nil, f); tb:SetPoint("TOPLEFT", 2, -2); tb:SetPoint("TOPRIGHT", -34, -2)
-  tb:SetHeight(28); tb:EnableMouse(true); tb:RegisterForDrag("LeftButton")
-  tb:SetScript("OnDragStart", function() if f:IsMovable() then f:StartMoving() end end)
-  tb:SetScript("OnDragStop", function() f:StopMovingOrSizing() end)
 
-  -- Show text switch.
-  local showLbl = newText(f, FONT.body, 12, TEXT, "LEFT"); showLbl:SetPoint("TOPLEFT", 16, -44); showLbl:SetText("Show text")
-  local showSw = makeSwitch(f, "OFF", "ON", function(v)
-    local t = TE_Text(); if t then t.show = v; ReapplySelected() end
-  end)
-  showSw:SetPoint("LEFT", showLbl, "RIGHT", 14, 0)
-  teRows[#teRows + 1] = { refresh = function() local t = TE_Text(); showSw:Set(not t or t.show ~= false) end }
-
-  -- Charge-count switch: show a charge spell's LIVE count (resolved from the aura's own spell,
-  -- else the first charge condition in its trigger) instead of the custom text. Exact for 2-charge
-  -- spells (2/1/0); blank while a 3+ charge spell is mid-recharge. Turning it on also ensures the
-  -- text is shown so the number actually appears.
-  local ccLbl = newText(f, FONT.body, 12, TEXT, "LEFT"); ccLbl:SetPoint("TOPLEFT", 16, -74); ccLbl:SetText("Charge count")
-  local ccSw = makeSwitch(f, "OFF", "ON", function(v)
-    local t = TE_Text(); if t then t.showCount = v or nil; if v then t.show = true; showSw:Set(true) end; ReapplySelected() end
-  end)
-  ccSw:SetPoint("LEFT", ccLbl, "RIGHT", 14, 0)
-  teRows[#teRows + 1] = { refresh = function() local t = TE_Text(); ccSw:Set(t and t.showCount == true) end }
-
-  -- Content box (blank = the aura's name).
-  local cLbl = newText(f, FONT.body, 11, MUTE, "LEFT"); cLbl:SetPoint("TOPLEFT", 16, -100); cLbl:SetText("Text  (blank = the aura's name)")
-  local cBox = flatEditBox(f, W - 32, 22); cBox:SetPoint("TOPLEFT", 16, -118)
-  cBox:SetScript("OnEnterPressed", function(self)
-    local t = TE_Text(); if t then local s = self:GetText(); t.str = (s ~= "" and s) or nil; ReapplySelected() end
-    self:ClearFocus()
-  end)
-  cBox:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
-  teRows[#teRows + 1] = { refresh = function() local t = TE_Text(); cBox:SetText((t and t.str) or ""); cBox:SetCursorPosition(0) end }
-
-  -- Font (opens the font picker; keeps this drawer open underneath).
-  local fontBtn = flatButton(f, W - 32, 22, COLOR.heroic, "Font: Default", 12)
-  fontBtn:SetPoint("TOPLEFT", 16, -148)
-  fontBtn:SetScript("OnClick", function()
-    local t = TE_Text()
-    OpenFontPicker(function(path)
-      local t2 = TE_Text(); if t2 then t2.font = path; ReapplySelected(); fontBtn:SetText("Font: " .. fontNameFor(path)) end
-    end, t and t.font)
-  end)
-  teRows[#teRows + 1] = { refresh = function() local c = Cfg(); local t = c and c.text; fontBtn:SetText("Font: " .. fontNameFor(t and t.font)) end }
-
-  -- Size slider.
-  teRows[#teRows + 1] = MakeSlider(f, -180, "Size", 6, 48, 1,
-    function() local t = TE_Text(); return t and (t.size or 14) end,
-    function(v) local t = TE_Text(); if t then t.size = v end end)
-
-  -- Outline + Anchor dropdowns.
-  teRows[#teRows + 1] = MakeDropdown(f, 16, -212, 160, "Outline: ", TE_OUTLINE,
-    function() local t = TE_Text(); return (t and t.outline) or "OUTLINE" end,
-    function(v) local t = TE_Text(); if t then t.outline = (v ~= "OUTLINE") and v or nil end end)
-  teRows[#teRows + 1] = MakeDropdown(f, 200, -212, 164, "Anchor: ", TE_ANCHOR,
-    function() local t = TE_Text(); return (t and t.anchor) or "BOTTOM" end,
-    function(v) local t = TE_Text(); if t then t.anchor = (v ~= "BOTTOM") and v or nil end end)
-
-  -- Colour.
-  teRows[#teRows + 1] = MakeColor(f, 16, -244,
-    function() local t = TE_Text(); return t and t.color end,
-    function(v) local t = TE_Text(); if t then t.color = v end end)
-
-  -- X / Y offset (added on top of the anchor's base position).
-  teRows[#teRows + 1] = MakeSlider(f, -274, "X Offset", -400, 400, 2,
-    function() local t = TE_Text(); return t and (t.x or 0) end,
-    function(v) local t = TE_Text(); if t then t.x = (v ~= 0) and v or nil end end)
-  teRows[#teRows + 1] = MakeSlider(f, -306, "Y Offset", -400, 400, 2,
-    function() local t = TE_Text(); return t and (t.y or 0) end,
-    function(v) local t = TE_Text(); if t then t.y = (v ~= 0) and v or nil end end)
-
-  tinsert(UISpecialFrames, "GloomsAurasText")
-  f:Hide()
-  textFrame = f; RegisterSubWindow(f)
-  return f
-end
-
-local function OpenTextEditor(id)
-  if not id then return end
-  if not textFrame then
-    local ok, err = pcall(BuildTextEditor)
-    if not ok then GA.msg("|cffff5555text editor failed to build|r: " .. tostring(err)); return end
-  end
-  CloseSubWindows(textFrame)
-  DockRight(textFrame)
-  textFrame:Show(); textFrame:Raise()
-  RefreshTextEditor()   -- after Show so its "only when open" guard passes
-end
-
--- --------------------------------------------------------------------------
--- Glow drawer (Effects): LibCustomGlow effect on the SELECTED aura. Type (None /
--- Autocast Shine / Pixel Glow / Proc Glow / Action Button Glow) + optional custom
--- color. cfg.glow = { type, customColor, color }. Applied live via ReapplySelected
--- → Displays:ApplyConfig → ApplyGlow. State/functions hang on C (chunk locals full).
--- --------------------------------------------------------------------------
-C._glow = { rows = {} }
-
-function C:BuildGlowEditor()
-  local W, H = 300, 150
-  local f = CreateFrame("Frame", "GloomsAurasGlowEditor", UIParent)
-  f:SetSize(W, H); f:SetPoint("CENTER"); f:SetFrameStrata("FULLSCREEN_DIALOG"); f:EnableMouse(true)
-  skinPlate(f)
-  C._glow.title = newText(f, FONT.title, 16, COLOR.purple, "LEFT")
-  C._glow.title:SetPoint("TOPLEFT", 14, -14); C._glow.title:SetPoint("RIGHT", -36, 0); C._glow.title:SetText("Glow")
-  local close = flatButton(f, 22, 20, COLOR.heroic, "X", 12)
-  close:SetPoint("TOPRIGHT", -8, -8); close:SetScript("OnClick", function() f:Hide() end)
-  f:SetMovable(true); f:SetClampedToScreen(true)
-  local tb = CreateFrame("Frame", nil, f); tb:SetPoint("TOPLEFT", 2, -2); tb:SetPoint("TOPRIGHT", -34, -2)
-  tb:SetHeight(28); tb:EnableMouse(true); tb:RegisterForDrag("LeftButton")
-  tb:SetScript("OnDragStart", function() if f:IsMovable() then f:StartMoving() end end)
-  tb:SetScript("OnDragStop", function() f:StopMovingOrSizing() end)
-
-  local typeLbl = newText(f, FONT.body, 12, TEXT, "LEFT"); typeLbl:SetPoint("TOPLEFT", 16, -46); typeLbl:SetText("Type")
-  C._glow.rows[#C._glow.rows + 1] = MakeDropdown(f, 58, -44, 216, "",
-    { { "none", "None" }, { "autocast", "Autocast Shine" }, { "pixel", "Pixel Glow" },
-      { "proc", "Proc Glow" }, { "button", "Action Button Glow" } },
-    function() local c = Cfg(); return (c and c.glow and c.glow.type) or "none" end,
-    function(v) local c = Cfg(); if not c then return end; c.glow = c.glow or {}; c.glow.type = (v ~= "none") and v or nil end)
-
-  C._glow.rows[#C._glow.rows + 1] = MakeColor(f, 16, -84,
-    function() local c = Cfg(); return c and c.glow and c.glow.customColor and c.glow.color end,
-    function(v) local c = Cfg(); if not c then return end; c.glow = c.glow or {}; c.glow.color = v; c.glow.customColor = (v ~= nil) or nil end,
-    "Custom Color")
-
-  local hint = newText(f, FONT.body, 11, MUTE, "LEFT")
-  hint:SetPoint("TOPLEFT", 16, -112); hint:SetPoint("RIGHT", -14, 0); hint:SetJustifyH("LEFT")
-  hint:SetText("The glow shows while the aura is on screen. Custom Color off = the glow's own default color.")
-
-  tinsert(UISpecialFrames, "GloomsAurasGlowEditor")
-  f:Hide(); C._glow.frame = f; RegisterSubWindow(f)
-  return f
-end
-
-function C:OpenGlowEditor(id)
-  if not id then return end
-  if not C._glow.frame then
-    local ok, err = pcall(function() C:BuildGlowEditor() end)
-    if not ok then GA.msg("|cffff5555glow editor failed to build|r: " .. tostring(err)); return end
-  end
-  CloseSubWindows(C._glow.frame)
-  DockRight(C._glow.frame)
-  C._glow.frame:Show(); C._glow.frame:Raise()
-  C:RefreshGlowEditor()
-end
-
-function C:RefreshGlowEditor()
-  if not (C._glow.frame and C._glow.frame:IsShown()) then return end
-  local c = Cfg()
-  if C._glow.title then C._glow.title:SetText("Glow: " .. ((c and c.label) or "")) end
-  for _, r in ipairs(C._glow.rows) do r:refresh() end
-end
 
 -- ---------------------------------------------------------------------------
 -- Opening the tab. The LANDING SPLASH IS RETIRED (2026-07-25, the owner: "the splash
@@ -2218,8 +2063,10 @@ end
 function C:BuildAppearanceSection(ct)
   local H = COLOR.heroic
 
-  -- Texture field (heroic-8% fill, placeholder when empty) + Choose pill.
-  local tfield = CreateFrame("EditBox", nil, ct); tfield:SetSize(270, 28); tfield:SetPoint("TOPLEFT", 0, 0)
+  -- Texture field (heroic-8% fill, placeholder when empty) + Choose pill. The field
+  -- takes the pane's width less the pill — texture paths are long, and this is the
+  -- control that most wanted the room the wider pane freed up.
+  local tfield = CreateFrame("EditBox", nil, ct); tfield:SetSize(EDITOR_W - 90, 28); tfield:SetPoint("TOPLEFT", 0, 0)
   tfield:SetAutoFocus(false); setFont(tfield, FONT.body, 11); tfield:SetTextColor(1, 1, 1); tfield:SetTextInsets(10, 10, 0, 0)
   local tbg = tfield:CreateTexture(nil, "BACKGROUND"); tbg:SetAllPoints(); tbg:SetColorTexture(H.r, H.g, H.b, 0.08)
   local tph = newText(tfield, FONT.body, 11, TEXT, "LEFT"); tph:SetPoint("LEFT", 10, 0); tph:SetAlpha(0.3)
@@ -2235,7 +2082,7 @@ function C:BuildAppearanceSection(ct)
     refresh = function() local c = Cfg(); local v = c and c.texture; tfield:SetText(v ~= nil and tostring(v) or ""); tfield:SetCursorPosition(0); tUpdPH() end,
     setEnabled = function(_, on) tfield:SetEnabled(on) end }
 
-  local choose = flatButton(ct, 80, 28, H, "Choose", 11); choose:SetBase(0.5); choose:SetPoint("TOPLEFT", 280, 0)
+  local choose = flatButton(ct, 80, 28, H, "Choose", 11); choose:SetBase(0.5); choose:SetPoint("TOPLEFT", EDITOR_W - 80, 0)
   setFont(choose.text, FONT.body, 11)
   choose:SetScript("OnClick", function()
     local c = Cfg(); if not c then return end
@@ -2247,7 +2094,7 @@ function C:BuildAppearanceSection(ct)
   rows[#rows + 1] = MakeColor(ct, 0, -48,
     function() local c = Cfg(); return c and c.color end,
     function(v) local c = Cfg(); if c then c.color = v end end, "Recolor")
-  local desat = flatCheck(ct, "Desaturate"); desat:SetPoint("TOPLEFT", 156, -48)
+  local desat = flatCheck(ct, "Desaturate"); desat:SetPoint("TOPLEFT", COL2_X, -48)
   desat:SetScript("OnClick", function()
     local c = Cfg(); if not c then return end
     desat:Set(not desat:Get()); c.desaturate = desat:Get() or nil; ReapplySelected()
@@ -2256,10 +2103,10 @@ function C:BuildAppearanceSection(ct)
                       setEnabled = function(_, on) desat:SetEnabled(on) end }
 
   -- Blend / Strata pills.
-  rows[#rows + 1] = MakeDropdown(ct, 0, -88, 175, "Blend Mode:", BLEND_MODES,
+  rows[#rows + 1] = MakeDropdown(ct, 0, -88, COL_W, "Blend Mode:", BLEND_MODES,
     function() local c = Cfg(); return (c and c.blend) or "BLEND" end,
     function(v) local c = Cfg(); if c then c.blend = (v ~= "BLEND") and v or nil end end)
-  rows[#rows + 1] = MakeDropdown(ct, 185, -88, 175, "Strata:", STRATA_MODES,
+  rows[#rows + 1] = MakeDropdown(ct, COL2_X, -88, COL_W, "Strata:", STRATA_MODES,
     function() local c = Cfg(); return (c and c.strata) or "HIGH" end,
     function(v) local c = Cfg(); if c then c.strata = (v ~= "HIGH") and v or nil end end)
 
@@ -2316,9 +2163,13 @@ function C:BuildEditor(editor)
   C:AccordionAddSection("trigger", "Aura Trigger(s)", 120, function(ct) C:BuildTriggerSection(ct) end)
   C:AccordionAddSection("appearance", "Appearance, Position & Size", 310, function(ct) C:BuildAppearanceSection(ct) end)
   C:AccordionAddSection("text", "Text", 285, function(ct) C:BuildTextSection(ct) end)
-  C:AccordionAddSection("effects", "Effects & Motion", 112, function(ct) C:BuildEffectsSection(ct) end)
-  C:AccordionAddSection("sounds", "Sounds", 110, function(ct) C:BuildSoundSection(ct) end)
-  C:AccordionAddSection("load", "Aura Load Conditions", 420, function(ct) C:BuildLoadConditionsSection(ct) end)
+  C:AccordionAddSection("effects", "Effects & Motion", 78, function(ct) C:BuildEffectsSection(ct) end)
+  C:AccordionAddSection("sounds", "Sounds", 72, function(ct) C:BuildSoundSection(ct) end)
+  -- Load Conditions sizes itself: its height depends on how many SPECS the class has,
+  -- which the 420 guess only happened to fit. The builder returns its real height.
+  local loadH
+  C:AccordionAddSection("load", "Aura Load Conditions", 420, function(ct) loadH = C:BuildLoadConditionsSection(ct) end)
+  if loadH then C:AccordionSetHeight("load", loadH) end
 
   C:AccordionOpen("trigger")   -- an aura opens on its Trigger section
 end
@@ -2349,7 +2200,7 @@ function C:BuildGroupPane(parent)
   local hdr = newText(pane, FONT.head, 12, MUTE, "LEFT")
   hdr:SetPoint("TOPLEFT", 0, -2); hdr:SetText("GROUP")
   local name = newText(pane, FONT.title, 20, COLOR.purple, "LEFT")
-  name:SetPoint("TOPLEFT", 0, -20); name:SetWidth(300); name:SetWordWrap(false)
+  name:SetPoint("TOPLEFT", 0, -20); name:SetWidth(EDITOR_W - 200); name:SetWordWrap(false)
   C._gpaneName = name
 
   -- Order (a group's place in the rail) — right-aligned on the name's row.
@@ -2610,7 +2461,7 @@ local TRIG_LOGICS = { { "AND", "ALL" }, { "OR", "ANY" }, { "NONE", "NONE" } }
 -- (→ "Add to Trigger Group" moves the selection into a new group).
 function C:MakeTrigRow(parent)
   local H = COLOR.heroic
-  local row = CreateFrame("Button", nil, parent); row:SetSize(340, 20); row:RegisterForClicks("LeftButtonUp")
+  local row = CreateFrame("Button", nil, parent); row:SetSize(EDITOR_W - 20, 20); row:RegisterForClicks("LeftButtonUp")
   local selTex = row:CreateTexture(nil, "BACKGROUND"); selTex:SetPoint("TOPLEFT", -2, 2); selTex:SetPoint("BOTTOMRIGHT", 2, -2)
   selTex:SetColorTexture(COLOR.purple.r, COLOR.purple.g, COLOR.purple.b, 0.25); selTex:Hide(); row.selTex = selTex
   local x = flatButton(row, 20, 20, H, "X", 11); x:SetBase(0.5); x:SetPoint("TOPRIGHT", 0, 0); row.x = x
@@ -2718,24 +2569,24 @@ function C:BuildTriggerSection(ct)
   end
 
   -- Bordered trigger box (heroic@0.05 fill + purple@0.2 border), dynamic height.
-  local box = CreateFrame("Frame", nil, ct); box:SetPoint("TOPLEFT", 0, -48); box:SetSize(360, 66)
+  local box = CreateFrame("Frame", nil, ct); box:SetPoint("TOPLEFT", 0, -48); box:SetSize(EDITOR_W, 66)
   local bbg = box:CreateTexture(nil, "BACKGROUND"); bbg:SetAllPoints(); bbg:SetColorTexture(H.r, H.g, H.b, 0.05)
   addEdges(box, { r = COLOR.purple.r, g = COLOR.purple.g, b = COLOR.purple.b, a = 0.2 }, 1)
   C._trigUI.box = box
 
   -- "Add a Trigger" bar (bottom of the box).
-  local addBar = flatButton(box, 360, 28, H, "Add a TRIGGER", 11); addBar:SetBase(0.5)
+  local addBar = flatButton(box, EDITOR_W, 28, H, "Add a TRIGGER", 11); addBar:SetBase(0.5)
   setFont(addBar.text, FONT.label, 11)
   addBar:SetPoint("BOTTOMLEFT", 0, 0); addBar:SetPoint("BOTTOMRIGHT", 0, 0)
   addBar:SetScript("OnClick", function() OpenPicker(function(item) C:TrigAddLeaf(item, nil) end) end)
   C._trigUI.addBar = addBar
 
   -- "Add to Trigger Group" bar (below the box) + shift-click hint.
-  local addG = flatButton(ct, 360, 28, H, "", 11); addG:SetBase(0.5); addG.text:Hide()
+  local addG = flatButton(ct, EDITOR_W, 28, H, "", 11); addG:SetBase(0.5); addG.text:Hide()
   addG._lbl = twoWeightLabel(addG, 11); addG._lbl:Set("Add to", "TRIGGER GROUP")
   addG:SetScript("OnClick", function() C:TrigAddToGroup() end)
   C._trigUI.addGroup = addG
-  local hint = newText(ct, FONT.body, 11, MUTE, "CENTER"); hint:SetWidth(360)
+  local hint = newText(ct, FONT.body, 11, MUTE, "CENTER"); hint:SetWidth(EDITOR_W)
   hint:SetText("Shift-click multiple condition names above to add to a group")
   C._trigUI.hint = hint
 end
@@ -2840,7 +2691,7 @@ function C:BuildTextSection(ct)
     if not c.text then c.text = { show = (c.showLabel ~= false) } end; return c.text end  -- write, seeds
 
   -- Content field (heroic-8%, placeholder = the aura's name).
-  local cf = CreateFrame("EditBox", nil, ct); cf:SetSize(360, 28); cf:SetPoint("TOPLEFT", 0, 0)
+  local cf = CreateFrame("EditBox", nil, ct); cf:SetSize(EDITOR_W, 28); cf:SetPoint("TOPLEFT", 0, 0)
   cf:SetAutoFocus(false); setFont(cf, FONT.body, 13); cf:SetTextColor(1, 1, 1); cf:SetTextInsets(10, 10, 0, 0)
   local cbg = cf:CreateTexture(nil, "BACKGROUND"); cbg:SetAllPoints(); cbg:SetColorTexture(H.r, H.g, H.b, 0.08)
   local cph = newText(cf, FONT.body, 13, TEXT, "LEFT"); cph:SetPoint("LEFT", 10, 0); cph:SetAlpha(0.3); cph:SetText("Text (blank = the aura's name)")
@@ -2859,11 +2710,11 @@ function C:BuildTextSection(ct)
   sTog:SetPoint("TOPLEFT", 94, -48)
   rows[#rows + 1] = { refresh = function() sTog:refresh() end, setEnabled = function() end }
 
-  local cLbl = newText(ct, FONT.body, 11, { r = 1, g = 1, b = 1 }, "LEFT"); cLbl:SetPoint("TOPLEFT", 150, -50); cLbl:SetText("Show Charge Count")
+  local cLbl = newText(ct, FONT.body, 11, { r = 1, g = 1, b = 1 }, "LEFT"); cLbl:SetPoint("TOPLEFT", COL2_X, -50); cLbl:SetText("Show Charge Count")
   local cTog = makeToggle(ct,
     function() local t = txt(); return t and t.showCount == true end,
     function(v) local t = ensure(); if t then t.showCount = v or nil; if v then t.show = true; sTog:refresh() end; ReapplySelected() end end)
-  cTog:SetPoint("TOPLEFT", 258, -48)
+  cTog:SetPoint("TOPLEFT", COL2_X + 108, -48)
   rows[#rows + 1] = { refresh = function() cTog:refresh() end, setEnabled = function() end }
 
   -- Font pill + Text Color.
@@ -2875,7 +2726,7 @@ function C:BuildTextSection(ct)
   end)
   rows[#rows + 1] = { refresh = function() local t = txt(); fLbl:Set("Font:", fontNameFor(t and t.font)) end, setEnabled = function(_, on) fb:SetEnabled(on) end }
 
-  rows[#rows + 1] = MakeColor(ct, 239, -91,
+  rows[#rows + 1] = MakeColor(ct, COL2_X, -91,
     function() local t = txt(); return t and t.color end,
     function(v) local t = ensure(); if t then t.color = v end end, "Text Color")
 
@@ -2885,10 +2736,10 @@ function C:BuildTextSection(ct)
     function(v) local t = ensure(); if t then t.size = v end end)
 
   -- Outline + Anchor.
-  rows[#rows + 1] = MakeDropdown(ct, 0, -176, 175, "Outline:", TE_OUTLINE,
+  rows[#rows + 1] = MakeDropdown(ct, 0, -176, COL_W, "Outline:", TE_OUTLINE,
     function() local t = txt(); return (t and t.outline) or "OUTLINE" end,
     function(v) local t = ensure(); if t then t.outline = (v ~= "OUTLINE") and v or nil end end)
-  rows[#rows + 1] = MakeDropdown(ct, 185, -176, 175, "Anchor:", TE_ANCHOR,
+  rows[#rows + 1] = MakeDropdown(ct, COL2_X, -176, COL_W, "Anchor:", TE_ANCHOR,
     function() local t = txt(); return (t and t.anchor) or "BOTTOM" end,
     function(v) local t = ensure(); if t then t.anchor = (v ~= "BOTTOM") and v or nil end end)
 
@@ -2909,14 +2760,14 @@ function C:BuildEffectsSection(ct)
   rows[#rows + 1] = MakeDropdown(ct, 0, 0, 220, "Glow:", GLOW,
     function() local c = Cfg(); return (c and c.glow and c.glow.type) or "none" end,
     function(v) local c = Cfg(); if not c then return end; c.glow = c.glow or {}; c.glow.type = (v ~= "none") and v or nil end)
-  -- Custom Color sits on its OWN row under the dropdown: the checkbox + "Custom Color"
-  -- label + swatch is ~157px wide, which overruns the 360px editor if placed beside the
-  -- 220px Glow dropdown (the swatch fell off the panel's right edge).
-  rows[#rows + 1] = MakeColor(ct, 0, -38,
+  -- Custom Color sits BESIDE the dropdown again. It was banished to its own row when
+  -- the pane was 360 wide (checkbox + label + swatch is ~157px, and the swatch fell off
+  -- the right edge); the wider pane fits both on one row, so the section lost 34px.
+  rows[#rows + 1] = MakeColor(ct, COL2_X, -3,
     function() local c = Cfg(); return c and c.glow and c.glow.customColor and c.glow.color end,
     function(v) local c = Cfg(); if not c then return end; c.glow = c.glow or {}; c.glow.color = v; c.glow.customColor = (v ~= nil) or nil end,
     "Custom Color")
-  local hint = newText(ct, FONT.body, 11, MUTE, "LEFT"); hint:SetPoint("TOPLEFT", 0, -70); hint:SetWidth(360); hint:SetJustifyH("LEFT")
+  local hint = newText(ct, FONT.body, 11, MUTE, "LEFT"); hint:SetPoint("TOPLEFT", 0, -40); hint:SetWidth(EDITOR_W); hint:SetJustifyH("LEFT")
   hint:SetText("Glow shows while the aura is on screen. Custom Color off = the glow's own colour.")
 end
 
@@ -2931,7 +2782,7 @@ function C:BuildSoundSection(ct)
   -- The "Play:" timing dropdown — only meaningful with a sound set, so its enabled state
   -- follows both the selection AND whether a sound is chosen.
   local ON = { { "trigger", "When it triggers" }, { "untrigger", "When it wears off" }, { "pandemic", "Pandemic window" } }
-  local onRow = MakeDropdown(ct, 2, -36, 220, "Play:", ON,
+  local onRow = MakeDropdown(ct, COL2_X, -3, COL_W, "Play:", ON,
     function() local c = Cfg(); return (c and c.sound and c.sound.on) or "trigger" end,
     function(v) local c = Cfg(); if c and c.sound then c.sound.on = v end end)
   local function refreshOnEnabled() local c = Cfg(); onRow:setEnabled((c and c.sound) and true or false) end
@@ -2947,7 +2798,7 @@ function C:BuildSoundSection(ct)
   local tb = flatButton(ct, 52, 22, COLOR.heroic, "Test", 12); tb:SetBase(0.4); tb:SetPoint("LEFT", sb, "RIGHT", 8, 0)
   tb:SetScript("OnClick", function() local c = Cfg(); if c and c.sound and c.sound.file then pcall(PlaySoundFile, c.sound.file, c.sound.channel or "Master") end end)
 
-  local hint = newText(ct, FONT.body, 11, MUTE, "LEFT"); hint:SetPoint("TOPLEFT", 2, -72); hint:SetWidth(356); hint:SetJustifyH("LEFT")
+  local hint = newText(ct, FONT.body, 11, MUTE, "LEFT"); hint:SetPoint("TOPLEFT", 2, -36); hint:SetWidth(EDITOR_W - 4); hint:SetJustifyH("LEFT")
   hint:SetText("Triggers = when the aura is applied (no re-fire on target swap). Pandemic works for DoT/debuff auras.")
 
   rows[#rows + 1] = {
@@ -2978,10 +2829,10 @@ function C:BuildLoadConditionsSection(ct, o)
 
   local COMBAT = { { "any", "Any" }, { "in", "In Combat" }, { "out", "Out of Combat" } }
   local TARGET = { { "any", "Any" }, { "has", "Has Target" }, { "none", "No Target" } }
-  sink[#sink + 1] = MakeDropdown(ct, 0, -6, 172, "Combat:", COMBAT,
+  sink[#sink + 1] = MakeDropdown(ct, 0, -6, COL_W, "Combat:", COMBAT,
     function() local v = vis(); return (v and v.combat) or "any" end,
     function(x) local v = visW(); if v then v.combat = (x ~= "any") and x or nil; poke() end end)
-  sink[#sink + 1] = MakeDropdown(ct, 184, -6, 172, "Target:", TARGET,
+  sink[#sink + 1] = MakeDropdown(ct, COL2_X, -6, COL_W, "Target:", TARGET,
     function() local v = vis(); return (v and v.target) or "any" end,
     function(x) local v = visW(); if v then v.target = (x ~= "any") and x or nil; poke() end end)
 
@@ -2995,7 +2846,7 @@ function C:BuildLoadConditionsSection(ct, o)
     sink[#sink + 1] = { refresh = function() local v = vis(); c:Set(v and v[key]) end,
                         setEnabled = function(_, on) c:SetEnabled(on) end }
   end
-  local L, R, ty, dy = 0, 186, -44, 25
+  local L, R, ty, dy = 0, COL2_X, -44, 25
   toggle("casting",   "While casting",     L, ty)
   toggle("mounted",   "Mounted",           L, ty - dy)
   toggle("vehicle",   "In vehicle",        L, ty - dy * 2)
@@ -3014,7 +2865,7 @@ function C:BuildLoadConditionsSection(ct, o)
   local specs = PlayerSpecs()
   for i, sp in ipairs(specs) do
     local col, r = (i - 1) % 2, math.floor((i - 1) / 2)
-    local c = flatCheck(ct, sp.name); c:SetPoint("TOPLEFT", col * 186, -224 - r * 25)
+    local c = flatCheck(ct, sp.name); c:SetPoint("TOPLEFT", col * COL2_X, -224 - r * 25)
     c:SetScript("OnClick", function()
       local v = visW(); if not v then return end
       v.specs = v.specs or {}; c:Set(not c:Get()); v.specs[sp.id] = c:Get() or nil
@@ -3029,7 +2880,7 @@ function C:BuildLoadConditionsSection(ct, o)
   -- Spell / talent known.
   local skHdr = newText(ct, FONT.head, 13, COLOR.purple, "LEFT"); skHdr:SetPoint("TOPLEFT", 0, skTop); skHdr:SetText("SPELL / TALENT KNOWN")
   local skBox = flatEditBox(ct, 80, 22); skBox:SetPoint("TOPLEFT", 0, skTop - 22); skBox:SetNumeric(true)
-  local skName = newText(ct, FONT.body, 12, TEXT, "LEFT"); skName:SetPoint("LEFT", skBox, "RIGHT", 8, 0); skName:SetWidth(268); skName:SetJustifyH("LEFT")
+  local skName = newText(ct, FONT.body, 12, TEXT, "LEFT"); skName:SetPoint("LEFT", skBox, "RIGHT", 8, 0); skName:SetWidth(EDITOR_W - 92); skName:SetJustifyH("LEFT")
   local function skRefreshName()
     local v = vis(); local id = v and v.spellKnown
     if id then
