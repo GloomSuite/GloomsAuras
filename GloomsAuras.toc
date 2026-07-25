@@ -6,7 +6,7 @@
 ## SavedVariables: GloomsAurasDB
 ## Dependencies: GloomsHub
 ## IconTexture: Interface\AddOns\GloomsAuras\Media\minimap.png
-## X-Website: https://github.com/HandofDevastation/GloomsAuras
+## X-Website: https://github.com/GloomSuite/GloomsAuras
 
 # Embedded libraries — load FIRST. LibSharedMedia surfaces textures/fonts other
 # addons register into our picker; needs LibStub + CallbackHandler first.

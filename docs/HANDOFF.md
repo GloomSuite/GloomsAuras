@@ -971,8 +971,8 @@ Now a **git repo** (initialized 2026-07-07). Mirrors GloomsBuildBarn's setup:
   GA shipped its first release, `v1.0.0`, on 2026-07-24 alongside the rest of the suite.
 - **Committed** bundled art: `Media/` (fonts, `bg_flame.png`, `minimap.png`, `Textures/`,
   `TextureManifest.lua`) + `PowerAurasMedia/Auras/`. These are ours, not packager-fetched.
-- **Push status:** LIVE on GitHub — https://github.com/HandofDevastation/GloomsAuras (created + pushed
+- **Push status:** LIVE on GitHub — https://github.com/GloomSuite/GloomsAuras (created + pushed
   at the end of the 2026-07-07 session, after the handoff was first written). `origin` is
-  `https://github.com/HandofDevastation/GloomsAuras.git`, tracking `main`. NOTE before making it public/
+  `https://github.com/GloomSuite/GloomsAuras.git`, tracking `main`. NOTE before making it public/
   wide: the repo bundles WeakAuras/PowerAuras textures (GPL-family) — fine for guild use, worth a
   license glance if published widely.
