@@ -2477,7 +2477,17 @@ local TRIG_JOIN = { AND = "AND", OR = "OR", NONE = "NOR" }
 -- block, plus the operator chip that sits above it (every card but the first shows one).
 -- Works at the top level (ci=nil, purple) and inside a group (ci set, orange).
 -- Shift-clicking a TOP-LEVEL card selects it (→ "Add a TRIGGER GROUP" groups them).
-local TRIG_ROW_H, TRIG_ROW_PITCH = 40, 44
+-- ★ THE NESTING RULE (the owner's second mock, 2026-07-25). Every operand — a plain
+-- condition card OR a whole group box — is inset the SAME 52px from its container's
+-- left edge and 14 from its right. That gutter is what the operator lives in: a
+-- bracket ties the two operands it joins, with the AND/OR/NOR chip sitting on it.
+-- So a group aligns exactly with the sibling cards it sits among, and its own cards
+-- inset again inside it — the indentation IS the hierarchy. The first mock had the
+-- chips floating beside full-width rows, which is what read as unclear.
+local TRIG_INSET_L, TRIG_INSET_R, TRIG_LINE_X = 52, 14, 30
+local TRIG_ROW_H, TRIG_ROW_GAP = 40, 8
+local TRIG_ROW_PITCH = TRIG_ROW_H + TRIG_ROW_GAP
+local TRIG_BITE = 8          -- how far the bracket's arms reach into each operand
 
 function C:MakeTrigRow(parent, inGroup)
   local H = COLOR.heroic
@@ -2500,15 +2510,6 @@ function C:MakeTrigRow(parent, inGroup)
   icon:SetTexCoord(0.08, 0.92, 0.08, 0.92); row.icon = icon
   local name = newText(row, FONT.body, 12, TEXT, "RIGHT"); name:SetPoint("RIGHT", icon, "LEFT", -8, 0); name:SetWordWrap(false); row.name = name
 
-  -- Operator chip, straddling the gap above this card. Orange in both contexts.
-  local O = COLOR.orange
-  local chip = CreateFrame("Frame", nil, row); chip:SetSize(40, 20)
-  chip:SetPoint("TOPLEFT", 12, 10)
-  chip:SetFrameLevel(row:GetFrameLevel() + 5)   -- it straddles the card above; draw over it
-  local cbg = chip:CreateTexture(nil, "ARTWORK"); cbg:SetAllPoints(); cbg:SetColorTexture(O.r, O.g, O.b, 1)
-  chip.text = newText(chip, FONT.label, 11, { r = 1, g = 1, b = 1 }, "CENTER"); chip.text:SetPoint("CENTER")
-  chip:Hide(); row.chip = chip
-
   x:SetScript("OnClick", function() C:TrigRemove(row._ti, row._ci) end)
   pill:SetScript("OnClick", function() C:TrigCycleState(row._ti, row._ci) end)
   row:SetScript("OnClick", function()
@@ -2522,7 +2523,42 @@ function C:MakeTrigRow(parent, inGroup)
   return row
 end
 
-function C:FillTrigRow(row, ti, ci, leaf, join)
+-- One JOIN: the orange bracket tying two adjacent operands together, with the operator
+-- chip sitting on its vertical. Lives in the gutter the operands are inset for, and is
+-- owned by the CONTAINER (the trigger box, or a group box) — not by either operand —
+-- because it belongs to both of them.
+function C:MakeTrigJoin(parent)
+  local O = COLOR.orange
+  local function line()
+    local t = parent:CreateTexture(nil, "OVERLAY"); t:SetColorTexture(O.r, O.g, O.b, 1); return t
+  end
+  local j = { v = line(), top = line(), bot = line() }
+  local chip = CreateFrame("Frame", nil, parent); chip:SetSize(38, 18)
+  chip:SetFrameLevel((parent:GetFrameLevel() or 1) + 6)   -- sits ON the line it labels
+  local cbg = chip:CreateTexture(nil, "ARTWORK"); cbg:SetAllPoints(); cbg:SetColorTexture(O.r, O.g, O.b, 1)
+  chip.text = newText(chip, FONT.label, 11, { r = 1, g = 1, b = 1 }, "CENTER"); chip.text:SetPoint("CENTER")
+  j.chip = chip
+  return j
+end
+
+-- `aBottom` = distance from the container's top down to the bottom of the upper operand,
+-- `bTop` = down to the top of the lower one. The arms bite TRIG_BITE into each so the
+-- bracket visibly grips both, rather than floating in the gap between them.
+function C:PlaceTrigJoin(j, aBottom, bTop, word)
+  local y1, y2 = aBottom - TRIG_BITE, bTop + TRIG_BITE
+  local armW = TRIG_INSET_L - TRIG_LINE_X
+  j.v:ClearAllPoints();   j.v:SetPoint("TOPLEFT", TRIG_LINE_X, -y1);   j.v:SetSize(1, math.max(1, y2 - y1))
+  j.top:ClearAllPoints(); j.top:SetPoint("TOPLEFT", TRIG_LINE_X, -y1); j.top:SetSize(armW, 1)
+  j.bot:ClearAllPoints(); j.bot:SetPoint("TOPLEFT", TRIG_LINE_X, -y2); j.bot:SetSize(armW, 1)
+  j.chip:ClearAllPoints()
+  j.chip:SetPoint("CENTER", j.chip:GetParent(), "TOPLEFT", TRIG_LINE_X, -(y1 + y2) / 2)
+  j.chip.text:SetText(word)
+  j.v:Show(); j.top:Show(); j.bot:Show(); j.chip:Show()
+end
+
+function C:HideTrigJoin(j) j.v:Hide(); j.top:Hide(); j.bot:Hide(); j.chip:Hide() end
+
+function C:FillTrigRow(row, ti, ci, leaf)
   row._ti, row._ci, row._leaf = ti, ci, leaf
   local ic = leaf.spellID and C_Spell and C_Spell.GetSpellTexture and C_Spell.GetSpellTexture(leaf.spellID)
   row.icon:SetTexture(ic or 134400)
@@ -2530,8 +2566,6 @@ function C:FillTrigRow(row, ti, ci, leaf, join)
   local main, suf = TrigPill(leaf.state, leaf.k)
   row.pillLbl:Set(main, suf)
   row.selTex:SetShown(ci == nil and C._trigUI.selected[leaf] and true or false)
-  -- `join` = the operator to show ABOVE this card; nil on the first one in its list.
-  if join then row.chip.text:SetText(join); row.chip:Show() else row.chip:Hide() end
 end
 
 -- A nested TRIGGER GROUP box (orange). Header: "Match: ALL/ANY/NONE" on the LEFT,
@@ -2572,19 +2606,15 @@ function C:MakeTrigGroupBox(parent)
   g.addLink = TrigLink(g, "Add Trigger", function() C:TrigAddToExistingGroup(g._ti) end)
   g.addLink:SetPoint("RIGHT", sep, "LEFT", -6, 0)
 
-  -- A group is an operand of the level above, so it carries an operator chip too.
-  local chip = CreateFrame("Frame", nil, g); chip:SetSize(40, 20); chip:SetPoint("TOPLEFT", 12, 10)
-  chip:SetFrameLevel(g:GetFrameLevel() + 5)
-  local cbg = chip:CreateTexture(nil, "ARTWORK"); cbg:SetAllPoints(); cbg:SetColorTexture(O.r, O.g, O.b, 1)
-  chip.text = newText(chip, FONT.label, 11, { r = 1, g = 1, b = 1 }, "CENTER"); chip.text:SetPoint("CENTER")
-  chip:Hide(); g.chip = chip
-
-  local ml = newText(g, FONT.label, 11, { r = 1, g = 1, b = 1 }, "LEFT"); ml:SetPoint("TOPLEFT", 14, -15); ml:SetText("Match:")
+  local ml = newText(g, FONT.label, 11, { r = 1, g = 1, b = 1 }, "LEFT"); ml:SetPoint("TOPLEFT", 14, -16); ml:SetText("Match:")
   g.mpills = {}
+  -- Deliberately SMALL (the owner, 2026-07-25): the top-level Match buttons are
+  -- 113×28, and a second near-identical trio right under them read as clutter. These
+  -- are a group's local setting, so they're sized as one.
   local mx = 62
   for _, lg in ipairs(TRIG_LOGICS) do
-    local logic, w = lg[1], ({ ALL = 52, ANY = 52, NONE = 62 })[lg[2]] or 52
-    local mp = CreateFrame("Button", nil, g); mp:SetSize(w, 24); mp:SetPoint("TOPLEFT", mx, -13); mx = mx + w + 6
+    local logic, w = lg[1], ({ ALL = 40, ANY = 40, NONE = 50 })[lg[2]] or 40
+    local mp = CreateFrame("Button", nil, g); mp:SetSize(w, 20); mp:SetPoint("TOPLEFT", mx, -14); mx = mx + w + 6
     mp.fill = mp:CreateTexture(nil, "BACKGROUND"); mp.fill:SetAllPoints(); mp.fill:SetColorTexture(O.r, O.g, O.b, 0.8)
     mp.edges = addEdges(mp, { r = O.r, g = O.g, b = O.b, a = 1 }, 1)
     local ll = newText(mp, FONT.label, 11, { r = 1, g = 1, b = 1 }, "CENTER"); ll:SetPoint("CENTER"); ll:SetText(lg[2])
@@ -2612,15 +2642,21 @@ function C:FillTrigGroupBox(g, ti, n, group)
   end
   local join = TRIG_JOIN[logic] or "OR"
   local leaves = group.conditions or {}
+  g._joins = g._joins or {}
   for i, leaf in ipairs(leaves) do
     local row = g._rows[i]; if not row then row = C:MakeTrigRow(g, true); g._rows[i] = row end
-    C:FillTrigRow(row, ti, i, leaf, (i > 1) and join or nil)
+    C:FillTrigRow(row, ti, i, leaf)
+    local top = TRIG_GHDR_H + (i - 1) * TRIG_ROW_PITCH
     row:ClearAllPoints()
-    row:SetPoint("TOPLEFT", 14, -(TRIG_GHDR_H + (i - 1) * TRIG_ROW_PITCH))
-    row:SetPoint("TOPRIGHT", -14, -(TRIG_GHDR_H + (i - 1) * TRIG_ROW_PITCH))
+    row:SetPoint("TOPLEFT", TRIG_INSET_L, -top); row:SetPoint("TOPRIGHT", -TRIG_INSET_R, -top)
     row:Show()
+    if i > 1 then
+      local j = g._joins[i - 1]; if not j then j = C:MakeTrigJoin(g); g._joins[i - 1] = j end
+      C:PlaceTrigJoin(j, top - TRIG_ROW_GAP, top, join)
+    end
   end
   for i = #leaves + 1, #g._rows do g._rows[i]:Hide() end
+  for i = math.max(1, #leaves), #g._joins do C:HideTrigJoin(g._joins[i]) end
   local h = TRIG_GHDR_H + #leaves * TRIG_ROW_PITCH + 8
   g:SetHeight(h)
   return h
@@ -2732,39 +2768,49 @@ function C:TrigInlineRender()
   -- Cards and group boxes stack in one column, each carrying the operator chip that
   -- joins it to the one above. `first` (not the index) decides whether a chip is drawn,
   -- because a top-level GROUP counts as an operand too.
+  -- Cards and group boxes stack in one column as equal operands, each inset the same
+  -- 52px so the bracket that joins it to the one above has a gutter to live in.
+  -- `prevBottom` (not the index) drives the joins, because a GROUP is an operand too
+  -- and its box is a different height from a card.
   local join = TRIG_JOIN[logic] or "AND"
-  local topPad, gap = 12, 4
-  local y, nr, ng, first = topPad, 0, 0, true
+  local y, nr, ng, nj, prevBottom = 12, 0, 0, 0, nil
+  ui.joins = ui.joins or {}
   for ti, node in ipairs(conditions) do
+    if prevBottom then
+      nj = nj + 1
+      local j = ui.joins[nj]; if not j then j = C:MakeTrigJoin(ui.box); ui.joins[nj] = j end
+      C:PlaceTrigJoin(j, prevBottom, y, join)
+    end
     if node.conditions then
       ng = ng + 1
       local gbox = ui.groups[ng]; if not gbox then gbox = C:MakeTrigGroupBox(ui.box); ui.groups[ng] = gbox end
       local gh = C:FillTrigGroupBox(gbox, ti, ng, node)
       gbox:ClearAllPoints()
-      gbox:SetPoint("TOPLEFT", 14, -y); gbox:SetPoint("TOPRIGHT", -14, -y); gbox:Show()
-      gbox.chip.text:SetText(join); gbox.chip:SetShown(not first)
-      y = y + gh + gap
+      gbox:SetPoint("TOPLEFT", TRIG_INSET_L, -y); gbox:SetPoint("TOPRIGHT", -TRIG_INSET_R, -y); gbox:Show()
+      prevBottom = y + gh
+      y = prevBottom + TRIG_ROW_GAP
     else
       nr = nr + 1
       local row = ui.rows[nr]; if not row then row = C:MakeTrigRow(ui.box); ui.rows[nr] = row end
-      C:FillTrigRow(row, ti, nil, node, (not first) and join or nil)
+      C:FillTrigRow(row, ti, nil, node)
       row:ClearAllPoints()
-      row:SetPoint("TOPLEFT", 14, -y); row:SetPoint("TOPRIGHT", -14, -y); row:Show()
-      y = y + TRIG_ROW_PITCH
+      row:SetPoint("TOPLEFT", TRIG_INSET_L, -y); row:SetPoint("TOPRIGHT", -TRIG_INSET_R, -y); row:Show()
+      prevBottom = y + TRIG_ROW_H
+      y = prevBottom + TRIG_ROW_GAP
     end
-    first = false
   end
   for i = nr + 1, #ui.rows do ui.rows[i]:Hide() end
   for i = ng + 1, #ui.groups do ui.groups[i]:Hide() end
+  for i = nj + 1, #ui.joins do C:HideTrigJoin(ui.joins[i]) end
 
-  local boxH = y + 8              -- content + bottom pad (the add-bars moved outside)
+  local boxH = (prevBottom or 12) + 16      -- content + bottom pad (the add-bars are outside)
   ui.box:SetHeight(boxH)
-  local btnY = -(48 + boxH + 12)
+  local btnY = -(48 + boxH + 16)
   ui.addTrig:ClearAllPoints();  ui.addTrig:SetPoint("TOPLEFT", 0, btnY)
   ui.addGroup:ClearAllPoints(); ui.addGroup:SetPoint("TOPLEFT", COL2_X, btnY)
-  ui.hint:ClearAllPoints(); ui.hint:SetPoint("TOP", 0, btnY - 34 - 10)
+  ui.hint:ClearAllPoints(); ui.hint:SetPoint("TOP", 0, btnY - 34 - 14)
 
-  C:AccordionSetHeight("trigger", 48 + boxH + 12 + 34 + 10 + 26)   -- box + buttons + hint
+  C:AccordionSetHeight("trigger", 48 + boxH + 16 + 34 + 14 + 26)   -- box + buttons + hint
 end
 
 -- Inline TEXT section (redesign). Content field + Show/Charge toggles + Font pill +
