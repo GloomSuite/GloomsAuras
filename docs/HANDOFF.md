@@ -74,6 +74,10 @@
 > - **NONE renders as "NOR", never "AND NOT"** — NONE negates both sides equally, while "AND NOT"
 >   reads as "the first thing and not the second". Per-condition negation never needs a chip: the
 >   state pill already carries it ("INACTIVE on You", "ON COOLDOWN", "CHARGES NOT MAX").
+> - **The rail tree's scrollbar is NOT `UI.makeScrollbar`** — that shared widget drives a real
+>   ScrollFrame, and the tree is a fixed pool of rows windowed by `listOffset` (group headers and
+>   auras are different row kinds, so the pool stays). It's a track+thumb driven by the offset,
+>   orange, in the rail's right margin, shown only when the entries exceed `LIST_ROWS`.
 > - **Measure in the same units as the owner.** Two rounds of "make the bracket read better" missed
 >   because his mock files render at ~2.5× the game's pixels. When he gives a px number, convert it,
 >   or better, ask for the RULE (he gave one — "stub ≈ label height" — and it landed first try).
