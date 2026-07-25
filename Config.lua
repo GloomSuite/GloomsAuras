@@ -2582,7 +2582,7 @@ end
 -- (the owner's mock, 2026-07-25 — they replace the header X and the old bottom
 -- "+ Add to Group" bar, so a group's two actions live with its name).
 -- Its own row pool lives on g._rows.
-local TRIG_GHDR_H = 56
+local TRIG_GHDR_H = 52
 
 -- A text hyperlink in the group header: orange label, brightens on hover.
 local function TrigLink(parent, text, onClick)
@@ -2600,7 +2600,10 @@ function C:MakeTrigGroupBox(parent)
   local O = COLOR.orange
   local g = CreateFrame("Frame", nil, parent)
   local bg = g:CreateTexture(nil, "BACKGROUND"); bg:SetAllPoints(); bg:SetColorTexture(O.r, O.g, O.b, 0.1)
-  g.label = newText(g, FONT.label, 12, O, "RIGHT"); g.label:SetPoint("TOPRIGHT", -14, -12)
+  -- The group's NAME is white; the two links under it stay orange (the owner's mock).
+  -- White reads as a title, orange as "this is clickable" — so the label stops
+  -- competing with its own actions for the same colour.
+  g.label = newText(g, FONT.label, 12, { r = 1, g = 1, b = 1 }, "RIGHT"); g.label:SetPoint("TOPRIGHT", -14, -12)
 
   -- Add Trigger | Delete Group. Delete CONFIRMS — it discards every condition in the
   -- group, and CONTRACTS §4 puts destructive actions behind the shared modal.
@@ -2609,7 +2612,7 @@ function C:MakeTrigGroupBox(parent)
     C:OpenConfirm(("Delete TRIGGER GROUP %d?  Its conditions are removed with it."):format(n),
       function() C:TrigRemove(g._ti, nil) end)
   end)
-  g.delLink:SetPoint("TOPRIGHT", -14, -32)
+  g.delLink:SetPoint("TOPRIGHT", -14, -28)   -- tight under the name: they belong to it
   local sep = newText(g, FONT.body, 11, MUTE, "RIGHT"); sep:SetText("|")
   sep:SetPoint("RIGHT", g.delLink, "LEFT", -6, 0)
   g.addLink = TrigLink(g, "Add Trigger", function() C:TrigAddToExistingGroup(g._ti) end)
