@@ -2484,10 +2484,11 @@ local TRIG_JOIN = { AND = "AND", OR = "OR", NONE = "NOR" }
 -- So a group aligns exactly with the sibling cards it sits among, and its own cards
 -- inset again inside it — the indentation IS the hierarchy. The first mock had the
 -- chips floating beside full-width rows, which is what read as unclear.
-local TRIG_INSET_L, TRIG_INSET_R, TRIG_LINE_X = 52, 14, 30
+local TRIG_INSET_L, TRIG_INSET_R, TRIG_LINE_X = 52, 14, 24
 local TRIG_ROW_H, TRIG_ROW_GAP = 40, 8
 local TRIG_ROW_PITCH = TRIG_ROW_H + TRIG_ROW_GAP
-local TRIG_BITE = 8          -- how far the bracket's arms reach into each operand
+local TRIG_BITE = 10         -- how far the bracket's arms reach into each operand
+local TRIG_CHIP_W, TRIG_CHIP_H = 30, 16
 
 function C:MakeTrigRow(parent, inGroup)
   local H = COLOR.heroic
@@ -2533,7 +2534,7 @@ function C:MakeTrigJoin(parent)
     local t = parent:CreateTexture(nil, "OVERLAY"); t:SetColorTexture(O.r, O.g, O.b, 1); return t
   end
   local j = { v = line(), top = line(), bot = line() }
-  local chip = CreateFrame("Frame", nil, parent); chip:SetSize(38, 18)
+  local chip = CreateFrame("Frame", nil, parent); chip:SetSize(TRIG_CHIP_W, TRIG_CHIP_H)
   chip:SetFrameLevel((parent:GetFrameLevel() or 1) + 6)   -- sits ON the line it labels
   local cbg = chip:CreateTexture(nil, "ARTWORK"); cbg:SetAllPoints(); cbg:SetColorTexture(O.r, O.g, O.b, 1)
   chip.text = newText(chip, FONT.label, 11, { r = 1, g = 1, b = 1 }, "CENTER"); chip.text:SetPoint("CENTER")
