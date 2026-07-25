@@ -1,42 +1,82 @@
 # GloomsAuras — Session Handoff  (last updated 2026-07-25)
 
-> ## ▶▶ NEXT SESSION'S JOB: THE AURAS TAB LAYOUT REWORK
-> **Queued deliberately by the owner on 2026-07-25** as its own session in THIS repo. It is item 1
-> on the suite's to-do list. **Read `~/GloomsHub/docs/HANDOFF.md` + `SUITE-STATE.md` + `CONTRACTS.md`
-> first** — that access now works: `.claude/settings.json` was added here on 2026-07-25 so a GA
-> session can actually reach the Hub. Before that, this file pointed at paths the session could not
-> open.
+> ## ▶▶ THE AURAS TAB LAYOUT REWORK IS DONE — QA'd by the owner, 2026-07-25.
+> Suite to-do item 1 is closed. Every step below was verified in-game by the owner before the next
+> one started. **Do not re-litigate these; they are settled decisions, not defaults.**
 >
-> **The scope, as the owner has stated it:**
-> 1. **Kill the docked profile DRAWER** for a **GB-style always-visible left rail.** His words
->    (Phase E gate B QA): *"we've got to get rid of the drawer, but the whole layout of this module
->    is now very wrong."* Phase E put the shared `UI.profileBlock` INSIDE the existing drawer, so the
->    mechanism already matches GB and Overlays — it is just hidden behind a footer button.
-> 2. **RETIRE THE LANDING SPLASH.** The owner, 2026-07-25: *"the splash page is going to have to go
->    away."* That is `C:BuildLanding` in `Config.lua`, drawing `Media/ga_logo_full.png` (197×248,
->    monogram + wordmark) on every open. **`ga_logo_full.png` was deliberately left untouched during
->    the 2026-07-25 logo refresh precisely because this session retires it.**
-> 3. **Add the shared tab header** — `UI.tabHeader` (LibGloomSkin **MINOR 4**, new 2026-07-25). Bars,
->    Overlays and the Media tab all have it; **AURAS IS THE ONLY TAB WITHOUT ONE, on purpose**,
->    because the splash sits exactly where the header goes. Doing it earlier meant designing that
->    space twice. Use the new square mark at **`Media/logo.png`** (512×512), NOT `ga_logo_full.png`.
->    Label it `"GLOOM'S AURAS"` and pass `x = 14` — the other three all do, and the owner spotted a
->    2px difference by tabbing between tabs.
-> 4. **★ BUMP THE VERSION GATE when you call it.** `Config.lua` (~line 41) declares
->    `SKIN_NEEDS = 3`; calling `UI.tabHeader` makes it **4**. Bump it IN THE SAME COMMIT — that is
->    the gate's only maintenance and the one way to defeat it. Contract: GloomsHub
->    `docs/CONTRACTS.md` §6.
+> **What the tab is now:** a flush-left **240 rail** (shared `UI.tabHeader` · the shared
+> `UI.profileBlock`, permanently visible · the GROUPS & AURAS tree · the buttons that act on the
+> selection) beside an **editor pane that fills the rest** of the 860×626 container. The old
+> centred 620 column, with ~120px of dead margin each side, is gone.
 >
-> **★ GB IS THE UI REFERENCE FOR THE SUITE, NOT GA** (the owner, 2026-07-24) — and GA's layout is
-> the reason that rule exists. Read `~/GloomsBars/Config.lua`'s rail (~line 2355) as the model; this
-> repo's settings now grant that access too.
+> **The six things that changed, and why they can't be undone casually:**
+> 1. **The landing splash is RETIRED** — `ga_logo_full.png` is no longer drawn anywhere. The tab
+>    opens straight onto the last-edited aura. `C:SelectInitial` replaced the landing/editor mode
+>    switch; `C:UpdateEmptyState` covers the only state the splash genuinely carried ("no auras yet").
+> 2. **The editor's big aura-NAME banner is GONE** (the owner: "a waste of space and, more
+>    importantly, confusing and nonintuitive"). Renaming is a RAIL action — the Rename button or a
+>    double-click on the row — through the shared `UI.nameDialog`. It renames `cfg.label` only; the
+>    on-screen text an aura draws is still `cfg.text.str`, deliberately separate.
+> 3. **Profiles moved OUT of their drawer** into the rail's top, so the rail reads down the real
+>    hierarchy: profile → groups → auras.
+> 4. **★ GROUPS ARE A FIRST-CLASS SELECTION.** Clicking a group's NAME selects it and its settings
+>    fill the editor pane exactly as an aura's do; the caret alone collapses. That retired the ⚙ gear,
+>    the Manage Group drawer, AND the green "Group: <name>" button (the owner: "extraordinarily
+>    confusing" — it read as a status label but was an action, and sat nowhere near the group it
+>    named). An aura's group is now a dropdown at the top of the aura pane. Groups also SHOW what
+>    they do: dimmed + "(off)" when switched off, an orange dot when they carry a load rule.
+> 5. **The Trigger section is a bracketed tree.** Every operand — a condition card OR a whole group
+>    box — is inset the same 52px from its container's left edge and 14 from its right; the gutter
+>    holds a bracket tying each pair, with an AND/OR/**NOR** chip on it. See the trigger notes below.
+> 6. **Delete Aura CONFIRMS** (and Delete Group, and Delete Trigger Group). It used to delete on the
+>    click with no undo — the owner caught it mid-rework. CONTRACTS §4 requires the shared modal.
 >
-> ⚠ **Layout constant:** the shell's content area is **860×626, PINNED** (CONTRACTS §2). GA's tab is
-> currently a centered 620-wide column with `LIST_ROWS = 13` / `PANE_H = 528` sized for it.
+> **`SKIN_NEEDS` is now MINOR 4** (`Config.lua` ~line 41) — GA calls `UI.tabHeader`. Bumped in the
+> same commit, per CONTRACTS §6. **GA is no longer the tab without a header.**
 >
-> **QA note:** `/reload` is enough for all of this — the blanket "new files need a full restart" rule
-> was retired suite-wide on 2026-07-25. **The one real exception is new FONT files** (WoW loads fonts
-> at launch). Nothing in this rework should add a font.
+> **FOUR DRAWERS ARE DELETED** — Manage Group, Visibility, Text and Glow. The accordion and the group
+> pane replaced them; nothing opened the last two at all. What REMAINS drawer-based is correct and
+> deliberate: the spell/trigger picker, the texture picker, the sound picker and the font picker,
+> which are transient pick-one-thing windows. `Config.lua` chunk locals went **193 → ~170 of Lua's
+> 200** as a result — the most headroom this file has had in months. Spend it carefully.
+>
+> ### ⚠ THE TRAP THAT COST THIS SESSION A BUILD FAILURE — READ BEFORE DELETING ANY BLOCK
+> Deleting the Visibility drawer orphaned `PlayerSpecs()`, a module-local that happened to live
+> inside it and is still called by the inline Load Conditions block. The call silently became a nil
+> GLOBAL, `BuildTab` threw on first show, and because the shell calls `build(container)` BEFORE
+> showing and focusing, **the entire tab came up blank with no tab highlighted** — not just the
+> broken section. **`luac -p` cannot catch this** (calling an undefined global is valid Lua). The
+> check that does, in one line — run it after ANY block deletion:
+> ```
+> luac -l Config.lua | grep -oE '_ENV "[A-Za-z_][A-Za-z0-9_]*"' | sort -u
+> ```
+> Diff that against a known-good revision. Anything a deletion orphaned appears as a NEW global.
+> (Against the pre-rework commit, GA's list now differs only by `GetNumSpecializations` /
+> `GetSpecializationInfo` — real WoW APIs — so nothing else was lost with the ~400 deleted lines.)
+>
+> ### Settled UI facts from this session
+> - **Suite button language:** 22px tall, Title Case, GeneralSans-Medium 11 (flatButton's own
+>   default — do NOT `setFont` over it), heroic @0.2 for secondary actions, the ONE create action in
+>   purple @0.35. Delete keeps red @0.3. GA's 28px ALL-CAPS semibold buttons predated the suite.
+> - **Carets** are the shared `UI.CARET` at 9×9 tinted `COLOR.orange` — list rows AND section
+>   headers. GA's own `Media/triangle.png` is no longer drawn.
+> - **★ Eye icons are WHITE art** (`Media/hidden.png` / `unhidden.png`, re-exported by the owner).
+>   `SetVertexColor` MULTIPLIES, so coloured art can only darken — the old purple #936bff tinted
+>   orange came out #873F15, a muddy brown. **Never re-bake a colour into those two files.** The eye
+>   reports `selected OR preview`, the same rule `Displays:RefreshForced` draws by, so a selected
+>   aura reads as visible without being toggled.
+> - **The retired Figma mocks are NOT the spec any more** (the owner, 2026-07-25: "the mocks no
+>   longer matter and are now hopelessly out of date... I'd prefer the suite be consistent with
+>   itself"). GB and Overlays are the reference. `EDITOR_W` is 560, not the old 360 column.
+> - **Trigger bracket rule:** the vertical must show a stub above and below the operator label
+>   roughly as tall as the label itself. Encoded as a relationship, not a number
+>   (`bite = (3·chip − gap)/2`), which lands the arms on each card's centre line.
+> - **NONE renders as "NOR", never "AND NOT"** — NONE negates both sides equally, while "AND NOT"
+>   reads as "the first thing and not the second". Per-condition negation never needs a chip: the
+>   state pill already carries it ("INACTIVE on You", "ON COOLDOWN", "CHARGES NOT MAX").
+> - **Measure in the same units as the owner.** Two rounds of "make the bracket read better" missed
+>   because his mock files render at ~2.5× the game's pixels. When he gives a px number, convert it,
+>   or better, ask for the RULE (he gave one — "stub ≈ label height" — and it landed first try).
 
 > **SUITE UPDATE (2026-07-24, Phase D):** the options panel now renders ONLY as the AURAS
 > tab of the Suite window (GloomsHub — hard dependency; standalone window + minimap button
@@ -272,7 +312,12 @@ PLACED in a CDM viewer are trackable** (registry ≠ placed).
     (deep-copied — editing the copy left the original untouched). Deleting the ACTIVE profile falls back to
     the first remaining one; chars pointing at a deleted profile re-resolve to their own default next login.
 - ✅ **QA'd 2026-07-08 — Slider thumbs recolored** purple → **orange `#FF7729`** (`COLOR.orange`) on the
-  Alpha/Width/Height/X/Y sliders (the owner request). Scrollbar thumbs stay purple. `MakeSlider` only.
+  Alpha/Width/Height/X/Y sliders (the owner request). `MakeSlider` only.
+  **⚠ SUPERSEDED TWICE.** The Figma redesign (session 9) put the slider thumb BACK to purple as part
+  of its control language, and that still stands. **SCROLLBAR thumbs, which this line used to say
+  stay purple, are now ORANGE** (the owner, 2026-07-25: "we use orange in bars, and it's right") —
+  all four of them: the editor pane, both trigger-picker columns, and the sound picker. The rule to
+  carry forward: **scrollbars orange, slider thumbs and selection highlights purple.**
 - ✅ **QA'd 2026-07-08 — Appearance-first aura creation + DECORATION auras** (`bcb1912`). Scope had
   outgrown "pick a spell first": **`+ Add Aura` now makes a BLANK aura** (placeholder `Circle_Smooth`
   graphic, name "New Aura", `showLabel=false`), selected in the editor — NO picker popup. **Spells enter

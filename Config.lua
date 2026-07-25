@@ -952,7 +952,7 @@ local function BuildPicker()
 
     local track = col:CreateTexture(nil, "ARTWORK"); track:SetColorTexture(1, 1, 1, 0.08)
     track:SetPoint("TOPRIGHT", 0, 0); track:SetSize(6, PICK_ROWS * PICK_ROW_H); p.track = track
-    p.thumb = col:CreateTexture(nil, "OVERLAY"); p.thumb:SetColorTexture(COLOR.purple.r, COLOR.purple.g, COLOR.purple.b, 1)
+    p.thumb = col:CreateTexture(nil, "OVERLAY"); p.thumb:SetColorTexture(COLOR.orange.r, COLOR.orange.g, COLOR.orange.b, 1)
     p.thumb:SetWidth(6); p.thumb:SetPoint("TOP", track, "TOP")
 
     for i = 1, PICK_ROWS do
@@ -1343,13 +1343,13 @@ local function BuildSoundPicker()
     soundRows[i] = row
   end
 
-  -- Scrollbar: a draggable purple thumb on the right (the wheel also scrolls).
+  -- Scrollbar: a draggable ORANGE thumb on the right (the wheel also scrolls).
   local SB_X, SB_TOP, SB_H = -6, -66, SND_ROWS * 24 - 2
   local track = f:CreateTexture(nil, "ARTWORK"); track:SetColorTexture(1, 1, 1, 0.06)
   track:SetPoint("TOPRIGHT", SB_X, SB_TOP); track:SetSize(6, SB_H)
   local thumb = CreateFrame("Button", nil, f); thumb:SetWidth(6); thumb:EnableMouse(true)
   local tt = thumb:CreateTexture(nil, "OVERLAY"); tt:SetAllPoints()
-  tt:SetColorTexture(COLOR.purple.r, COLOR.purple.g, COLOR.purple.b, 1)
+  tt:SetColorTexture(COLOR.orange.r, COLOR.orange.g, COLOR.orange.b, 1)
   thumb:SetPoint("TOPRIGHT", SB_X, SB_TOP)
   f.sb = { thumb = thumb, top = SB_TOP, h = SB_H, x = SB_X }
 
@@ -3194,7 +3194,7 @@ local function BuildTab(c)
   local sbTrack = c:CreateTexture(nil, "ARTWORK"); sbTrack:SetColorTexture(1, 1, 1, 0.06); sbTrack:SetWidth(6)
   sbTrack:SetPoint("TOPLEFT", editor, "TOPRIGHT", 8, 0); sbTrack:SetPoint("BOTTOMLEFT", editor, "BOTTOMRIGHT", 8, 0)
   local sbThumb = CreateFrame("Button", nil, c); sbThumb:SetWidth(6); sbThumb:EnableMouse(true)
-  local stt = sbThumb:CreateTexture(nil, "OVERLAY"); stt:SetAllPoints(); stt:SetColorTexture(COLOR.purple.r, COLOR.purple.g, COLOR.purple.b, 1)
+  local stt = sbThumb:CreateTexture(nil, "OVERLAY"); stt:SetAllPoints(); stt:SetColorTexture(COLOR.orange.r, COLOR.orange.g, COLOR.orange.b, 1)
   sbThumb:SetPoint("TOPRIGHT", sbTrack, "TOPRIGHT", 0, 0)
   C._editorTrack = sbTrack; C._editorThumb = sbThumb
   editor:SetScript("OnMouseWheel", function(_, d) C:SetEditorScroll((C._editorScroll or 0) - d * 40) end)
