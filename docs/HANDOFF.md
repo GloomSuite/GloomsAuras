@@ -1,4 +1,42 @@
-# GloomsAuras — Session Handoff  (last updated 2026-07-09)
+# GloomsAuras — Session Handoff  (last updated 2026-07-25)
+
+> ## ▶▶ NEXT SESSION'S JOB: THE AURAS TAB LAYOUT REWORK
+> **Queued deliberately by the owner on 2026-07-25** as its own session in THIS repo. It is item 1
+> on the suite's to-do list. **Read `~/GloomsHub/docs/HANDOFF.md` + `SUITE-STATE.md` + `CONTRACTS.md`
+> first** — that access now works: `.claude/settings.json` was added here on 2026-07-25 so a GA
+> session can actually reach the Hub. Before that, this file pointed at paths the session could not
+> open.
+>
+> **The scope, as the owner has stated it:**
+> 1. **Kill the docked profile DRAWER** for a **GB-style always-visible left rail.** His words
+>    (Phase E gate B QA): *"we've got to get rid of the drawer, but the whole layout of this module
+>    is now very wrong."* Phase E put the shared `UI.profileBlock` INSIDE the existing drawer, so the
+>    mechanism already matches GB and Overlays — it is just hidden behind a footer button.
+> 2. **RETIRE THE LANDING SPLASH.** The owner, 2026-07-25: *"the splash page is going to have to go
+>    away."* That is `C:BuildLanding` in `Config.lua`, drawing `Media/ga_logo_full.png` (197×248,
+>    monogram + wordmark) on every open. **`ga_logo_full.png` was deliberately left untouched during
+>    the 2026-07-25 logo refresh precisely because this session retires it.**
+> 3. **Add the shared tab header** — `UI.tabHeader` (LibGloomSkin **MINOR 4**, new 2026-07-25). Bars,
+>    Overlays and the Media tab all have it; **AURAS IS THE ONLY TAB WITHOUT ONE, on purpose**,
+>    because the splash sits exactly where the header goes. Doing it earlier meant designing that
+>    space twice. Use the new square mark at **`Media/logo.png`** (512×512), NOT `ga_logo_full.png`.
+>    Label it `"GLOOM'S AURAS"` and pass `x = 14` — the other three all do, and the owner spotted a
+>    2px difference by tabbing between tabs.
+> 4. **★ BUMP THE VERSION GATE when you call it.** `Config.lua` (~line 41) declares
+>    `SKIN_NEEDS = 3`; calling `UI.tabHeader` makes it **4**. Bump it IN THE SAME COMMIT — that is
+>    the gate's only maintenance and the one way to defeat it. Contract: GloomsHub
+>    `docs/CONTRACTS.md` §6.
+>
+> **★ GB IS THE UI REFERENCE FOR THE SUITE, NOT GA** (the owner, 2026-07-24) — and GA's layout is
+> the reason that rule exists. Read `~/GloomsBars/Config.lua`'s rail (~line 2355) as the model; this
+> repo's settings now grant that access too.
+>
+> ⚠ **Layout constant:** the shell's content area is **860×626, PINNED** (CONTRACTS §2). GA's tab is
+> currently a centered 620-wide column with `LIST_ROWS = 13` / `PANE_H = 528` sized for it.
+>
+> **QA note:** `/reload` is enough for all of this — the blanket "new files need a full restart" rule
+> was retired suite-wide on 2026-07-25. **The one real exception is new FONT files** (WoW loads fonts
+> at launch). Nothing in this rework should add a font.
 
 > **SUITE UPDATE (2026-07-24, Phase D):** the options panel now renders ONLY as the AURAS
 > tab of the Suite window (GloomsHub — hard dependency; standalone window + minimap button
