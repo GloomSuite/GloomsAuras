@@ -38,7 +38,7 @@ local issecret = _G.issecretvalue or function() return false end
 -- actionable sentence instead.
 -- ★ BUMP SKIN_NEEDS IN THE SAME COMMIT that first calls a newer widget.
 -- --------------------------------------------------------------------------
-local SKIN_MAJOR, SKIN_NEEDS = "LibGloomSkin-1.0", 3
+local SKIN_MAJOR, SKIN_NEEDS = "LibGloomSkin-1.0", 4   -- 4: UI.tabHeader (the rail header)
 
 local Skin, skinMinor = LibStub(SKIN_MAJOR, true)
 if not Skin or (skinMinor or 0) < SKIN_NEEDS then
@@ -71,7 +71,7 @@ UI.RegisterWarmPairs({
   { FONT.label, 11 }, { FONT.label, 12 }, -- two-weight labels / switches / left-pane buttons
 })
 
-local container, selectedID, triggerSummary, visibilitySummary
+local container, selectedID
 local pickerFrame, pickerOnPick
 local rows = {}
 -- Trigger editor state hangs on C._trig (chunk-local cap): { editID, frame, title,
@@ -110,7 +110,7 @@ local function DockRight(f)
 end
 
 local listFrame, listRows, listData, listOffset = nil, {}, {}, 0
-local LIST_ROWS = 13   -- fits the 528px tab pane above the New/Duplicate/Delete/Group stack (was 15 in the 614px standalone window)
+local LIST_ROWS = 11   -- rail rows above the button stack (the profile block owns the rail's top)
 local LIST_ROW_H = 24
 
 -- Texture blend modes (SetBlendMode) + friendly labels; frame strata choices.
@@ -122,11 +122,13 @@ local STRATA_MODES = {
   { "DIALOG", "Dialog" }, { "TOOLTIP", "Tooltip" },
 }
 
--- Collapse caret for group / Ungrouped headers: the owner's bundled triangle PNG
--- (Media/caret.png), drawn pointing RIGHT when collapsed and rotated 90° to point
--- DOWN when expanded. Colors baked in → shown untinted (like the lock icons). NO
--- native Blizzard art / unicode triangles (game fonts lack ▼/▶ → tofu boxes).
-local CARET_DOWN = -math.pi / 2   -- rotate a right-pointing source to point down (expanded)
+-- Collapse caret for group / Ungrouped headers AND the editor's section headers:
+-- the SUITE's shared art (UI.CARET, the Hub's Media/ui/caret.png) at the shared
+-- 9×9, tinted COLOR.orange — same glyph, size and colour as Bars and Overlays
+-- (the owner, 2026-07-25). Drawn pointing RIGHT when collapsed, rotated 90° to
+-- point DOWN when expanded. NO native Blizzard art / unicode triangles (the game
+-- fonts lack ▼/▶ → tofu boxes). GA's own Media/triangle.png is no longer drawn.
+local CARET_DOWN = UI.CARET_DOWN   -- rotate a right-pointing source to point down (expanded)
 
 local STATE_ORDER = { "buff_active", "buff_inactive", "cd_ready", "cd_oncd", "charges_max", "charges_notmax" }
 local STATE_LABEL = {
@@ -171,12 +173,6 @@ end
 -- flatButton, flatEditBox, makeToggle) come from LibGloomSkin now (aliased at
 -- the top of this file). Only GA-specific composites remain below.
 -- --------------------------------------------------------------------------
-local function Header(parent, x, yOff, text)
-  local fs = newText(parent, FONT.head, 13, COLOR.purple, "LEFT")
-  fs:SetPoint("TOPLEFT", x, yOff)
-  fs:SetText((text or ""):upper())
-  return fs
-end
 
 -- Two-weight inline label: a Regular-weight prefix + a Semibold value, centered as a
 -- group inside `parent`. The "Profile: ‹Name›" convention (Regular label + Semibold value)
@@ -357,29 +353,6 @@ end
 -- Same signature, so the call sites below are unchanged.
 local OpenNameDialog = UI.nameDialog
 
-local function SummaryText(cfg)
-  local t = cfg and cfg.trigger
-  if t and t.conditions and #t.conditions > 0 then
-    return ("|cffffffff%d condition(s) · %s|r"):format(#t.conditions, t.logic or "AND")
-  end
-  if cfg and cfg.spellID then
-    return "|cff888888none — shows on its own spell's state|r"
-  end
-  return "|cff888888none — always shown (decoration)|r"
-end
-
-local VIS_KEYS = { "combat", "target", "casting", "mounted", "vehicle", "instance",
-  "encounter", "resting", "stealthed", "group", "raid", "warmode", "alive", "spellKnown" }
-local function VisibilitySummary(cfg)
-  local v = cfg and cfg.visibility
-  local n = 0
-  if v then
-    for _, k in ipairs(VIS_KEYS) do if v[k] then n = n + 1 end end
-    if v.specs and next(v.specs) then n = n + 1 end
-  end
-  if n > 0 then return ("|cffffffff%d condition(s)|r"):format(n) end
-  return "|cff888888none — always eligible|r"
-end
 
 -- --------------------------------------------------------------------------
 -- Numeric row: label + [−] + slider (best-effort) + [+] + value box.
@@ -659,7 +632,7 @@ local function RefreshList()
       local cfg = DB() and DB()[sid]
       row.kind, row.id, row.spellID = "aura", sid, sid
       if row.arrow then row.arrow:Hide() end
-      if row.gear then row.gear:Hide() end
+      if row.caretBtn then row.caretBtn:Hide() end
       row.icon:Show()
       -- Show what the aura LOOKS like: its own texture first (appearance-first model),
       -- else its tracked spell's icon (legacy auras with no custom texture), else a fallback.
@@ -682,21 +655,29 @@ local function RefreshList()
     elseif e.kind == "group" then
       local g = Groups() and Groups()[e.gid]
       row.kind, row.gid = "group", e.gid
-      row.icon:Hide(); row.sel:Hide()
+      row.icon:Hide()
       if row.eye then row.eye:Hide() end
       if row.arrow then row.arrow:Show(); row.arrow:SetRotation((g and g.collapsed) and 0 or CARET_DOWN) end
-      if row.gear then row.gear:Show() end
+      if row.caretBtn then row.caretBtn:Show() end
       row.name:ClearAllPoints(); row.name:SetPoint("LEFT", 26, 0); row.name:SetPoint("RIGHT", -26, 0)
+      -- A group SHOWS what it is doing: dimmed + "(off)" when its switch is off, and a
+      -- dot when it carries a load rule — so the mechanism is visible, not remembered.
       local off = g and g.enabled == false
-      row.name:SetText((g and g.name or "Group") .. (off and "  |cff888888(off)|r" or ""))
-      row.name:SetTextColor(COLOR.purple.r, COLOR.purple.g, COLOR.purple.b)
+      local ruled = g and g.visibility and next(g.visibility) ~= nil
+      row.name:SetText((g and g.name or "Group") .. (off and "  |cff888888(off)|r" or (ruled and "  |cffff7729•|r" or "")))
+      if off then
+        row.name:SetTextColor(MUTE.r, MUTE.g, MUTE.b)
+      else
+        row.name:SetTextColor(COLOR.purple.r, COLOR.purple.g, COLOR.purple.b)
+      end
+      row.sel:SetShown(e.gid == C.groupSel)   -- a selected group highlights like a selected aura
       row:Show()
     elseif e.kind == "ungrouped" then
       row.kind = "ungrouped"
       row.icon:Hide(); row.sel:Hide()
       if row.eye then row.eye:Hide() end
       if row.arrow then row.arrow:Show(); row.arrow:SetRotation((GA.db and GA.db.ungroupedCollapsed) and 0 or CARET_DOWN) end
-      if row.gear then row.gear:Hide() end
+      if row.caretBtn then row.caretBtn:Show() end
       row.name:ClearAllPoints(); row.name:SetPoint("LEFT", 26, 0); row.name:SetPoint("RIGHT", -4, 0)
       row.name:SetText("Ungrouped")
       row.name:SetTextColor(MUTE.r, MUTE.g, MUTE.b)
@@ -710,15 +691,14 @@ end
 -- --------------------------------------------------------------------------
 local function SetSelected(sid)
   selectedID = sid
+  C.groupSel = nil                           -- an aura and a group are never both selected
   if C._trig then C._trig.editID = sid end   -- inline Trigger section edits the selected aura
   if GA.Displays then GA.Displays:SetSelectedDisplay(sid) end  -- only this one is draggable
   local cfg = Cfg()
-  if triggerSummary then triggerSummary:SetText(cfg and SummaryText(cfg) or "") end
-  if visibilitySummary then visibilitySummary:SetText(cfg and VisibilitySummary(cfg) or "") end
   for _, r in ipairs(rows) do r:refresh(); r:setEnabled(cfg ~= nil) end
-  if C.RefreshTextEditor then C:RefreshTextEditor() end   -- text drawer follows selection (self-guards to when open)
-  if C.RefreshGlowEditor then C:RefreshGlowEditor() end   -- glow drawer follows selection too
-  if C.RefreshGroupButton then C:RefreshGroupButton() end -- left-pane Group button label
+  if C.ShowGroupPane then C:ShowGroupPane(false) end      -- back to the aura accordion
+  if C.SyncRailButtons then C:SyncRailButtons() end
+  if C.RefreshGroupButton then C:RefreshGroupButton() end -- the aura's GROUP row label
   if C.TrigInlineRender then C:TrigInlineRender() end     -- inline Trigger section follows selection
   if C.UpdateEmptyState then C:UpdateEmptyState() end     -- no auras ⇒ prompt instead of a dead editor
   RefreshList()
@@ -1556,7 +1536,6 @@ function C:TrigRender()
   for i = 1, C._trig.ROWS do
     self:RenderTrigRow(C._trig.rows[i], entries[i + C._trig.offset])
   end
-  if triggerSummary and C._trig.editID == selectedID then triggerSummary:SetText(SummaryText(cfg)) end
 end
 
 function C:BuildTriggerEditor()
@@ -1637,402 +1616,35 @@ function C:OpenTriggerEditor(id)
 end
 
 -- --------------------------------------------------------------------------
--- Visibility editor: player/game-state conditions that gate the display (they
--- AND with the Trigger). "Show only when ALL of these are true."
+-- Build the Auras tab: LEFT RAIL | editor pane.
+-- Layout rework 2026-07-25. The tab used to be a 620-wide column floated in the
+-- middle of the container with ~120px of dead margin each side — a leftover of the
+-- old standalone window, and the reason the owner called the whole layout wrong.
+-- It now owns the full container the way Bars and Overlays do: a flush-left rail
+-- (tab header · profile · the aura tree · the buttons that act on the selection)
+-- beside an editor pane that fills everything to the right.
+--
+-- Container content is PINNED at 860×626 minimum (CONTRACTS §2), so these are
+-- deterministic. The pane anchors stretch to the right/bottom edges, so if the
+-- shell ever GROWS, the extra width lands in the editor pane and nothing re-flows.
+-- The Figma mocks these were once pixel-matched to are retired (the owner,
+-- 2026-07-25: "the mocks no longer matter and are now hopelessly out of date...
+-- I'd prefer the suite be consistent with itself"), so the numbers below come
+-- from GB's and Overlays' rails, not from a mock.
 -- --------------------------------------------------------------------------
--- The visibility editor edits ONE of: an aura (visEditID) or a group's load rule
--- (visEditGroup). Exactly one is set at a time; VE_Vis returns the right table so
--- every control below is identical for both. (Group load rule = the same design.)
-local visFrame, visEditID, visEditGroup, visTitle
-local veRows = {}
-
-local function VE_Cfg() return visEditID and DB() and DB()[visEditID] end
-local function VE_Group() return visEditGroup and Groups() and Groups()[visEditGroup] end
-local function VE_Vis()
-  if visEditGroup then
-    local g = VE_Group(); if not g then return nil end
-    g.visibility = g.visibility or {}; return g.visibility
-  end
-  local c = VE_Cfg(); if not c then return nil end
-  c.visibility = c.visibility or {}; return c.visibility
-end
-
-local function VE_Changed()
-  if GA.CDM then GA.CDM:UpdateVisibilityPoll(); GA.CDM:RefreshDisplays() end
-  if not visEditGroup and visibilitySummary and visEditID == selectedID then
-    visibilitySummary:SetText(VisibilitySummary(VE_Cfg()))
-  end
-  if visEditGroup and C.RefreshGroupControl then C:RefreshGroupControl() end
-end
-
-local function PlayerSpecs()
-  local out = {}
-  local n = (GetNumSpecializations and GetNumSpecializations()) or 0
-  for i = 1, n do
-    local id, name, _, icon = GetSpecializationInfo(i)
-    if id then out[#out + 1] = { id = id, name = name, icon = icon } end
-  end
-  return out
-end
-
--- 3-way cycle (Any / A / B), stored as nil / valA / valB.
-local function veCycle(parent, x, y, w, label, states, key)
-  local b = flatButton(parent, w, 22, COLOR.heroic, "", 12); b:SetPoint("TOPLEFT", x, y)
-  local function cur() local v = VE_Vis(); return (v and v[key]) or "any" end
-  local function txt()
-    local c = cur()
-    for _, s in ipairs(states) do if s[1] == c then return label .. ": " .. s[2] end end
-    return label .. ": " .. states[1][2]
-  end
-  b:SetScript("OnClick", function()
-    local v = VE_Vis(); if not v then return end
-    local c, idx = cur(), 1
-    for i, s in ipairs(states) do if s[1] == c then idx = i break end end
-    local nv = states[(idx % #states) + 1][1]
-    v[key] = (nv ~= "any") and nv or nil
-    b:SetText(txt()); VE_Changed()
-  end)
-  veRows[#veRows + 1] = { refresh = function() b:SetText(txt()) end }
-end
-
--- On/off toggle (require this state to be true).
-local function veToggle(parent, x, y, key, label)
-  local c = flatCheck(parent, label); c:SetPoint("TOPLEFT", x, y)
-  c:SetScript("OnClick", function()
-    local v = VE_Vis(); if not v then return end
-    c:Set(not c:Get()); v[key] = c:Get() or nil; VE_Changed()
-  end)
-  veRows[#veRows + 1] = { refresh = function() local v = VE_Vis(); c:Set(v and v[key]) end }
-end
-
-local function BuildVisibilityEditor()
-  local W, H = 420, 428
-  local f = CreateFrame("Frame", "GloomsAurasVisibility", UIParent)
-  f:SetSize(W, H); f:SetPoint("CENTER"); f:SetFrameStrata("FULLSCREEN_DIALOG"); f:EnableMouse(true)
-  skinPlate(f)
-  visTitle = newText(f, FONT.title, 18, COLOR.purple, "CENTER"); visTitle:SetPoint("TOP", 0, -12); visTitle:SetText("Visibility")
-  local sub = newText(f, FONT.body, 11, MUTE, "CENTER"); sub:SetPoint("TOP", 0, -34); sub:SetText("show only when ALL of these are true")
-  local close = flatButton(f, 22, 20, COLOR.heroic, "X", 12); close:SetPoint("TOPRIGHT", -8, -8); close:SetScript("OnClick", function() f:Hide() end)
-  f:SetMovable(true); f:SetClampedToScreen(true)
-  local tb = CreateFrame("Frame", nil, f); tb:SetPoint("TOPLEFT", 2, -2); tb:SetPoint("TOPRIGHT", -34, -2); tb:SetHeight(28); tb:EnableMouse(true); tb:RegisterForDrag("LeftButton")
-  tb:SetScript("OnDragStart", function() if f:IsMovable() then f:StartMoving() end end); tb:SetScript("OnDragStop", function() f:StopMovingOrSizing() end)
-
-  veCycle(f, 16, -56, 185, "Combat", { { "any", "Any" }, { "in", "In Combat" }, { "out", "Out of Combat" } }, "combat")
-  veCycle(f, 219, -56, 185, "Target", { { "any", "Any" }, { "has", "Has Target" }, { "none", "No Target" } }, "target")
-
-  local L, R, y0, dy = 20, 220, -90, 26
-  veToggle(f, L, y0,        "casting",   "While casting")
-  veToggle(f, L, y0 - dy,   "mounted",   "Mounted")
-  veToggle(f, L, y0 - dy*2, "vehicle",   "In vehicle")
-  veToggle(f, L, y0 - dy*3, "instance",  "In instance")
-  veToggle(f, L, y0 - dy*4, "encounter", "In boss encounter")
-  veToggle(f, L, y0 - dy*5, "resting",   "Resting")
-  veToggle(f, R, y0,        "stealthed", "Stealthed")
-  veToggle(f, R, y0 - dy,   "group",     "In a group")
-  veToggle(f, R, y0 - dy*2, "raid",      "In a raid")
-  veToggle(f, R, y0 - dy*3, "warmode",   "War Mode")
-  veToggle(f, R, y0 - dy*4, "alive",     "Alive (not dead)")
-
-  local specHdr = newText(f, FONT.head, 13, COLOR.purple, "LEFT"); specHdr:SetPoint("TOPLEFT", 12, -252); specHdr:SetText("SPECIALIZATION")
-  local specHint = newText(f, FONT.body, 11, MUTE, "LEFT"); specHint:SetPoint("LEFT", specHdr, "RIGHT", 8, 0); specHint:SetText("(none = all specs)")
-  for i, sp in ipairs(PlayerSpecs()) do
-    local c = flatCheck(f, sp.name); c:SetPoint("TOPLEFT", 20 + (i - 1) * 130, -276)
-    c:SetScript("OnClick", function()
-      local v = VE_Vis(); if not v then return end
-      v.specs = v.specs or {}
-      c:Set(not c:Get())
-      v.specs[sp.id] = c:Get() or nil
-      if not next(v.specs) then v.specs = nil end
-      VE_Changed()
-    end)
-    veRows[#veRows + 1] = { refresh = function() local v = VE_Vis(); c:Set(v and v.specs and v.specs[sp.id]) end }
-  end
-
-  local skHdr = newText(f, FONT.head, 13, COLOR.purple, "LEFT"); skHdr:SetPoint("TOPLEFT", 12, -312); skHdr:SetText("SPELL / TALENT KNOWN")
-  local skBox = flatEditBox(f, 80, 20); skBox:SetPoint("TOPLEFT", 20, -334); skBox:SetNumeric(true)
-  local skName = newText(f, FONT.body, 12, TEXT, "LEFT"); skName:SetPoint("LEFT", skBox, "RIGHT", 8, 0); skName:SetWidth(290)
-  local function skRefreshName()
-    local v = VE_Vis(); local id = v and v.spellKnown
-    if id then
-      local nm = C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(id)
-      skName:SetText(nm and ("|cffffffff" .. nm .. "|r — shows only if known") or ("spell " .. id))
-    else
-      skName:SetText("|cff888888enter a spell ID (talents count as known spells)|r")
-    end
-  end
-  skBox:SetScript("OnEnterPressed", function(self)
-    local v = VE_Vis(); if not v then return end
-    v.spellKnown = tonumber(self:GetText()); skRefreshName(); self:ClearFocus(); VE_Changed()
-  end)
-  skBox:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
-  veRows[#veRows + 1] = { refresh = function()
-    local v = VE_Vis(); skBox:SetText(v and v.spellKnown and tostring(v.spellKnown) or ""); skRefreshName()
-  end }
-
-  -- Master off-switch: DISABLE the aura in gameplay entirely (NOT a "show when"
-  -- condition, so it sits apart at the bottom). Auras only — groups have their own
-  -- on/off switch. ON = disabled (cfg.enabled=false → dropped from tracking, greyed).
-  local disDiv = f:CreateTexture(nil, "ARTWORK"); disDiv:SetColorTexture(COLOR.rim.r, COLOR.rim.g, COLOR.rim.b, COLOR.rim.a)
-  disDiv:SetPoint("TOPLEFT", 12, -368); disDiv:SetPoint("TOPRIGHT", -12, -368); disDiv:SetHeight(1)
-  local disLbl = newText(f, FONT.bodyM, 13, TEXT, "LEFT"); disLbl:SetPoint("TOPLEFT", 16, -384); disLbl:SetText("This aura in the game:")
-  -- Toggle: Disabled (left) | Enabled (right). Drives the AURA (cfg.enabled) or, when
-  -- editing a group's load rule, the GROUP (group.enabled). value true = right = Enabled.
-  local disSwitch = makeSwitch(f, "Disabled", "Enabled", function(v)
-    if visEditGroup then
-      local g = VE_Group(); if not g then return end
-      if v then g.enabled = nil else g.enabled = false end
-      if GA.CDM then GA.CDM:UpdateVisibilityPoll(); GA.CDM:RefreshDisplays() end
-      if C.RefreshGroupControl then C:RefreshGroupControl() end
-    else
-      local c = VE_Cfg(); if not c then return end
-      if v then c.enabled = nil else c.enabled = false end
-      if GA.CDM then GA.CDM:Discover() end     -- rebind the watch set
-    end
-    RefreshList()                              -- grey / ungrey the row(s)
-  end)
-  disSwitch:SetPoint("TOPLEFT", 236, -382)
-  veRows[#veRows + 1] = { refresh = function()
-    disDiv:Show(); disLbl:Show(); disSwitch:Show()
-    local t = visEditGroup and VE_Group() or VE_Cfg()
-    disLbl:SetText(visEditGroup and "This group in the game:" or "This aura in the game:")
-    disSwitch:Set(not (t and t.enabled == false))   -- Enabled unless explicitly disabled
-  end }
-
-  local footer = newText(f, FONT.body, 11, MUTE, "CENTER"); footer:SetPoint("BOTTOM", 0, 10)
-  footer:SetText("these AND with the display's Trigger")
-  f:SetScript("OnHide", function()
-    if not visEditGroup and visibilitySummary and visEditID == selectedID then
-      visibilitySummary:SetText(VisibilitySummary(VE_Cfg()))
-    end
-    if visEditGroup and C.RefreshGroupControl then C:RefreshGroupControl() end
-  end)
-  tinsert(UISpecialFrames, "GloomsAurasVisibility")
-  f:Hide()
-  visFrame = f; RegisterSubWindow(f)
-  return f
-end
-
-local function ShowVisibilityEditor(titleText)
-  if not visFrame then
-    local ok, err = pcall(BuildVisibilityEditor)
-    if not ok then GA.msg("|cffff5555visibility editor failed to build|r: " .. tostring(err)); return end
-  end
-  if visTitle then visTitle:SetText(titleText) end
-  for _, r in ipairs(veRows) do r:refresh() end
-  CloseSubWindows(visFrame)
-  DockRight(visFrame)
-  visFrame:Show(); visFrame:Raise()
-end
-
-local function OpenVisibilityEditor(spellID)
-  if not spellID then return end
-  visEditID = spellID; visEditGroup = nil
-  local c = VE_Cfg(); if c then c.visibility = c.visibility or {} end
-  ShowVisibilityEditor("Visibility: " .. ((c and c.label) or tostring(spellID)))
-end
-
--- Same editor, targeting a group's load rule instead of an aura's visibility.
-local function OpenGroupVisibilityEditor(groupID)
-  if not groupID then return end
-  visEditGroup = groupID; visEditID = nil
-  local g = VE_Group(); if g then g.visibility = g.visibility or {} end
-  ShowVisibilityEditor("Group Rule: " .. ((g and g.name) or tostring(groupID)))
-end
-
--- --------------------------------------------------------------------------
--- Build the Auras tab (two-pane: aura list | settings editor).
--- Phase D: the standalone 620×740 window is GONE — this mounts as the AURAS
--- tab of the Suite window, as a fixed 620-wide COLUMN centered in the shell's
--- container. The container's content area is PINNED at 860×626 minimum in
--- CONTRACTS §2, so these are deterministic: column height 626 = CONTENT_TOP
--- margin 12 + panes 528 + footer 86. (The old window gave the panes 614; the
--- editor pane scrolls and the list is windowed, so both absorb the difference.)
--- --------------------------------------------------------------------------
-local COLUMN_W = 620                      -- the centered content column (the old window width)
+local CONTENT_W = 860                     -- the PINNED content width (CONTRACTS §2 minimum)
 local CONTENT_TOP = -12                   -- top margin inside the container
-local PAD_L = 30                          -- left-content margin (matches the Figma mock)
-local LIST_W = 160
-local DIVIDER_X = 220                     -- vertical divider between the list and the editor
-local EDITOR_X = 240                      -- editor content x (20px right of the divider)
-local EDITOR_W = COLUMN_W - EDITOR_X - 20 -- 360 (20px right margin, matches the mock)
-local PANE_H = 528   -- list/editor pane height: 626 container − 12 top − 86 footer
-local FOOTER_H = 86                       -- footer strip: the divider sits FOOTER_H above the bottom
+local RAIL_W = 240                        -- left rail — Overlays' width (it also carries a list)
+local RAIL_X = 14                         -- rail content inset: ALL FOUR TABS use 14. The owner
+                                          -- compares tabs by tabbing between them and caught a
+                                          -- 2px difference — do not "improve" this one value.
+local LIST_W = RAIL_W - RAIL_X * 2        -- 212 — rail content width (list rows + buttons)
+local LIST_TOP = -190                     -- tree top: below the header (48) + profile block + divider
+local EDITOR_X = RAIL_W + 30              -- editor content x (30px right of the rail divider)
+local EDITOR_W = CONTENT_W - EDITOR_X - 30 -- 560 — fills the pane; the old 360 column is retired
+local FOOTER_H = 52                       -- footer strip (GB's height; was 86 when it held Profile)
+local PANE_H = 626 + CONTENT_TOP - FOOTER_H  -- 562: editor pane height
 
--- The aura editor's GROUP section — now JUST the "which group is this aura in"
--- assignment dropdown (a group's OWN settings live in the Manage Group drawer, opened
--- from the ⚙ on its left-pane header). Extracted from Build() to keep Build under Lua
--- 5.1's 60-upvalue limit. Registers a refresh into `rows` + sets C.RefreshGroupControl.
-local function BuildGroupSection(editor)
-  Header(editor, 12, -488, "Group")
-
-  local function currentGroup()
-    local c = Cfg(); local gid = c and c.group
-    return gid, gid and Groups() and Groups()[gid] or nil
-  end
-
-  local groupBtn = flatButton(editor, 200, 22, COLOR.heroic, "Ungrouped", 12)
-  groupBtn:SetPoint("TOPLEFT", 16, -512)
-  local hint = newText(editor, FONT.body, 11, MUTE, "LEFT")
-  hint:SetPoint("TOPLEFT", 16, -538)
-  hint:SetText("Manage a group (rule, on/off, rename…) from the gear on its header.")
-
-  -- Dropdown menu (rebuilt on each open from the live group list). Opens UPWARD.
-  local groupMenu = CreateFrame("Frame", nil, editor)
-  groupMenu:SetFrameLevel((editor:GetFrameLevel() or 1) + 40)
-  skinPlate(groupMenu)
-  groupMenu:SetPoint("BOTTOMLEFT", groupBtn, "TOPLEFT", 0, 2)
-  groupMenu:Hide()
-  local groupMenuItems = {}
-
-  local function refreshGroupControl()
-    local c = Cfg()
-    local _, g = currentGroup()
-    groupBtn:SetText(g and g.name or "Ungrouped")
-    groupBtn:SetEnabled(c ~= nil)
-  end
-  C.RefreshGroupControl = function() refreshGroupControl() end
-
-  local function assignGroup(gid)
-    local c = Cfg(); if not c then return end
-    c.group = gid            -- nil = ungrouped
-    refreshGroupControl()
-    RefreshList()            -- the aura moves under its new group in the left pane
-    if GA.CDM then GA.CDM:UpdateVisibilityPoll(); GA.CDM:RefreshDisplays() end
-  end
-
-  local function rebuildGroupMenu()
-    local entries = { { label = "Ungrouped", act = "clear" } }
-    for _, id in ipairs(GroupList()) do
-      entries[#entries + 1] = { label = Groups()[id].name or id, act = id }
-    end
-    entries[#entries + 1] = { label = "|cff936bff+ New Group…|r", act = "new" }
-    local W = 200
-    for i, e in ipairs(entries) do
-      local it = groupMenuItems[i]
-      if not it then
-        it = flatButton(groupMenu, W - 8, 20, COLOR.heroic, "", 12); it:SetBase(0.12)
-        groupMenuItems[i] = it
-      end
-      it:ClearAllPoints(); it:SetPoint("TOPLEFT", 4, -4 - (i - 1) * 22)
-      it:SetText(e.label)
-      it._act = e.act
-      it:SetScript("OnClick", function(self)
-        groupMenu:Hide(); openDropdownMenu = nil
-        local act = self._act
-        if act == "new" then
-          OpenNameDialog("New Group", nil, function(name) assignGroup(CreateGroup(name)) end)
-        elseif act == "clear" then
-          assignGroup(nil)
-        else
-          assignGroup(act)
-        end
-      end)
-      it:Show()
-    end
-    for i = #entries + 1, #groupMenuItems do groupMenuItems[i]:Hide() end
-    groupMenu:SetSize(W, #entries * 22 + 8)
-  end
-
-  groupBtn:SetScript("OnClick", function()
-    if groupMenu:IsShown() then groupMenu:Hide(); openDropdownMenu = nil
-    else
-      if openDropdownMenu and openDropdownMenu ~= groupMenu then openDropdownMenu:Hide() end
-      rebuildGroupMenu()
-      groupMenu:Show(); openDropdownMenu = groupMenu
-    end
-  end)
-
-  rows[#rows + 1] = {
-    refresh = refreshGroupControl,
-    setEnabled = function(_, on) if not on then groupMenu:Hide() end end,  -- refresh handles enable state
-  }
-end
-
--- --------------------------------------------------------------------------
--- Manage Group drawer: a group's OWN settings (rename · load rule · on/off ·
--- reorder · delete), opened by the ⚙ on its left-pane header. Docks like the
--- other editors. Edits GA.db.groups[gmEditGID].
--- --------------------------------------------------------------------------
-local gmFrame, gmEditGID, gmTitle, gmSwitch
-local function GM_Group() return gmEditGID and Groups() and Groups()[gmEditGID] end
-
-local function BuildGroupManager()
-  local W, H = 250, 214
-  local f = CreateFrame("Frame", "GloomsAurasGroupManager", UIParent)
-  f:SetSize(W, H); f:SetPoint("CENTER"); f:SetFrameStrata("FULLSCREEN_DIALOG"); f:EnableMouse(true)
-  skinPlate(f)
-  gmTitle = newText(f, FONT.title, 16, COLOR.purple, "LEFT")
-  gmTitle:SetPoint("TOPLEFT", 14, -14); gmTitle:SetPoint("RIGHT", -36, 0); gmTitle:SetText("Manage Group")
-  local close = flatButton(f, 22, 20, COLOR.heroic, "X", 12)
-  close:SetPoint("TOPRIGHT", -8, -8); close:SetScript("OnClick", function() f:Hide() end)
-  f:SetMovable(true); f:SetClampedToScreen(true)
-  local tb = CreateFrame("Frame", nil, f); tb:SetPoint("TOPLEFT", 2, -2); tb:SetPoint("TOPRIGHT", -34, -2)
-  tb:SetHeight(28); tb:EnableMouse(true); tb:RegisterForDrag("LeftButton")
-  tb:SetScript("OnDragStart", function() if f:IsMovable() then f:StartMoving() end end)
-  tb:SetScript("OnDragStop", function() f:StopMovingOrSizing() end)
-
-  -- On/off switch for the whole group.
-  local onLbl = newText(f, FONT.body, 12, TEXT, "LEFT"); onLbl:SetPoint("TOPLEFT", 16, -50); onLbl:SetText("Group")
-  gmSwitch = makeSwitch(f, "OFF", "ON", function(v)
-    local g = GM_Group(); if not g then return end
-    g.enabled = v
-    RefreshList()
-    if GA.CDM then GA.CDM:UpdateVisibilityPoll(); GA.CDM:RefreshDisplays() end
-  end)
-  gmSwitch:SetPoint("LEFT", onLbl, "RIGHT", 14, 0)
-
-  -- Rename + Load Rule.
-  local renameBtn = flatButton(f, 106, 24, COLOR.heroic, "Rename…", 12); renameBtn:SetPoint("TOPLEFT", 16, -84)
-  renameBtn:SetScript("OnClick", function()
-    local g = GM_Group(); if not g then return end
-    OpenNameDialog("Rename Group", g.name, function(name)
-      if name and name ~= "" then g.name = name end
-      gmTitle:SetText("Manage: " .. (g.name or ""))
-      RefreshList()
-    end)
-  end)
-  local ruleBtn = flatButton(f, 106, 24, COLOR.heroic, "Load Rule…", 12); ruleBtn:SetPoint("LEFT", renameBtn, "RIGHT", 8, 0)
-  ruleBtn:SetScript("OnClick", function() if gmEditGID then OpenGroupVisibilityEditor(gmEditGID) end end)
-
-  -- Reorder (up / down within the group list).
-  local upBtn = flatButton(f, 106, 24, COLOR.heroic, "Move Up", 12); upBtn:SetPoint("TOPLEFT", 16, -116)
-  upBtn:SetScript("OnClick", function() if gmEditGID then MoveGroup(gmEditGID, -1); RefreshList() end end)
-  local downBtn = flatButton(f, 106, 24, COLOR.heroic, "Move Down", 12); downBtn:SetPoint("LEFT", upBtn, "RIGHT", 8, 0)
-  downBtn:SetScript("OnClick", function() if gmEditGID then MoveGroup(gmEditGID, 1); RefreshList() end end)
-
-  -- Delete (auras fall back to Ungrouped).
-  local delBtn = flatButton(f, 220, 24, COLOR.orange, "Delete Group", 12); delBtn:SetPoint("TOPLEFT", 16, -148)
-  delBtn:SetScript("OnClick", function()
-    local name = DeleteGroup(gmEditGID)
-    if name then GA.msg(("deleted group |cffffffff%s|r — its auras moved to Ungrouped."):format(name)) end
-    f:Hide(); RefreshList()
-    if C.RefreshGroupControl then C:RefreshGroupControl() end
-    if GA.CDM then GA.CDM:UpdateVisibilityPoll(); GA.CDM:RefreshDisplays() end
-  end)
-
-  local foot = newText(f, FONT.body, 11, MUTE, "CENTER"); foot:SetPoint("BOTTOM", 0, 12); foot:SetWidth(W - 24)
-  foot:SetText("On/off + load rule gate every aura in this group.")
-
-  tinsert(UISpecialFrames, "GloomsAurasGroupManager")
-  f:Hide()
-  gmFrame = f; RegisterSubWindow(f)
-  return f
-end
-
-local function OpenGroupManager(gid)
-  if not gid then return end
-  gmEditGID = gid
-  if not gmFrame then
-    local ok, err = pcall(BuildGroupManager)
-    if not ok then GA.msg("|cffff5555group manager failed to build|r: " .. tostring(err)); return end
-  end
-  local g = GM_Group()
-  gmTitle:SetText("Manage: " .. ((g and g.name) or tostring(gid)))
-  if gmSwitch then gmSwitch:Set(g and g.enabled ~= false) end
-  CloseSubWindows(gmFrame)
-  DockRight(gmFrame)
-  gmFrame:Show(); gmFrame:Raise()
-end
 
 -- --------------------------------------------------------------------------
 -- Profiles (Phase 3B): named, switchable configs with a per-character default.
@@ -2056,31 +1668,15 @@ function C:RefreshProfileList()
   if pr.block then pr.block:refresh() end
 end
 
--- The drawer now hosts LibGloomSkin's shared profileBlock (MINOR 3) — the SAME
--- control Gloom's Bars puts in its left rail and Overlays puts in its own
--- (the owner 2026-07-24: this mechanism must be identical everywhere). The old
--- click-a-row list + four bespoke buttons are gone; delete still routes through
--- the confirm modal, which is now the shared one.
--- NOTE: the drawer itself stays — moving Auras to a GB-style always-visible rail
--- is a layout change that belongs with the Auras landing-page rethink already on
--- the polish backlog, not buried in this pass.
-function C:BuildProfileManager()
+-- THE PROFILE DRAWER IS GONE (2026-07-25, the owner: "we've got to get rid of the
+-- drawer"). The shared profileBlock (LibGloomSkin MINOR 3) now sits permanently at
+-- the TOP OF THE LEFT RAIL, exactly where GB and Overlays put theirs — so the rail
+-- reads down the real hierarchy: profile → groups → auras. Same control, same
+-- plumbing as before; only its host changed (was a docked, draggable sub-window
+-- opened from a footer "Profile: <name>" button, both now deleted).
+function C:BuildProfileBlock(rail, X, W, y)
   local pr = C._prof
-  local W = 264
-  local f = CreateFrame("Frame", "GloomsAurasProfileManager", UIParent)
-  f:SetSize(W, 220); f:SetPoint("CENTER"); f:SetFrameStrata("FULLSCREEN_DIALOG"); f:EnableMouse(true)
-  skinPlate(f)
-  local title = newText(f, FONT.title, 16, COLOR.purple, "LEFT")
-  title:SetPoint("TOPLEFT", 14, -14); title:SetPoint("RIGHT", -36, 0); title:SetText("Profiles")
-  local close = flatButton(f, 22, 20, COLOR.heroic, "X", 12)
-  close:SetPoint("TOPRIGHT", -8, -8); close:SetScript("OnClick", function() f:Hide() end)
-  f:SetMovable(true); f:SetClampedToScreen(true)
-  local tb = CreateFrame("Frame", nil, f); tb:SetPoint("TOPLEFT", 2, -2); tb:SetPoint("TOPRIGHT", -34, -2)
-  tb:SetHeight(28); tb:EnableMouse(true); tb:RegisterForDrag("LeftButton")
-  tb:SetScript("OnDragStart", function() if f:IsMovable() then f:StartMoving() end end)
-  tb:SetScript("OnDragStop", function() f:StopMovingOrSizing() end)
-
-  pr.block = UI.profileBlock(f, W - 28, {
+  pr.block = UI.profileBlock(rail, W, {
     noun   = "profile",
     names  = function() return GA:ProfileNames() end,
     active = function() return GA:ActiveProfileName() or "?" end,
@@ -2117,34 +1713,8 @@ function C:BuildProfileManager()
       delete   = "Deletes this profile (you'll be asked to confirm). Your only profile can't be deleted.",
     },
   })
-  pr.block.frame:SetPoint("TOPLEFT", 14, -48)
-
-  local foot = newText(f, FONT.body, 11, MUTE, "CENTER")
-  foot:SetPoint("TOPLEFT", 12, -178); foot:SetWidth(W - 24)
-  foot:SetText("Each character defaults to its own profile.")
-
-  tinsert(UISpecialFrames, "GloomsAurasProfileManager")
-  f:Hide(); pr.frame = f; RegisterSubWindow(f)
-  return f
-end
-
-function C:OpenProfileManager()
-  local pr = C._prof
-  if not pr.frame then
-    local ok, err = pcall(function() C:BuildProfileManager() end)
-    if not ok then GA.msg("|cffff5555profile manager failed to build|r: " .. tostring(err)); return end
-  end
-  CloseSubWindows(pr.frame)
-  DockRight(pr.frame)
-  pr.frame:Show(); pr.frame:Raise()
-  C:RefreshProfileList()
-end
-
--- Keep the bottom-strip button label ("Profile: <name>") in sync.
-function C:UpdateProfileButton()
-  if self._profileLabel then
-    self._profileLabel:Set("Profile:", GA:ActiveProfileName() or "?")
-  end
+  pr.block.frame:SetPoint("TOPLEFT", X, y)
+  return pr.block
 end
 
 -- Called by Core (RefreshForProfile) after GA.db is repointed. Rebuilds the left
@@ -2157,11 +1727,10 @@ function C:OnProfileSwitched()
     GA.Displays.forced = true
     GA.Displays:SetInteractive(true)
   end
+  C.groupSel = nil    -- the old profile's groups are gone
   C:SelectInitial()   -- first aura of the new profile; refreshes list + editor + empty state
-  if C.RefreshGroupControl then C:RefreshGroupControl() end
   if self._hideCDM then self._hideCDM:Set(GA.db and GA.db.hideBlizzardCDM) end
-  self:UpdateProfileButton()
-  C:RefreshProfileList()
+  C:RefreshProfileList()   -- the rail block re-reads the active profile name
 end
 
 -- --------------------------------------------------------------------------
@@ -2464,6 +2033,7 @@ end
 function C:SelectInitial()
   local db = DB()
   local keep = (selectedID and db and db[selectedID]) and selectedID or DisplayList()[1]
+  C.groupSel = nil
   RefreshList()
   SetSelected(keep)      -- nil is fine: the empty state takes over
   C:AccordionLayout()    -- recompute the scroll extent + show the scrollbar if it overflows
@@ -2472,7 +2042,9 @@ end
 -- With no auras in the profile there is nothing to edit, so the accordion would sit
 -- there fully disabled. Swap it for one line telling the owner what to click.
 function C:UpdateEmptyState()
-  local empty = (DisplayList()[1] == nil)
+  -- A group with no auras in it still has settings to show, so a selected group
+  -- keeps the pane alive even when the profile holds no auras at all.
+  local empty = (DisplayList()[1] == nil) and not C.groupSel
   if C._empty then C._empty:SetShown(empty) end
   if C._editor then C._editor:SetShown(not empty) end
   if empty and C._editorTrack then C._editorTrack:Hide(); C._editorThumb:Hide() end
@@ -2542,10 +2114,14 @@ local ACC_HDR_H, ACC_GAP = 20, 10
 function C:AccordionAddSection(key, title, height, builder)
   local editor = C._acc.editor
   local hdr = CreateFrame("Button", nil, editor); hdr:SetSize(EDITOR_W, ACC_HDR_H)
-  local caret = hdr:CreateTexture(nil, "OVERLAY"); caret:SetSize(8, 9); caret:SetPoint("LEFT", 2, 0)
-  caret:SetTexture(MEDIA .. "triangle.png"); caret:SetVertexColor(1, 1, 1, 1)  -- triangle.png is already orange
+  -- Caret = the SUITE's shared art, size and colour (the owner, 2026-07-25: same
+  -- glyph, same size, same colour as the other modules). GB's accordion is the
+  -- reference: UI.CARET at 9×9, explicitly tinted orange, label 11px to its right.
+  -- GA used its own Media/triangle.png at 8×9 with the colour baked into the file.
+  local caret = hdr:CreateTexture(nil, "OVERLAY"); caret:SetSize(9, 9); caret:SetPoint("LEFT", 2, 0)
+  caret:SetTexture(UI.CARET); caret:SetVertexColor(COLOR.orange.r, COLOR.orange.g, COLOR.orange.b)
   local lbl = newText(hdr, FONT.head, 16, COLOR.purple, "LEFT")   -- Khand Medium 16, purple
-  lbl:SetPoint("LEFT", 17, 0); lbl:SetText((title or ""):upper())
+  lbl:SetPoint("LEFT", caret, "RIGHT", 11, 0); lbl:SetText((title or ""):upper())
   local content = CreateFrame("Frame", nil, editor); content:SetSize(EDITOR_W, height); content:Hide()
   local s = { key = key, header = hdr, caret = caret, content = content, height = height, expanded = false }
   hdr:SetScript("OnClick", function() C:AccordionToggle(key) end)
@@ -2719,7 +2295,9 @@ end
 -- pane (and double-clicking its row), through the suite's shared UI.nameDialog, which
 -- is the same gesture GB's profile/preset blocks use. The accordion starts at the top.
 function C:BuildEditor(editor)
-  C._acc = { editor = editor, sections = {}, top = -8 }   -- top = first header y
+  C._acc = { editor = editor, sections = {}, top = -42 }   -- top = first header y (below the GROUP row)
+
+  C:BuildAuraGroupRow(editor)   -- "GROUP  [ Group: <name> ]" — this aura's place in the hierarchy
 
   -- Icon-aura sections. Appearance is inline; the rest bridge to their drawers for now.
   C:AccordionAddSection("trigger", "Aura Trigger(s)", 120, function(ct) C:BuildTriggerSection(ct) end)
@@ -2729,7 +2307,122 @@ function C:BuildEditor(editor)
   C:AccordionAddSection("sounds", "Sounds", 110, function(ct) C:BuildSoundSection(ct) end)
   C:AccordionAddSection("load", "Aura Load Conditions", 420, function(ct) C:BuildLoadConditionsSection(ct) end)
 
-  C:AccordionOpen("trigger")   -- icon aura default-opens its Trigger section (matches the mock)
+  C:AccordionOpen("trigger")   -- an aura opens on its Trigger section
+end
+
+-- ===========================================================================
+-- THE GROUP PANE — a group's own settings, in the SAME pane an aura's settings
+-- use. Clicking a group's name in the rail selects it exactly the way clicking an
+-- aura does, and this replaces the accordion.
+--
+-- This is what retired the ⚙ gear and its "Manage Group" drawer (the owner,
+-- 2026-07-25: the old Group control "has always been extraordinarily confusing").
+-- The confusion was structural, not cosmetic: a group's settings were split
+-- between a green button in the left pane (assign) and a floating drawer behind a
+-- gear (everything else), so nothing in the UI said that a profile holds groups
+-- and a group holds auras. Now the rail IS the hierarchy — profile at the top,
+-- groups with their auras nested under it — and both kinds of row open their
+-- settings in the same place.
+-- ===========================================================================
+C._grows = {}   -- the group pane's own refresh list (auras use the shared `rows`)
+
+local function GrpSel() local gid = C.groupSel; return gid and Groups() and Groups()[gid] end
+
+function C:BuildGroupPane(parent)
+  local pane = CreateFrame("Frame", nil, parent)
+  pane:SetPoint("TOPLEFT", 0, -6); pane:SetWidth(EDITOR_W)
+  pane:Hide(); C._gpane = pane
+
+  local hdr = newText(pane, FONT.head, 12, MUTE, "LEFT")
+  hdr:SetPoint("TOPLEFT", 0, -2); hdr:SetText("GROUP")
+  local name = newText(pane, FONT.title, 20, COLOR.purple, "LEFT")
+  name:SetPoint("TOPLEFT", 0, -20); name:SetWidth(300); name:SetWordWrap(false)
+  C._gpaneName = name
+
+  -- Order (a group's place in the rail) — right-aligned on the name's row.
+  local dn = flatButton(pane, 92, 22, COLOR.heroic, "Move Down", 11); dn:SetBase(0.2)
+  dn:SetPoint("TOPRIGHT", 0, -20)
+  dn:SetScript("OnClick", function() if C.groupSel then MoveGroup(C.groupSel, 1); RefreshList() end end)
+  local up = flatButton(pane, 92, 22, COLOR.heroic, "Move Up", 11); up:SetBase(0.2)
+  up:SetPoint("TOPRIGHT", dn, "TOPLEFT", -4, 0)
+  up:SetScript("OnClick", function() if C.groupSel then MoveGroup(C.groupSel, -1); RefreshList() end end)
+
+  local ren = flatButton(pane, 92, 22, COLOR.heroic, "Rename", 11); ren:SetBase(0.2)
+  ren:SetPoint("TOPLEFT", 0, -52)
+  ren:SetScript("OnClick", function()
+    local g = GrpSel(); if not g then return end
+    OpenNameDialog("Rename Group", g.name or "", function(nm)
+      if not nm or nm:gsub("%s", "") == "" then return end
+      g.name = nm; RefreshList(); C:RefreshGroupPane(); C:RefreshGroupButton()
+    end)
+  end)
+
+  -- Delete CONFIRMS (CONTRACTS §4). Auras are never deleted with their group.
+  local del = flatButton(pane, 110, 22, COLOR.red, "Delete Group", 11); del:SetBase(0.3)
+  del:SetPoint("TOPLEFT", ren, "TOPRIGHT", 4, 0)
+  del:SetScript("OnClick", function()
+    local g, gid = GrpSel(), C.groupSel; if not g then return end
+    C:OpenConfirm(("Delete the group \"%s\"?  Its auras aren't deleted — they move to Ungrouped."):format(g.name or "?"),
+      function()
+        local gone = DeleteGroup(gid)
+        if gone then GA.msg(("deleted group |cffffffff%s|r — its auras moved to Ungrouped."):format(gone)) end
+        C.groupSel = nil
+        RefreshList(); C:SelectInitial()
+        if GA.CDM then GA.CDM:UpdateVisibilityPoll(); GA.CDM:RefreshDisplays() end
+      end)
+  end)
+
+  local div = pane:CreateTexture(nil, "ARTWORK"); div:SetColorTexture(COLOR.rim.r, COLOR.rim.g, COLOR.rim.b, COLOR.rim.a)
+  div:SetPoint("TOPLEFT", 0, -86); div:SetPoint("TOPRIGHT", 0, -86); div:SetHeight(1)
+
+  local lch = newText(pane, FONT.head, 16, COLOR.purple, "LEFT")
+  lch:SetPoint("TOPLEFT", 0, -100); lch:SetText("LOAD THIS GROUP WHEN…")
+  local lhint = newText(pane, FONT.body, 11, MUTE, "LEFT")
+  lhint:SetPoint("TOPLEFT", 0, -122); lhint:SetWidth(EDITOR_W)
+  lhint:SetText("These gate EVERY aura in the group, in front of each aura's own conditions.")
+
+  -- The SAME load-conditions block the aura editor uses — pointed at the group.
+  local lc = CreateFrame("Frame", nil, pane); lc:SetPoint("TOPLEFT", 0, -146); lc:SetWidth(EDITOR_W)
+  local lcH = C:BuildLoadConditionsSection(lc, { sink = C._grows, target = GrpSel, noun = "group" })
+  lc:SetHeight(lcH)
+  pane:SetHeight(146 + lcH)
+  C._gpaneH = 146 + lcH + 20
+end
+
+-- Select a GROUP — the mirror of SetSelected for auras.
+function C:SelectGroup(gid)
+  if not (gid and Groups() and Groups()[gid]) then return end
+  C.groupSel = gid
+  selectedID = nil
+  if C._trig then C._trig.editID = nil end
+  if GA.Displays then GA.Displays:SetSelectedDisplay(nil); GA.Displays:RefreshForced() end
+  C:SyncRailButtons()
+  C:UpdateEmptyState()   -- a group is editable even in a profile with no auras
+  C:ShowGroupPane(true)
+  C:RefreshGroupPane()
+  RefreshList()
+end
+
+function C:RefreshGroupPane()
+  local g = GrpSel(); if not g then return end
+  if C._gpaneName then C._gpaneName:SetText(g.name or "Group") end
+  for _, r in ipairs(C._grows) do r:refresh(); r:setEnabled(true) end
+end
+
+-- Swap the pane between the aura accordion and the group pane.
+function C:ShowGroupPane(on)
+  if C._gpane then C._gpane:SetShown(on) end
+  if C._auraTop then C._auraTop:SetShown(not on) end
+  for _, s in ipairs(C._acc and C._acc.sections or {}) do
+    s.header:SetShown(not on)
+    if on then s.content:Hide() end
+  end
+  if on then
+    C:SetEditorScroll(0)
+    C:LayoutEditorScroll(C._gpaneH or 520)
+  else
+    C:AccordionLayout()
+  end
 end
 
 -- Left-pane button stack, restyled to the SUITE's button language (the owner,
@@ -2747,15 +2440,31 @@ function C:BuildLeftButtons(listFrame)
     return b
   end
   local half = math.floor((LIST_W - 4) / 2)
+  local rest = LIST_W - half - 4
 
-  local newBtn = mk("+ New Aura", COLOR.purple, 0.35, LIST_W, 0, 118, nil)
+  -- The two CREATE actions sit together, both purple: this is where the hierarchy
+  -- gets made. (The green "Group: <name>" button that used to live down here is
+  -- gone — assigning an aura to a group is a property of the aura, so it moved to
+  -- the top of the aura pane. The owner, 2026-07-25: that button "has always been
+  -- extraordinarily confusing".)
+  local newBtn = mk("+ New Aura", COLOR.purple, 0.35, half, 0, 62, nil)
   newBtn:SetScript("OnClick", function() C:OpenNewAuraMenu(newBtn) end)
   UI.attachTip(newBtn, "New aura", "Creates a blank aura in this profile and opens it for editing. Pick the kind: Icon, Texture or Bar.")
 
-  local ren = mk("Rename", H, 0.2, half, 0, 90, function() C:RenameSelected() end)
-  UI.attachTip(ren, "Rename aura", "Renames the selected aura in this list. (The on-screen text an aura draws is a separate setting, under Text.)")
+  local newGrp = mk("+ New Group", COLOR.purple, 0.35, rest, half + 4, 62, function()
+    OpenNameDialog("New Group", "", function(nm)
+      if not nm or nm:gsub("%s", "") == "" then return end
+      local gid = CreateGroup(nm)
+      if gid then RefreshList(); C:SelectGroup(gid) end
+    end)
+  end)
+  UI.attachTip(newGrp, "New group", "Groups hold a set of auras that load together: one load rule and one on/off switch gate every aura inside. Click a group's name to edit it.")
 
-  mk("Duplicate", H, 0.2, LIST_W - half - 4, half + 4, 90, function()
+  local ren = mk("Rename", H, 0.2, half, 0, 34, function() C:RenameSelected() end)
+  UI.attachTip(ren, "Rename aura", "Renames the selected aura in this list. (The on-screen text an aura draws is a separate setting, under Text.)")
+  C._btnRename = ren
+
+  C._btnDupe = mk("Duplicate", H, 0.2, rest, half + 4, 34, function()
     if not (selectedID and DB() and DB()[selectedID]) then return end
     local copy = DeepCopy(DB()[selectedID]); copy.label = (copy.label or "Aura") .. " (copy)"
     local p = copy.point or { "CENTER", 0, 0 }; copy.point = { "CENTER", (p[2] or 0) + 24, (p[3] or 0) - 24 }
@@ -2764,20 +2473,33 @@ function C:BuildLeftButtons(listFrame)
     SetSelected(id)
   end)
 
-  mk("Delete Aura", COLOR.red, 0.3, LIST_W, 0, 62, function()
-    if selectedID and DB() then
-      local gone = selectedID; DB()[gone] = nil
+  -- ★ Delete CONFIRMS. It used to delete on the click, with no way back and no undo —
+  -- the owner caught it during the layout rework, 2026-07-25. The suite's rule
+  -- (CONTRACTS §4) is that every destructive action goes through the shared
+  -- UI.confirm modal, which has a Cancel and an ESC. This one predates that rule.
+  C._btnDel = mk("Delete Aura", COLOR.red, 0.3, LIST_W, 0, 6, function()
+    local c = Cfg(); if not (selectedID and c) then return end
+    local gone, name = selectedID, c.label or "this aura"
+    C:OpenConfirm(("Delete the aura \"%s\"?  This can't be undone."):format(name), function()
+      if not (DB() and DB()[gone]) then return end
+      DB()[gone] = nil
       if GA.Displays and GA.Displays.frames[gone] then GA.Displays.frames[gone]:Hide() end
       if GA.CDM then GA.CDM:Discover() end
       SetSelected(DisplayList()[1])
-    end
+    end)
   end)
 
-  local gb = flatButton(listFrame, LIST_W, 22, COLOR.green, "", 11); gb:SetBase(0.3)
-  gb:SetPoint("BOTTOMLEFT", 0, 34); gb.text:Hide()
-  C._groupBtn, C._groupLabel = gb, twoWeightLabel(gb, 11)
-  gb:SetScript("OnClick", function() C:OpenGroupAssignMenu(gb) end)
-  C:RefreshGroupButton()
+  C:SyncRailButtons()
+end
+
+-- Rename / Duplicate / Delete act on the selected AURA, so they grey out while a
+-- GROUP is selected (a group's own Rename / Delete live in its pane, where its
+-- other settings are). flatButton's OnDisable does the greying.
+function C:SyncRailButtons()
+  local on = (selectedID ~= nil)
+  for _, b in ipairs({ C._btnRename, C._btnDupe, C._btnDel }) do
+    if b then b:SetEnabled(on) end
+  end
 end
 
 -- Rename the SELECTED aura through the suite's shared name dialog — the replacement
@@ -2792,6 +2514,31 @@ function C:RenameSelected()
   end)
 end
 
+-- The aura's GROUP assignment — one row at the top of the aura pane, above the
+-- accordion. It reads as what it is: a property of this aura ("which group is it
+-- in?"), sitting with the aura's other properties. It replaces the green
+-- "Group: <name>" button in the left pane, which read like a status label but was
+-- actually an action, and was nowhere near the group it talked about.
+function C:BuildAuraGroupRow(parent)
+  local row = CreateFrame("Frame", nil, parent)
+  row:SetPoint("TOPLEFT", 0, -6); row:SetSize(EDITOR_W, 24)
+  C._auraTop = row
+
+  local lbl = newText(row, FONT.head, 12, MUTE, "LEFT")
+  lbl:SetPoint("TOPLEFT", 0, -4); lbl:SetText("GROUP")
+
+  local gb = flatButton(row, 220, 22, COLOR.heroic, "", 11); gb:SetBase(0.2)
+  gb:SetPoint("TOPLEFT", 62, -1); gb.text:Hide()
+  C._groupBtn, C._groupLabel = gb, twoWeightLabel(gb, 11)
+  gb:SetScript("OnClick", function() C:OpenGroupAssignMenu(gb) end)
+  UI.attachTip(gb, "Group", "Which group this aura belongs to. A group's load rule and on/off switch gate every aura inside it — click the group's name in the list to edit those.")
+
+  rows[#rows + 1] = {
+    refresh = function() C:RefreshGroupButton() end,
+    setEnabled = function(_, on) gb:SetEnabled(on) end,
+  }
+end
+
 -- Group button label = the selected aura's group (Ungrouped if none). Hidden with no selection.
 function C:RefreshGroupButton()
   if not C._groupLabel then return end
@@ -2801,7 +2548,7 @@ function C:RefreshGroupButton()
   if C._groupBtn then C._groupBtn:SetShown(c ~= nil) end
 end
 
--- Pop-up (opens upward from the Group button) to assign the selected aura to a group:
+-- Pop-up (opens below the Group button) to assign the selected aura to a group:
 -- Ungrouped + each group + "+ New Group…".
 function C:OpenGroupAssignMenu(anchor)
   local c = Cfg(); if not c then return end
@@ -2815,12 +2562,13 @@ function C:OpenGroupAssignMenu(anchor)
   local items = { { nil, "Ungrouped" } }
   for _, gid in ipairs(GroupList()) do items[#items + 1] = { gid, Groups()[gid].name or "Group" } end
   items[#items + 1] = { "__new", "+ New Group…" }
-  menu:SetSize(LIST_W, #items * 24 + 8)
-  menu:ClearAllPoints(); menu:SetPoint("BOTTOMLEFT", anchor, "TOPLEFT", 0, 4)
+  local W = anchor:GetWidth()
+  menu:SetSize(W, #items * 24 + 8)
+  menu:ClearAllPoints(); menu:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", 0, -4)
   for _, r in ipairs(menu._rows) do r:Hide() end
   for i, it in ipairs(items) do
     local r = menu._rows[i]
-    if not r then r = flatButton(menu, LIST_W - 8, 20, COLOR.heroic, "", 11); r:SetBase(0.15); menu._rows[i] = r end
+    if not r then r = flatButton(menu, W - 8, 20, COLOR.heroic, "", 11); r:SetBase(0.15); menu._rows[i] = r end
     r:SetText(it[2]); r:ClearAllPoints(); r:SetPoint("TOPLEFT", 4, -4 - (i - 1) * 24); r:Show()
     local val = it[1]
     r:SetScript("OnClick", function()
@@ -3195,23 +2943,32 @@ function C:BuildSoundSection(ct)
   }
 end
 
--- The Aura Load Conditions section — the per-aura visibility gate (Combat/Target state,
--- context toggles, spec multi-select, known-spell) + the master Disabled/Enabled switch.
--- Inline replacement for the old docked Visibility drawer (which still backs group load
--- rules). Reuses the existing cfg.visibility model + CDM:VisibilityGate — no new engine.
--- No open-state Figma mock (411:164 is only the header), so laid out to the redesign language.
--- Reads are NON-SEEDING: viewing must not create cfg.visibility on a bare/decoration aura.
-function C:BuildLoadConditionsSection(ct)
-  local function vis() local c = Cfg(); return c and c.visibility end                 -- read (no seed)
-  local function visW() local c = Cfg(); if not c then return nil end; c.visibility = c.visibility or {}; return c.visibility end
+-- The Load Conditions block — a visibility gate (Combat/Target state, context toggles,
+-- spec multi-select, known-spell) + the master Disabled/Enabled switch.
+--
+-- ★ BUILT TWICE, from one implementation: once in the AURA editor (gating cfg.visibility)
+-- and once in the GROUP pane (gating group.visibility — a group's "load rule"). That is
+-- what retired the docked Visibility drawer outright: it was the last thing group rules
+-- needed a floating window for. `o.target` says WHICH table is being gated, `o.sink`
+-- which refresh list the rows join (auras use the shared `rows`, driven by SetSelected;
+-- the group pane keeps its own). Engine unchanged — same visibility model, same
+-- CDM:VisibilityGate, which never cared whose table it was reading.
+-- Reads are NON-SEEDING: viewing must not create a .visibility on a bare/decoration aura.
+function C:BuildLoadConditionsSection(ct, o)
+  o = o or {}
+  local sink = o.sink or rows
+  local target = o.target or Cfg                      -- the aura/group being gated
+  local noun = o.noun or "aura"
+  local function vis() local t = target(); return t and t.visibility end               -- read (no seed)
+  local function visW() local t = target(); if not t then return nil end; t.visibility = t.visibility or {}; return t.visibility end
   local function poke() if GA.CDM then GA.CDM:UpdateVisibilityPoll(); GA.CDM:RefreshDisplays() end end
 
   local COMBAT = { { "any", "Any" }, { "in", "In Combat" }, { "out", "Out of Combat" } }
   local TARGET = { { "any", "Any" }, { "has", "Has Target" }, { "none", "No Target" } }
-  rows[#rows + 1] = MakeDropdown(ct, 0, -6, 172, "Combat:", COMBAT,
+  sink[#sink + 1] = MakeDropdown(ct, 0, -6, 172, "Combat:", COMBAT,
     function() local v = vis(); return (v and v.combat) or "any" end,
     function(x) local v = visW(); if v then v.combat = (x ~= "any") and x or nil; poke() end end)
-  rows[#rows + 1] = MakeDropdown(ct, 184, -6, 172, "Target:", TARGET,
+  sink[#sink + 1] = MakeDropdown(ct, 184, -6, 172, "Target:", TARGET,
     function() local v = vis(); return (v and v.target) or "any" end,
     function(x) local v = visW(); if v then v.target = (x ~= "any") and x or nil; poke() end end)
 
@@ -3222,7 +2979,7 @@ function C:BuildLoadConditionsSection(ct)
       local v = visW(); if not v then return end
       c:Set(not c:Get()); v[key] = c:Get() or nil; poke()
     end)
-    rows[#rows + 1] = { refresh = function() local v = vis(); c:Set(v and v[key]) end,
+    sink[#sink + 1] = { refresh = function() local v = vis(); c:Set(v and v[key]) end,
                         setEnabled = function(_, on) c:SetEnabled(on) end }
   end
   local L, R, ty, dy = 0, 186, -44, 25
@@ -3251,7 +3008,7 @@ function C:BuildLoadConditionsSection(ct)
       if not next(v.specs) then v.specs = nil end
       poke()
     end)
-    rows[#rows + 1] = { refresh = function() local v = vis(); c:Set(v and v.specs and v.specs[sp.id]) end,
+    sink[#sink + 1] = { refresh = function() local v = vis(); c:Set(v and v.specs and v.specs[sp.id]) end,
                         setEnabled = function(_, on) c:SetEnabled(on) end }
   end
   local skTop = -224 - math.max(1, math.ceil(#specs / 2)) * 25 - 14
@@ -3274,80 +3031,106 @@ function C:BuildLoadConditionsSection(ct)
     v.spellKnown = tonumber(self:GetText()); skRefreshName(); self:ClearFocus(); poke()
   end)
   skBox:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
-  rows[#rows + 1] = { refresh = function() local v = vis(); skBox:SetText(v and v.spellKnown and tostring(v.spellKnown) or ""); skRefreshName() end,
+  sink[#sink + 1] = { refresh = function() local v = vis(); skBox:SetText(v and v.spellKnown and tostring(v.spellKnown) or ""); skRefreshName() end,
                       setEnabled = function(_, on) skBox:SetEnabled(on) end }
 
   -- Master off-switch (NOT a "show when" condition — sits apart under a divider). ON =
   -- Enabled; OFF = Disabled (cfg.enabled=false → dropped from tracking + greyed in the list).
   local div = ct:CreateTexture(nil, "ARTWORK"); div:SetColorTexture(COLOR.rim.r, COLOR.rim.g, COLOR.rim.b, COLOR.rim.a)
   div:SetPoint("TOPLEFT", 0, skTop - 56); div:SetPoint("TOPRIGHT", 0, skTop - 56); div:SetHeight(1)
-  local disLbl = newText(ct, FONT.bodyM, 13, TEXT, "LEFT"); disLbl:SetPoint("TOPLEFT", 0, skTop - 72); disLbl:SetText("This aura in the game:")
+  local disLbl = newText(ct, FONT.bodyM, 13, TEXT, "LEFT"); disLbl:SetPoint("TOPLEFT", 0, skTop - 72)
+  disLbl:SetText("This " .. noun .. " in the game:")
   local disSwitch = makeSwitch(ct, "Disabled", "Enabled", function(v)
-    local c = Cfg(); if not c then return end
-    if v then c.enabled = nil else c.enabled = false end
-    if GA.CDM then GA.CDM:Discover() end
+    local t = target(); if not t then return end
+    -- NEVER `t.enabled = v and nil or false` — for v==true that evaluates FALSE in both
+    -- directions (the 2026-07-08 wall: `a and b or c` breaks when b is nil).
+    if v then t.enabled = nil else t.enabled = false end
+    if GA.CDM then GA.CDM:Discover(); GA.CDM:UpdateVisibilityPoll(); GA.CDM:RefreshDisplays() end
     RefreshList()
   end)
-  -- Own row (the switch's labels extend ~166px, past the 360 editor if placed beside the label).
+  -- Own row (the switch's labels extend ~166px, too wide to sit beside the label).
   disSwitch:SetPoint("TOPLEFT", 0, skTop - 98)
   -- MUST provide setEnabled too — SetSelected calls r:refresh() AND r:setEnabled() on every
   -- row; a row missing either throws and aborts the rest of SetSelected (trigger + group UI).
-  rows[#rows + 1] = {
-    refresh = function() local c = Cfg(); disSwitch:Set(not (c and c.enabled == false)) end,
+  sink[#sink + 1] = {
+    refresh = function() local t = target(); disSwitch:Set(not (t and t.enabled == false)) end,
     setEnabled = function(_, on) disSwitch:SetEnabled(on) end,
   }
+  return -(skTop - 98) + 40   -- content height, so the group pane can size itself
 end
 
 -- Phase D: the standalone window (GloomsAurasConfig — chrome, glow, drag,
 -- panelPos, UISpecialFrames entry) is DELETED. The shell owns the window; this
--- builds the Auras tab INSIDE the shell-provided container, as a fixed
--- 620-wide column centered in it (all the old content anchors unchanged).
+-- builds the Auras tab INSIDE the shell-provided container: a flush-left rail
+-- beside an editor pane that fills the rest (layout rework, 2026-07-25).
 local function BuildTab(c)
   container = c
 
-  -- The centered content column everything below hangs off.
-  local p = CreateFrame("Frame", nil, c)
-  p:SetPoint("TOP", 0, 0); p:SetPoint("BOTTOM", 0, 0); p:SetWidth(COLUMN_W)
+  -- ---- LEFT RAIL: header · profile · the aura tree · the selection's buttons ----
+  local rail = CreateFrame("Frame", nil, c)
+  rail:SetPoint("TOPLEFT", 0, 0); rail:SetPoint("BOTTOMLEFT", 0, FOOTER_H); rail:SetWidth(RAIL_W)
 
-  -- Vertical divider between the list and the editor — runs from the top down to the
-  -- footer divider (Figma: x=220, full content height).
-  local divider = p:CreateTexture(nil, "ARTWORK")
+  -- The shared tab header (LibGloomSkin MINOR 4) — GA was the LAST tab without one,
+  -- held back deliberately because the retired splash sat exactly where it goes.
+  -- The SQUARE 512×512 mark (Media/logo.png), NOT the old portrait ga_logo_full.png.
+  -- x = 14 like the other three: the owner compares tabs by tabbing between them.
+  UI.tabHeader(rail, {
+    texture = MEDIA .. "logo.png",
+    label   = "GLOOM'S AURAS",
+    x       = RAIL_X,
+  })
+
+  -- PROFILE — the shared profileBlock, permanently visible (its drawer is deleted).
+  C:BuildProfileBlock(rail, RAIL_X, LIST_W, -60)
+  local pdiv = UI.hLine(rail)
+  pdiv:SetPoint("TOPLEFT", RAIL_X, -180); pdiv:SetPoint("TOPRIGHT", -RAIL_X, -180)
+
+  -- Vertical divider between the rail and the editor pane, down to the footer.
+  local divider = c:CreateTexture(nil, "ARTWORK")
   divider:SetColorTexture(COLOR.rim.r, COLOR.rim.g, COLOR.rim.b, COLOR.rim.a)
-  divider:SetPoint("TOPLEFT", DIVIDER_X, -2)
-  divider:SetPoint("BOTTOMLEFT", DIVIDER_X, FOOTER_H)
+  divider:SetPoint("TOPLEFT", RAIL_W, 0)
+  divider:SetPoint("BOTTOMLEFT", RAIL_W, FOOTER_H)
   divider:SetWidth(1)
 
-  -- ---- LEFT PANE: the aura list ----
-  listFrame = CreateFrame("Frame", nil, p)
-  listFrame:SetPoint("TOPLEFT", PAD_L, CONTENT_TOP); listFrame:SetSize(LIST_W, PANE_H)
+  -- ---- The aura tree (groups + their auras), inside the rail ----
+  listFrame = CreateFrame("Frame", nil, rail)
+  listFrame:SetPoint("TOPLEFT", RAIL_X, LIST_TOP); listFrame:SetPoint("BOTTOMLEFT", RAIL_X, 0)
+  listFrame:SetWidth(LIST_W)
   listFrame:EnableMouse(true); listFrame:EnableMouseWheel(true)
   listFrame:SetScript("OnMouseWheel", function(_, delta) listOffset = listOffset - delta; RefreshList() end)
 
-  local listHead = newText(listFrame, FONT.head, 12, COLOR.purple, "LEFT")
-  listHead:SetPoint("TOPLEFT", 2, -2); listHead:SetText("YOUR AURAS")
+  local listHead = newText(listFrame, FONT.head, 12, MUTE, "LEFT")   -- rail section label, like PROFILE
+  listHead:SetPoint("TOPLEFT", 0, -2); listHead:SetText("GROUPS & AURAS")
 
   for i = 1, LIST_ROWS do
     local row = CreateFrame("Button", nil, listFrame)
     row:SetSize(LIST_W, LIST_ROW_H); row:SetPoint("TOPLEFT", 0, -24 - (i - 1) * LIST_ROW_H)
     local sel = row:CreateTexture(nil, "BACKGROUND"); sel:SetAllPoints(); sel:SetColorTexture(COLOR.purple.r, COLOR.purple.g, COLOR.purple.b, 0.28); sel:Hide(); row.sel = sel
     local hl = row:CreateTexture(nil, "HIGHLIGHT"); hl:SetAllPoints(); hl:SetColorTexture(1, 1, 1, 0.08)
-    -- Collapse caret — the owner's bundled triangle PNG (points right = collapsed; rotated
-    -- to point down = expanded). Colors baked in → untinted. Shown on header rows only.
+    -- Collapse caret — the SUITE's shared art at the shared size/colour (points right =
+    -- collapsed, rotated to point down = expanded). Shown on group header rows only.
     local arrow = row:CreateTexture(nil, "OVERLAY")
-    arrow:SetSize(6, 7); arrow:SetPoint("LEFT", 7, 0)   -- small; aspect ~172:193
-    arrow:SetTexture(MEDIA .. "triangle.png"); arrow:SetVertexColor(1, 1, 1, 1)
+    arrow:SetSize(9, 9); arrow:SetPoint("LEFT", 4, 0)
+    arrow:SetTexture(UI.CARET); arrow:SetVertexColor(COLOR.orange.r, COLOR.orange.g, COLOR.orange.b)
     arrow:Hide(); row.arrow = arrow
     local icon = row:CreateTexture(nil, "ARTWORK"); icon:SetSize(18, 18); icon:SetPoint("LEFT", 18, 0); icon:SetTexCoord(0.08, 0.92, 0.08, 0.92); row.icon = icon
     local name = newText(row, FONT.body, 12, TEXT, "LEFT"); name:SetPoint("LEFT", 40, 0); name:SetPoint("RIGHT", -4, 0); row.name = name
     name:SetWordWrap(false)   -- long names truncate on one line (bounded width), never wrap
-    -- Manage gear (group headers only) → Manage Group drawer. The owner's icon (Media/gear.png)
-    -- on a faint flat button so it's visible + clickable even before the icon file exists.
-    local gear = flatButton(row, 20, 18, COLOR.purple, "", 12); gear:SetBase(0.0)
-    gear:SetPoint("RIGHT", -3, 0)
-    local gicon = gear:CreateTexture(nil, "OVERLAY"); gicon:SetSize(13, 13); gicon:SetPoint("CENTER")
-    gicon:SetTexture(MEDIA .. "settings.png"); gicon:SetVertexColor(1, 1, 1, 1)
-    gear:SetScript("OnClick", function() if row.gid then OpenGroupManager(row.gid) end end)
-    gear:Hide(); row.gear = gear
+    -- Caret hit-area (group rows): clicking the CARET expands/collapses, clicking the
+    -- NAME selects the group and opens its settings — standard tree behaviour, and what
+    -- you'd try. The ⚙ gear that used to sit on the right of every group header is GONE
+    -- with its drawer; a group's settings live in the pane now.
+    local caretBtn = CreateFrame("Button", nil, row)
+    caretBtn:SetPoint("TOPLEFT", 0, 0); caretBtn:SetSize(20, LIST_ROW_H)
+    caretBtn:SetScript("OnClick", function()
+      if row.kind == "group" then
+        local g = Groups() and Groups()[row.gid]
+        if g then g.collapsed = (not g.collapsed) or nil; RefreshList() end
+      elseif row.kind == "ungrouped" then
+        GA.db.ungroupedCollapsed = (not GA.db.ungroupedCollapsed) or nil; RefreshList()
+      end
+    end)
+    caretBtn:Hide(); row.caretBtn = caretBtn
     -- Per-aura EYE (aura rows only): the owner's eye icons — unhidden = previewed on
     -- screen while the panel is open, hidden = not. Editor-only (cfg.preview); it does
     -- NOT affect whether the aura runs in gameplay (that's Visibility → Disabled).
@@ -3374,32 +3157,34 @@ local function BuildTab(c)
       if self.kind == "aura" then
         SetSelected(self.id)
       elseif self.kind == "group" then
-        local g = Groups() and Groups()[self.gid]
-        if g then g.collapsed = (not g.collapsed) or nil; RefreshList() end
+        C:SelectGroup(self.gid)          -- its settings open in the pane, like an aura's
       elseif self.kind == "ungrouped" then
+        -- "Ungrouped" is not a real group (no rule, no switch, nothing to edit), so its
+        -- row only ever collapses.
         GA.db.ungroupedCollapsed = (not GA.db.ungroupedCollapsed) or nil; RefreshList()
       end
     end)
     listRows[i] = row
   end
 
-  -- Left-pane button stack (New / Duplicate / Delete / Group) — see C:BuildLeftButtons.
+  -- Rail button stack (New Aura / New Group · Rename / Duplicate · Delete Aura).
   C:BuildLeftButtons(listFrame)
 
-  -- ---- RIGHT PANE: the settings editor (redesign accordion — see C:BuildEditor) ----
+  -- ---- EDITOR PANE: the settings accordion (see C:BuildEditor) ----
   -- A ScrollFrame so a tall open section (Aura Load Conditions) scrolls inside the pane
-  -- instead of spilling into the footer. The scrollbar sits in the 20px margin between the
-  -- editor's right edge (EDITOR_X+EDITOR_W=600) and the panel edge (620) — never over content.
-  local editor = CreateFrame("ScrollFrame", nil, p)
-  editor:SetPoint("TOPLEFT", EDITOR_X, CONTENT_TOP); editor:SetSize(EDITOR_W, PANE_H)
+  -- instead of spilling into the footer. The scrollbar sits in the right margin, clear of
+  -- content. Anchored to the container's right edge, so a wider shell widens the pane.
+  local editor = CreateFrame("ScrollFrame", nil, c)
+  editor:SetPoint("TOPLEFT", EDITOR_X, CONTENT_TOP)
+  editor:SetPoint("BOTTOMRIGHT", -30, FOOTER_H)
   editor:EnableMouseWheel(true)
   local scrollChild = CreateFrame("Frame", nil, editor)
   scrollChild:SetSize(EDITOR_W, PANE_H)
   editor:SetScrollChild(scrollChild)
-  C._editor = editor; C._editorChild = scrollChild   -- landing/editor switch toggles _editor
-  local sbTrack = p:CreateTexture(nil, "ARTWORK"); sbTrack:SetColorTexture(1, 1, 1, 0.06); sbTrack:SetWidth(6)
+  C._editor = editor; C._editorChild = scrollChild   -- hidden by the empty state
+  local sbTrack = c:CreateTexture(nil, "ARTWORK"); sbTrack:SetColorTexture(1, 1, 1, 0.06); sbTrack:SetWidth(6)
   sbTrack:SetPoint("TOPLEFT", editor, "TOPRIGHT", 8, 0); sbTrack:SetPoint("BOTTOMLEFT", editor, "BOTTOMRIGHT", 8, 0)
-  local sbThumb = CreateFrame("Button", nil, p); sbThumb:SetWidth(6); sbThumb:EnableMouse(true)
+  local sbThumb = CreateFrame("Button", nil, c); sbThumb:SetWidth(6); sbThumb:EnableMouse(true)
   local stt = sbThumb:CreateTexture(nil, "OVERLAY"); stt:SetAllPoints(); stt:SetColorTexture(COLOR.purple.r, COLOR.purple.g, COLOR.purple.b, 1)
   sbThumb:SetPoint("TOPRIGHT", sbTrack, "TOPRIGHT", 0, 0)
   C._editorTrack = sbTrack; C._editorThumb = sbThumb
@@ -3415,18 +3200,20 @@ local function BuildTab(c)
     C:SetEditorScroll(startScroll + (moved / range) * maxS)
   end)
   C:BuildEditor(scrollChild)
+  C:BuildGroupPane(scrollChild)   -- the same pane, showing a GROUP's settings
 
-  -- ---- Footer strip (shared by the landing + the editor) ----
-  -- Horizontal divider above the footer controls — spans the whole CONTAINER
-  -- (reads as part of the shell) while the controls stay in the column.
+  -- ---- Footer strip ----
+  -- Divider + the one control left down here. (The "Profile: <name>" button that used
+  -- to sit bottom-right is GONE with its drawer — profiles live in the rail now, so
+  -- the footer shrank 86 → 52, matching GB's, and the panes got the 34px.)
   local footDiv = c:CreateTexture(nil, "ARTWORK")
   footDiv:SetColorTexture(COLOR.rim.r, COLOR.rim.g, COLOR.rim.b, COLOR.rim.a)
   footDiv:SetPoint("BOTTOMLEFT", 0, FOOTER_H); footDiv:SetPoint("BOTTOMRIGHT", 0, FOOTER_H); footDiv:SetHeight(1)
 
   -- Hide Blizzard's own Cooldown Manager (drives viewer alpha only, not Hide(), so our
-  -- state mirror keeps working). A checkbox, bottom-left.
-  local hideCDM = flatCheck(p, "Hide Blizzard's Cooldown Manager")
-  hideCDM:SetPoint("BOTTOMLEFT", PAD_L, 30)
+  -- state mirror keeps working). A checkbox, bottom-left — GB's footer inset is 16.
+  local hideCDM = flatCheck(c, "Hide Blizzard's Cooldown Manager")
+  hideCDM:SetPoint("BOTTOMLEFT", 16, 16)
   hideCDM:SetScript("OnClick", function()
     local on = not hideCDM:Get()
     hideCDM:Set(on)
@@ -3434,21 +3221,10 @@ local function BuildTab(c)
   end)
   C._hideCDM = hideCDM   -- so C:OnProfileSwitched can re-sync it (hideBlizzardCDM is per-profile)
 
-  -- Profiles: the active-profile button (bottom-right) opens the Profiles drawer
-  -- (switch / new / copy / rename / delete). Label tracks the active profile.
-  local profileBtn = flatButton(p, 191, 28, COLOR.heroic, "", 11)   -- Figma: #8031ff @ 0.2
-  profileBtn:SetBase(0.2)
-  profileBtn.text:Hide()   -- replaced by a two-weight label: "Profile:" (Regular) + name (Semibold)
-  C._profileLabel = twoWeightLabel(profileBtn, 11)
-  profileBtn:SetPoint("BOTTOMRIGHT", -PAD_L, 28)
-  profileBtn:SetScript("OnClick", function() C:OpenProfileManager() end)
-  C._profileBtn = profileBtn
-  C:UpdateProfileButton()
-
   -- Empty state: shown in place of the accordion when the profile has no auras
-  -- (the splash used to cover this case). Parented to the column, not the scroll
+  -- (the splash used to cover this case). Parented to the container, not the scroll
   -- frame, so it survives that frame being hidden.
-  local empty = newText(p, FONT.body, 12, MUTE, "CENTER")
+  local empty = newText(c, FONT.body, 12, MUTE, "CENTER")
   empty:SetPoint("TOPLEFT", EDITOR_X, CONTENT_TOP - 40); empty:SetWidth(EDITOR_W)
   empty:SetText("No auras in this profile yet.\n\nClick |cff936bff+ New Aura|r to make one.")
   empty:Hide(); C._empty = empty
@@ -3459,7 +3235,7 @@ local function BuildTab(c)
   -- SHELL's job now; the old panelPos repositioning is gone with the window.)
   c:HookScript("OnShow", function()
     hideCDM:Set(GA.db and GA.db.hideBlizzardCDM)
-    C:UpdateProfileButton()
+    C:RefreshProfileList()   -- rail block re-reads the active profile
     if GA.Displays then
       GA.Displays.forced = true
       GA.Displays:SetInteractive(true)
