@@ -1,5 +1,11 @@
 # GloomsAuras — Session Handoff  (last updated 2026-07-09)
 
+> **SUITE UPDATE (2026-07-24, Phase D):** the options panel now renders ONLY as the AURAS
+> tab of the Suite window (GloomsHub — hard dependency; standalone window + minimap button
+> deleted; toolkit = LibGloomSkin-1.0; media picker reads `GloomsHub:ListMedia`). Everything
+> below about the CDM engine/displays still holds; anything about the standalone panel
+> window is superseded — see `~/GloomsHub/docs/HANDOFF.md` + SUITE-STATE.md.
+
 **New session: read this file first, then `docs/API-NOTES.md`, then `docs/REQUIREMENTS.md`,
 then `CLAUDE.md`.** The vendored WoW skill lives in `docs/wow-addon-dev/`. This file is the
 single source of "where we are + what not to relitigate."

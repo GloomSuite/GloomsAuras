@@ -7,12 +7,11 @@ enable-nolib-creation: no
 
 # Embedded libraries. The packager fetches these into Libs/ at release build time
 # only — they are NOT committed to the repo (kept clean). Locally, Libs/ is present
-# in the working copy so everything works; MinimapButton.lua also self-falls-back.
+# in the working copy so everything works. LDB + LibDBIcon dropped with Phase D —
+# the minimap launcher (and those libs) moved to GloomsHub, the hard dependency.
 externals:
   Libs/LibStub: https://repos.wowace.com/wow/libstub/trunk
   Libs/CallbackHandler-1.0: https://repos.wowace.com/wow/callbackhandler/trunk/CallbackHandler-1.0
-  Libs/LibDataBroker-1.1: https://github.com/tekkub/libdatabroker-1-1
-  Libs/LibDBIcon-1.0: https://repos.wowace.com/wow/libdbicon-1-0/trunk/LibDBIcon-1.0
   Libs/LibSharedMedia-3.0: https://repos.wowace.com/wow/libsharedmedia-3-0/trunk/LibSharedMedia-3.0
   # NOTE: confirm this URL resolves before the first release that ships glows (lib home moves around).
   Libs/LibCustomGlow-1.0: https://repos.wowace.com/wow/libcustomglow-1-0/trunk

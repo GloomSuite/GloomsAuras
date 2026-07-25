@@ -5,14 +5,17 @@
 > one instruction at a time, verify-before-claiming, ask for BugSack), and the next steps.
 > Then this file (conventions) + [docs/API-NOTES.md](docs/API-NOTES.md) (verified API facts).
 
-> **▶ PART OF THE GLOOM SUITE.** GloomsAuras is being unified with Gloom's Bars + Gloom's
-> Overlays under a shared base addon, **GloomsHub** (`~/GloomsHub`). All cross-cutting suite
-> facts — the plan, current phase status, and shared runtime contracts (design tokens, the
-> tabbed-shell API, the media resolver) — live THERE and are the single source of truth; this
-> repo does not keep its own copy. Before any *suite* work (mounting GA's config into the shared
-> tabbed window, the shared toolkit/tokens, redirecting the `CatStoneTweaks` media reads to
-> `GloomsHub:ListMedia`), read `~/GloomsHub/docs/SUITE-STATE.md` first, then SUITE-PLAN.md /
-> CONTRACTS.md. Normal GA-only work proceeds here as usual. **Gloom's Build Barn is NOT in the suite.**
+> **▶ PART OF THE GLOOM SUITE.** GloomsAuras is unified with Gloom's Bars + Gloom's Overlays
+> under a shared base addon, **GloomsHub** (`~/GloomsHub`). All cross-cutting suite facts —
+> the plan, current phase status, and shared runtime contracts (design tokens, the tabbed-
+> shell API, the media resolver) — live THERE and are the single source of truth; this repo
+> does not keep its own copy. **Phase D (2026-07-24) migrated THIS repo's options panel into
+> the Suite window's AURAS tab**: GA hard-depends on GloomsHub, consumes the shared
+> `LibGloomSkin-1.0` toolkit, reads suite media via `GloomsHub:ListMedia` (no more
+> `StoneTweaksDB`), and has NO standalone config window or minimap button (locked decisions —
+> never re-add them). Before any *suite* work read `~/GloomsHub/docs/HANDOFF.md` first, then
+> SUITE-STATE.md / SUITE-PLAN.md / CONTRACTS.md. Normal GA-only work (CDM engine, displays,
+> bugs) proceeds here as usual. **Gloom's Build Barn is NOT in the suite.**
 
 Bespoke WoW addon: shows custom textures + sounds when specific buffs/cooldowns are
 active, tracked via the Blizzard **Cooldown Manager** (CDM). Target: **Midnight 12.0.7**

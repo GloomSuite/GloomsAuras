@@ -18,12 +18,36 @@ GA.Config = C
 
 local issecret = _G.issecretvalue or function() return false end
 
-local COLOR, FONT, MEDIA = GA.COLOR, GA.FONT, GA.MEDIA
-local TEXT = { r = 0.90, g = 0.92, b = 0.96 }  -- body text
-local MUTE = { r = 0.55, g = 0.57, b = 0.63 }  -- hints / secondary
+-- --------------------------------------------------------------------------
+-- Toolkit + tokens — CONSUMED from LibGloomSkin-1.0 (Phase D; the shared lib
+-- shipped by GloomsHub, our hard dependency, so it is always loaded first).
+-- The local names mirror the old GA-local copies exactly, so everything below
+-- reads unchanged. FONT here = the Hub's font paths (pre-warmed against the
+-- cold-pair blank-text quirk); GA.FONT (GA's own files) remains for on-screen
+-- aura text + the font-picker entries users store in their configs. MEDIA
+-- stays GA's own art (triangle/eye/lock/checkmark icons, logo, shapes).
+-- Surface pinned in GloomsHub/docs/CONTRACTS.md §4.
+-- --------------------------------------------------------------------------
+local Skin = LibStub("LibGloomSkin-1.0")
+local UI = Skin.UI
+local COLOR, FONT, MEDIA = Skin.COLOR, Skin.FONT, GA.MEDIA
+local TEXT, MUTE = COLOR.text, COLOR.mute      -- lib tokens (promoted from the old locals)
 local DEFAULT_FONT = STANDARD_TEXT_FONT or "Fonts\\FRIZQT__.TTF"
 
-local panel, selectedID, editorName, triggerSummary, visibilitySummary
+local setFont, newText, addEdges = UI.setFont, UI.newText, UI.addEdges
+local skinPlate, flatButton = UI.skinPlate, UI.flatButton
+local flatEditBox, makeToggle = UI.flatEditBox, UI.makeToggle
+
+-- Every (Hub font, size) pair this tab draws BEYOND the Hub's own warm list —
+-- a cold (font file, size) pair renders BLANK on its first draw each session
+-- (CONTRACTS §4). Queued now; warmed with the Hub's batch at PLAYER_ENTERING_WORLD.
+UI.RegisterWarmPairs({
+  { FONT.title, 13 }, { FONT.title, 16 }, { FONT.title, 17 }, { FONT.title, 18 }, { FONT.title, 20 },  -- picker headers / drawer + dialog titles / the aura NAME field
+  { FONT.head, 12 }, { FONT.head, 13 },   -- list header / section subheads / MakeSlider ± glyphs (16 is in the Hub's list)
+  { FONT.label, 11 }, { FONT.label, 12 }, -- two-weight labels / switches / left-pane buttons
+})
+
+local container, selectedID, editorName, triggerSummary, visibilitySummary
 local pickerFrame, pickerOnPick
 local rows = {}
 -- Trigger editor state hangs on C._trig (chunk-local cap): { editID, frame, title,
@@ -43,25 +67,26 @@ local function CloseSubWindows(...)
   end
 end
 
--- Dock an editor flush against the main panel's right edge (parented to it so it
--- follows when the panel moves and hides when it closes). Flips to the LEFT side if
--- docking right would run off the screen. Drag is disabled (it's attached now).
+-- Dock an editor flush against the Suite window's right edge (parented to the
+-- Auras tab container, so it hides with the tab AND the window). Flips to the
+-- LEFT side if docking right would run off the screen. Drag is disabled (it's
+-- attached now).
 local function DockRight(f)
-  if not panel then return end
-  f:SetParent(panel)
+  if not container then return end
+  f:SetParent(container)
   f:SetMovable(false)
   f:SetClampedToScreen(false)
   f:ClearAllPoints()
-  local pr, sw, fw = panel:GetRight(), UIParent:GetRight(), (f:GetWidth() or 0)
+  local pr, sw, fw = container:GetRight(), UIParent:GetRight(), (f:GetWidth() or 0)
   if pr and sw and (pr + fw + 2) > sw then
-    f:SetPoint("TOPRIGHT", panel, "TOPLEFT", 1, 0)    -- flip: dock on the left
+    f:SetPoint("TOPRIGHT", container, "TOPLEFT", 1, 0)    -- flip: dock on the left
   else
-    f:SetPoint("TOPLEFT", panel, "TOPRIGHT", -1, 0)   -- dock on the right (flush)
+    f:SetPoint("TOPLEFT", container, "TOPRIGHT", -1, 0)   -- dock on the right (flush)
   end
 end
 
 local listFrame, listRows, listData, listOffset = nil, {}, {}, 0
-local LIST_ROWS = 15   -- leave room for the New/Duplicate/Delete/Group button stack
+local LIST_ROWS = 13   -- fits the 528px tab pane above the New/Duplicate/Delete/Group stack (was 15 in the 614px standalone window)
 local LIST_ROW_H = 24
 
 -- Texture blend modes (SetBlendMode) + friendly labels; frame strata choices.
@@ -118,87 +143,10 @@ local function TrigPill(state, k)
 end
 
 -- --------------------------------------------------------------------------
--- Skin toolkit (mirrors Gloom's Build Barn's UI helpers).
+-- Skin toolkit — the shared primitives (setFont, newText, addEdges, skinPlate,
+-- flatButton, flatEditBox, makeToggle) come from LibGloomSkin now (aliased at
+-- the top of this file). Only GA-specific composites remain below.
 -- --------------------------------------------------------------------------
-local function setFont(fs, path, size, flags)
-  if not fs:SetFont(path, size, flags or "") then fs:SetFont(DEFAULT_FONT, size, flags or "") end
-end
-
-local function newText(parent, font, size, cc, justify)
-  local fs = parent:CreateFontString(nil, "OVERLAY")
-  setFont(fs, font, size)
-  if cc then fs:SetTextColor(cc.r, cc.g, cc.b) end
-  fs:SetJustifyH(justify or "LEFT")
-  return fs
-end
-
--- Four 1px edge textures forming a squared border; returns a handle w/ :SetColor.
-local function addEdges(f, cc, thick)
-  thick = thick or 1
-  local e = {}
-  local function edge(p1, p2, w, h)
-    local t = f:CreateTexture(nil, "OVERLAY")
-    t:SetColorTexture(cc.r, cc.g, cc.b, cc.a or 1)
-    t:SetPoint(p1); t:SetPoint(p2)
-    if w then t:SetWidth(w) end
-    if h then t:SetHeight(h) end
-    return t
-  end
-  e.top    = edge("TOPLEFT", "TOPRIGHT", nil, thick)
-  e.bottom = edge("BOTTOMLEFT", "BOTTOMRIGHT", nil, thick)
-  e.left   = edge("TOPLEFT", "BOTTOMLEFT", thick, nil)
-  e.right  = edge("TOPRIGHT", "BOTTOMRIGHT", thick, nil)
-  function e:SetColor(c, a)
-    for _, t in pairs({ self.top, self.bottom, self.left, self.right }) do
-      t:SetColorTexture(c.r, c.g, c.b, a or c.a or 1)
-    end
-  end
-  return e
-end
-
--- Flat text input — no Blizzard template (no bevel/rounded corners/shadow). Just a
--- plain box: faint purple fill + 1px rim, brightening on focus.
-local function flatEditBox(parent, w, h)
-  local e = CreateFrame("EditBox", nil, parent)
-  e:SetSize(w, h); e:SetAutoFocus(false)
-  setFont(e, FONT.body, 12); e:SetTextColor(TEXT.r, TEXT.g, TEXT.b)
-  e:SetTextInsets(6, 6, 0, 0)
-  local bg = e:CreateTexture(nil, "BACKGROUND"); bg:SetAllPoints()
-  bg:SetColorTexture(COLOR.purple.r, COLOR.purple.g, COLOR.purple.b, 0.10)
-  -- No border (the owner's preference). Focus cue = brighten the fill instead.
-  e:SetScript("OnEditFocusGained", function() bg:SetColorTexture(COLOR.purple.r, COLOR.purple.g, COLOR.purple.b, 0.22) end)
-  e:SetScript("OnEditFocusLost",  function() bg:SetColorTexture(COLOR.purple.r, COLOR.purple.g, COLOR.purple.b, 0.10) end)
-  return e
-end
-
--- Flat dark fill only (Figma: solid rgb(6,7,20), no texture, no border).
-local function skinPlate(f)
-  local base = f:CreateTexture(nil, "BACKGROUND")
-  base:SetAllPoints(); base:SetColorTexture(COLOR.dark.r, COLOR.dark.g, COLOR.dark.b, COLOR.dark.a or 1)
-end
-
--- Flat, alpha-driven button. Opacity is the only state: _base (default 50%) vs
--- active (100%); hover brightens. Colour stays fully opaque (never bake alpha in).
-local function flatButton(parent, w, h, cc, label, size)
-  local b = CreateFrame("Button", nil, parent)
-  b:SetSize(w, h)
-  b._base, b._active = 0.55, false
-  b.fill = b:CreateTexture(nil, "BACKGROUND")
-  b.fill:SetAllPoints(); b.fill:SetColorTexture(cc.r, cc.g, cc.b, 1); b.fill:SetAlpha(b._base)
-  b.text = newText(b, FONT.bodyM, size or 12, { r = 1, g = 1, b = 1 }, "CENTER")  -- lighter weight (Medium)
-  b.text:SetPoint("CENTER")
-  b:SetFontString(b.text)  -- wire the fontstring so b:SetText() updates it
-  if label then b.text:SetText(label) end
-  local function level() return b._active and 1 or b._base end
-  b:SetScript("OnEnter", function(self) if self:IsEnabled() and not self._active then self.fill:SetAlpha(math.min(1, self._base + 0.25)) end end)
-  b:SetScript("OnLeave", function(self) self.fill:SetAlpha(level()) end)
-  b:SetScript("OnDisable", function(self) self.fill:SetAlpha(0.2); self.text:SetTextColor(0.5, 0.5, 0.5) end)
-  b:SetScript("OnEnable",  function(self) self.fill:SetAlpha(level()); self.text:SetTextColor(1, 1, 1) end)
-  function b:SetActive(a) self._active = a and true or false; self.fill:SetAlpha(level()) end
-  function b:SetBase(a) self._base = a; self.fill:SetAlpha(level()) end
-  return b
-end
-
 local function Header(parent, x, yOff, text)
   local fs = newText(parent, FONT.head, 13, COLOR.purple, "LEFT")
   fs:SetPoint("TOPLEFT", x, yOff)
@@ -599,18 +547,8 @@ local function makeSwitch(parent, leftText, rightText, onChange)
   return s
 end
 
--- Single on/off toggle (Figma): a 40x20 white-10% track + a 20x20 purple knob that
--- slides (left=off, right=on). Caller places it + adds its own label; get/set drive state.
-local function makeToggle(parent, get, set)
-  local t = CreateFrame("Button", nil, parent); t:SetSize(40, 20)
-  local track = t:CreateTexture(nil, "BACKGROUND"); track:SetAllPoints(); track:SetColorTexture(1, 1, 1, 0.1)
-  local knob = t:CreateTexture(nil, "ARTWORK"); knob:SetSize(20, 20)
-  knob:SetColorTexture(COLOR.purple.r, COLOR.purple.g, COLOR.purple.b, 1)
-  function t:refresh() knob:ClearAllPoints(); knob:SetPoint(get() and "RIGHT" or "LEFT", 0, 0) end
-  t:SetScript("OnClick", function() set(not get()); t:refresh() end)
-  t:refresh()
-  return t
-end
+-- (makeToggle — the single on/off sliding switch — comes from LibGloomSkin;
+-- aliased at the top of this file.)
 
 -- Colour control: [✓ <label>] + a swatch. Clicking either opens the game
 -- ColorPickerFrame; unchecking clears the colour (set(nil)). Label defaults to
@@ -837,7 +775,7 @@ function C:AddBar(arg)
     bar = barcfg,
   }
   if GA.CDM then GA.CDM:Discover() end
-  if panel then SetSelected(id) end
+  if container then SetSelected(id) end
   if mode == "stacks" then
     GA.msg(("created a STACKS Bar for |cffffd200%s|r (%d, max %d). It fills with the aura's stack count. Move it with the panel or |cffffd200/ga pos %s x y|r.")
       :format(tostring(nm), sid, barcfg.max, id))
@@ -1120,28 +1058,22 @@ local function CatLSM()
   return out
 end
 
--- StoneTweaks' custom Graphics + Textures are NOT in LibSharedMedia; they live as
--- files listed in StoneTweaksDB. Read that table and reference them by path.
-local function CatStoneTweaks()
+-- The suite's custom Graphics + Textures — the Hub's media catalog (GloomsHubDB,
+-- copy-migrated from StoneTweaks in Hub Phase A; managed in the Media tab).
+-- GloomsHub:ListMedia already returns picker-shaped rows ({ name=, tex=path })
+-- with paths under the Hub (CONTRACTS §3) — GA never builds media paths again.
+-- (Replaces the old CatStoneTweaks, which read _G.StoneTweaksDB directly and
+-- hardcoded Interface\AddOns\StoneTweaks\ paths — Phase D, per SUITE-PLAN §4.4.)
+local function CatSuiteMedia()
   local out = {}
-  local db = _G.StoneTweaksDB
-  if type(db) == "table" then
-    if type(db.graphics) == "table" then
-      for _, g in ipairs(db.graphics) do
-        if g.file then out[#out + 1] = { tex = "Interface\\AddOns\\StoneTweaks\\Graphics\\" .. g.file, name = g.name or g.file } end
-      end
-    end
-    if type(db.textures) == "table" then
-      for _, t in ipairs(db.textures) do
-        if t.file then out[#out + 1] = { tex = "Interface\\AddOns\\StoneTweaks\\Textures\\" .. t.file, name = t.name or t.file } end
-      end
-    end
+  for _, kind in ipairs({ "graphics", "textures" }) do
+    for _, row in ipairs(GloomsHub:ListMedia(kind)) do out[#out + 1] = row end
   end
   return out
 end
 
 -- Category order: bundled aura shapes first (Shapes, PowerAuras, Beams…), then
--- game icons, your StoneTweaks graphics, and LSM bar textures.
+-- game icons, your suite media catalog (the Hub's), and LSM bar textures.
 local TEX_CATS = {}
 if GA.TextureShapes then
   for _, group in ipairs(GA.TextureShapes) do
@@ -1153,9 +1085,9 @@ end
 -- Game icons come from the client as fileIDs with NO names, so a name search can't
 -- work. Instead the search box becomes a "Spell ID" lookup: type a spell ID to show
 -- that spell's icon. Empty box = browse the full grid.
-TEX_CATS[#TEX_CATS + 1] = { key = "icons",       label = "Game Icons",           provider = CatGameIcons,   searchMode = "spellid", cache = true }
-TEX_CATS[#TEX_CATS + 1] = { key = "stonetweaks", label = "StoneTweaks Graphics",  provider = CatStoneTweaks, searchable = true }
-TEX_CATS[#TEX_CATS + 1] = { key = "lsm",         label = "Shared Media (bars)",   provider = CatLSM,         searchable = true }
+TEX_CATS[#TEX_CATS + 1] = { key = "icons",  label = "Game Icons",          provider = CatGameIcons,   searchMode = "spellid", cache = true }
+TEX_CATS[#TEX_CATS + 1] = { key = "suite",  label = "Suite Graphics",      provider = CatSuiteMedia,  searchable = true }
+TEX_CATS[#TEX_CATS + 1] = { key = "lsm",    label = "Shared Media (bars)", provider = CatLSM,         searchable = true }
 
 local DEFAULT_TEX_CAT = TEX_CATS[1] and TEX_CATS[1].key or "icons"
 
@@ -1926,17 +1858,22 @@ local function OpenGroupVisibilityEditor(groupID)
 end
 
 -- --------------------------------------------------------------------------
--- Build the main panel (two-pane: aura list | settings editor).
+-- Build the Auras tab (two-pane: aura list | settings editor).
+-- Phase D: the standalone 620×740 window is GONE — this mounts as the AURAS
+-- tab of the Suite window, as a fixed 620-wide COLUMN centered in the shell's
+-- container. The container's content area is PINNED at 860×626 minimum in
+-- CONTRACTS §2, so these are deterministic: column height 626 = CONTENT_TOP
+-- margin 12 + panes 528 + footer 86. (The old window gave the panes 614; the
+-- editor pane scrolls and the list is windowed, so both absorb the difference.)
 -- --------------------------------------------------------------------------
-local PANEL_W, PANEL_H = 620, 740
-local INSET, TITLEBAR_H = 14, 32
-local CONTENT_TOP = -(TITLEBAR_H + 8)   -- -40
+local COLUMN_W = 620                      -- the centered content column (the old window width)
+local CONTENT_TOP = -12                   -- top margin inside the container
 local PAD_L = 30                          -- left-content margin (matches the Figma mock)
 local LIST_W = 160
 local DIVIDER_X = 220                     -- vertical divider between the list and the editor
 local EDITOR_X = 240                      -- editor content x (20px right of the divider)
-local EDITOR_W = PANEL_W - EDITOR_X - 20  -- 360 (20px right margin, matches the mock)
-local PANE_H = 614   -- list pane ends at the footer divider (PANEL_H - FOOTER_H - CONTENT_TOP margin)
+local EDITOR_W = COLUMN_W - EDITOR_X - 20 -- 360 (20px right margin, matches the mock)
+local PANE_H = 528   -- list/editor pane height: 626 container − 12 top − 86 footer
 local FOOTER_H = 86                       -- footer strip: the divider sits FOOTER_H above the bottom
 
 -- The aura editor's GROUP section — now JUST the "which group is this aura in"
@@ -2281,11 +2218,11 @@ end
 -- Called by Core (RefreshForProfile) after GA.db is repointed. Rebuilds the left
 -- pane + editor for the new profile and re-shows its auras (while the panel is open).
 function C:OnProfileSwitched()
-  if not panel then return end
+  if not container then return end
   C._prof.offset = 0
   listOffset = 0
   selectedID = nil
-  if panel:IsShown() and GA.Displays then
+  if container:IsVisible() and GA.Displays then
     GA.Displays.forced = true
     GA.Displays:SetInteractive(true)
   end
@@ -2662,9 +2599,11 @@ function C:BuildLanding(p)
   end
 
   -- View All Auras — de-emphasised (orange @ 0.2), lower in the left pane.
+  -- Anchored ABOVE the footer divider (the tab column is shorter than the old
+  -- 740px window, where this sat at a fixed -592).
   local viewAll = flatButton(L, LIST_W, 28, COLOR.orange, "View All Auras", 11)
   setFont(viewAll.text, FONT.body, 11)   -- General Sans Regular 11
-  viewAll:SetBase(0.2); viewAll:SetPoint("TOPLEFT", PAD_L, -592)
+  viewAll:SetBase(0.2); viewAll:SetPoint("BOTTOMLEFT", PAD_L, FOOTER_H + 12)
   viewAll:SetScript("OnClick", function() C:ShowEditor(); SetSelected(DisplayList()[1]) end)
 end
 
@@ -2947,7 +2886,7 @@ function C:OpenGroupAssignMenu(anchor)
   local menu = C._grpMenu
   if menu and menu:IsShown() then menu:Hide(); return end
   if not menu then
-    menu = CreateFrame("Frame", nil, panel); C._grpMenu = menu
+    menu = CreateFrame("Frame", nil, container); C._grpMenu = menu
     menu:SetFrameStrata("FULLSCREEN_DIALOG"); skinPlate(menu); addEdges(menu, COLOR.rim, 1)
     menu._rows = {}
   end
@@ -3437,32 +3376,16 @@ function C:BuildLoadConditionsSection(ct)
   }
 end
 
-local function Build()
-  local p = CreateFrame("Frame", "GloomsAurasConfig", UIParent)
-  p:SetSize(PANEL_W, PANEL_H); p:SetPoint("CENTER"); p:SetFrameStrata("DIALOG"); p:EnableMouse(true)
-  skinPlate(p)
-  -- Warm bottom glow — Figma: linear-gradient(transparent 40% → rgba(255,119,41,0.12) 100%).
-  -- A white texture over the bottom 60%, vertex-gradient tinted orange, fading in downward.
-  local glow = p:CreateTexture(nil, "BACKGROUND", nil, 1)
-  glow:SetColorTexture(1, 1, 1, 1)
-  glow:SetPoint("TOPLEFT", 0, -PANEL_H * 0.4); glow:SetPoint("BOTTOMRIGHT", 0, 0)
-  local go = COLOR.orange
-  glow:SetGradient("VERTICAL", CreateColor(go.r, go.g, go.b, 0.12), CreateColor(go.r, go.g, go.b, 0))
+-- Phase D: the standalone window (GloomsAurasConfig — chrome, glow, drag,
+-- panelPos, UISpecialFrames entry) is DELETED. The shell owns the window; this
+-- builds the Auras tab INSIDE the shell-provided container, as a fixed
+-- 620-wide column centered in it (all the old content anchors unchanged).
+local function BuildTab(c)
+  container = c
 
-  -- No window-title text in the redesign (the editor's aura-name bar is its heading).
-  -- Keep a small X close in the top-right corner, lifted above the landing layer so
-  -- it stays clickable in both states.
-  local close = flatButton(p, 20, 18, COLOR.heroic, "X", 12)
-  close:SetPoint("TOPRIGHT", -6, -6); close:SetScript("OnClick", function() p:Hide() end)
-  close:SetFrameLevel(p:GetFrameLevel() + 20)
-
-  -- Movable via an invisible strip across the top (no visible title bar now).
-  p:SetMovable(true); p:SetClampedToScreen(true)
-  local titlebar = CreateFrame("Frame", nil, p)
-  titlebar:SetPoint("TOPLEFT", 2, -2); titlebar:SetPoint("TOPRIGHT", -34, -2); titlebar:SetHeight(TITLEBAR_H - 4)
-  titlebar:EnableMouse(true); titlebar:RegisterForDrag("LeftButton")
-  titlebar:SetScript("OnDragStart", function() p:StartMoving() end)
-  titlebar:SetScript("OnDragStop", function() p:StopMovingOrSizing(); C:SavePanelPos() end)
+  -- The centered content column everything below hangs off.
+  local p = CreateFrame("Frame", nil, c)
+  p:SetPoint("TOP", 0, 0); p:SetPoint("BOTTOM", 0, 0); p:SetWidth(COLUMN_W)
 
   -- Vertical divider between the list and the editor — runs from the top down to the
   -- footer divider (Figma: x=220, full content height).
@@ -3565,8 +3488,9 @@ local function Build()
   C:BuildEditor(scrollChild)
 
   -- ---- Footer strip (shared by the landing + the editor) ----
-  -- Horizontal divider above the footer controls (Figma).
-  local footDiv = p:CreateTexture(nil, "ARTWORK")
+  -- Horizontal divider above the footer controls — spans the whole CONTAINER
+  -- (reads as part of the shell) while the controls stay in the column.
+  local footDiv = c:CreateTexture(nil, "ARTWORK")
   footDiv:SetColorTexture(COLOR.rim.r, COLOR.rim.g, COLOR.rim.b, COLOR.rim.a)
   footDiv:SetPoint("BOTTOMLEFT", 0, FOOTER_H); footDiv:SetPoint("BOTTOMRIGHT", 0, FOOTER_H); footDiv:SetHeight(1)
 
@@ -3594,46 +3518,43 @@ local function Build()
 
   C:BuildLanding(p)   -- the landing overlay (logo + create buttons + View All)
 
-  p:SetScript("OnShow", function()
+  -- OnShow/OnHide live on the CONTAINER: they fire when the tab gains/loses
+  -- visibility — window open/close AND tab switches — which is exactly when
+  -- the old window showed/hid. (Escape-close + window position are the
+  -- SHELL's job now; the old panelPos repositioning is gone with the window.)
+  c:HookScript("OnShow", function()
     hideCDM:Set(GA.db and GA.db.hideBlizzardCDM)
     C:UpdateProfileButton()
-    local pos = GA.global and GA.global.panelPos
-    if pos then p:ClearAllPoints(); p:SetPoint("CENTER", UIParent, "CENTER", pos[1] or 0, pos[2] or 0) end
     if GA.Displays then
       GA.Displays.forced = true
       GA.Displays:SetInteractive(true)
     end
-    C:ShowLanding()   -- the panel opens to the landing (Default State): pick a type or View All
+    C:ShowLanding()   -- the tab opens to the landing (Default State): pick a type or View All
   end)
-  p:SetScript("OnHide", function()
+  c:HookScript("OnHide", function()
     CloseSubWindows()   -- close any docked drawer so it doesn't linger/reappear
     if GA.Displays then GA.Displays.forced = false; GA.Displays:SetSelectedDisplay(nil) end
     if GA.CDM and GA.CDM.Discover then GA.CDM:Discover() end
   end)
-
-  tinsert(UISpecialFrames, "GloomsAurasConfig")  -- ESC closes it
-  p:Hide()  -- created hidden so the first /ga transitions + fires OnShow
-  panel = p
-  return p
 end
 
 function C:RefreshCurrent()
   for _, r in ipairs(rows) do r:refresh() end
 end
 
-function C:SavePanelPos()
-  if not panel or not GA.global then return end
-  local px, py = panel:GetCenter()
-  local ucx, ucy = UIParent:GetCenter()
-  if px and ucx then
-    GA.global.panelPos = { math.floor(px - ucx + 0.5), math.floor(py - ucy + 0.5) }
-  end
-end
+-- C:SavePanelPos and C:Toggle are GONE (Phase D, locked decision: hard
+-- dependency, no second window path). The shell owns the window's position
+-- and open/close/switch semantics; /ga and the suite minimap button route
+-- through GloomsHub:ToggleWindow("auras"). Stale GA.global.panelPos data is
+-- harmless leftover.
 
-function C:Toggle()
-  if not panel then
-    local ok, err = pcall(Build)
-    if not ok then GA.msg("|cffff5555config panel failed to build|r: " .. tostring(err)); return end
-  end
-  if panel:IsShown() then panel:Hide() else panel:Show() end
-end
+-- Mount the Auras tab (CONTRACTS §2). Registration is cheap and immediate;
+-- BuildTab runs ONCE, lazily, the first time the tab is shown. No `refresh`
+-- handler — the container's OnShow hook (above) already re-syncs on every
+-- focus, exactly like the old window's OnShow did.
+GloomsHub:RegisterTab{
+  id    = "auras",
+  title = "AURAS",
+  order = 10,
+  build = BuildTab,
+}

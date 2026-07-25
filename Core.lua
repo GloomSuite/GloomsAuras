@@ -23,30 +23,16 @@ end
 GA.msg = msg
 
 -- ---------------------------------------------------------------------------
--- Design tokens — shared skin, matched to Gloom's Build Barn (same author).
--- Bright-purple accent on a near-black navy plate, condensed Khand titles +
--- GeneralSans body. Fonts/plate are bundled in Media/ (see Config.lua toolkit,
--- which falls back to the default game font if a file is ever missing).
+-- Design tokens — consumed from the suite's shared LibGloomSkin-1.0 (shipped
+-- by GloomsHub, the hard dependency; CONTRACTS §1/§4). The hand-maintained
+-- COLOR copy this file used to carry is gone — GA.COLOR aliases the lib's
+-- table (same literals, plus the text/mute tokens). GA.FONT below deliberately
+-- stays on GA's OWN font files: user configs store these paths (cfg.text.font
+-- via the font picker) and the on-screen aura text renders with them — the
+-- files are byte-identical to the Hub's. Config-UI chrome uses the lib's FONT
+-- (the Hub's pre-warmed paths) instead — see Config.lua.
 -- ---------------------------------------------------------------------------
-local function color(hex)
-  local r = tonumber(hex:sub(1, 2), 16) / 255
-  local g = tonumber(hex:sub(3, 4), 16) / 255
-  local b = tonumber(hex:sub(5, 6), 16) / 255
-  return { r = r, g = g, b = b, hex = hex }
-end
-GA.COLOR = {
-  purple = color("936bff"),  -- bright purple — accents, selection, buttons
-  heroic = color("8031ff"),  -- deep purple
-  green  = color("20ba56"),  -- confirm / "added" green (Group button)
-  red    = color("c41e3a"),  -- destructive / Delete
-  orange = color("ff7729"),  -- warning / accent
-  -- Panel base. TARGET = Figma #060714 (rgb 6,7,20). WoW's SetColorTexture renders ~11/255
-  -- DARKER per channel on this display (measured: input−11 ≈ on-screen), so we pre-add that
-  -- floor: (6,7,20)+~(12,12,11) → #12131F, which lands on #060714 on screen. Re-tune here if
-  -- the eyedrop is still off. (a=1: fully opaque.)
-  dark   = { r = 18/255, g = 19/255, b = 31/255, a = 1 },
-  rim    = { r = 1, g = 1, b = 1, a = 0.10 },            -- 1px divider / rim (white @ 10%)
-}
+GA.COLOR = LibStub("LibGloomSkin-1.0").COLOR
 
 GA.MEDIA = "Interface\\AddOns\\" .. ADDON_NAME .. "\\Media\\"
 local FONT_DIR = GA.MEDIA .. "fonts\\"
@@ -391,7 +377,9 @@ local function SlashHandler(input)
   cmd = (cmd or ""):lower()
 
   if cmd == "" or cmd == "config" or cmd == "options" then
-    if GA.Config then GA.Config:Toggle() else msg("options panel not ready.") end
+    -- Phase D: the options panel renders ONLY inside the Suite window (the
+    -- Auras tab). Slash toggle semantics live in the shell (CONTRACTS §2).
+    GloomsHub:ToggleWindow("auras")
   elseif cmd == "help" then
     msg("commands:")
     print("  |cffffd200/ga|r                    — open the options panel")
@@ -430,10 +418,10 @@ local function SlashHandler(input)
   elseif cmd == "test" then
     if GA.Displays then GA.Displays:Test(5) end
   elseif cmd == "minimap" then
-    if GA.ToggleMinimapButton then
-      local shown = GA:ToggleMinimapButton()
-      msg("minimap button " .. (shown and "|cff55ff55shown|r" or "|cffff5555hidden|r") .. ".")
-    end
+    -- GA's own button retired with Phase D — /ga minimap now drives the ONE
+    -- suite launcher (the Hub's GS button), so muscle memory keeps working.
+    local shown = GloomsHub:ToggleMinimapButton()
+    msg("Suite minimap button " .. (shown and "|cff55ff55shown|r" or "|cffff5555hidden|r") .. ".")
   elseif cmd == "hidecdm" then
     if GA.CDM and GA.CDM.ToggleBlizzardHide then
       local hidden = GA.CDM:ToggleBlizzardHide()
@@ -488,7 +476,8 @@ boot:SetScript("OnEvent", function(_, event, arg1)
     SetupActiveProfile()   -- migrate schema 1→2 + point GA.db at the active profile, before anything reads it
     PreloadFonts()   -- warm bundled fonts before any panel is built (avoids blank labels)
     if GA.CDM and GA.CDM.Init then GA.CDM:Init() end
-    if GA.InitMinimapButton then GA:InitMinimapButton() end
+    -- (GA's minimap button retired with Phase D — the ONE suite launcher is
+    -- GloomsHub's. Stale GloomsAurasDB.minimap data is harmless leftover.)
     msg("loaded (v" .. GA:Version() .. "). Type |cffffd200/ga|r for help.")
   end
 end)
