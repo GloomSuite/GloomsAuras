@@ -2484,11 +2484,16 @@ local TRIG_JOIN = { AND = "AND", OR = "OR", NONE = "NOR" }
 -- So a group aligns exactly with the sibling cards it sits among, and its own cards
 -- inset again inside it — the indentation IS the hierarchy. The first mock had the
 -- chips floating beside full-width rows, which is what read as unclear.
-local TRIG_INSET_L, TRIG_INSET_R, TRIG_LINE_X = 52, 14, 24
+local TRIG_INSET_L, TRIG_INSET_R = 52, 14
 local TRIG_ROW_H, TRIG_ROW_GAP = 40, 8
 local TRIG_ROW_PITCH = TRIG_ROW_H + TRIG_ROW_GAP
-local TRIG_BITE = 10         -- how far the bracket's arms reach into each operand
 local TRIG_CHIP_W, TRIG_CHIP_H = 30, 16
+-- ⚠ TEMPORARY, and it should NOT survive this session. Two rounds of me guessing
+-- at "make the bracket read better" both missed, and the owner and I were measuring
+-- in different units (his mock's px vs the game's). `/ga bracket <x> <bite> <thick>`
+-- lets him dial it live and read the numbers back; bake them in here and delete both
+-- this table and the slash branch in Core.lua.
+C._brk = { x = 24, bite = 10, t = 2 }
 
 function C:MakeTrigRow(parent, inGroup)
   local H = COLOR.heroic
@@ -2546,18 +2551,29 @@ end
 -- `bTop` = down to the top of the lower one. The arms bite TRIG_BITE into each so the
 -- bracket visibly grips both, rather than floating in the gap between them.
 function C:PlaceTrigJoin(j, aBottom, bTop, word)
-  local y1, y2 = aBottom - TRIG_BITE, bTop + TRIG_BITE
-  local armW = TRIG_INSET_L - TRIG_LINE_X
-  j.v:ClearAllPoints();   j.v:SetPoint("TOPLEFT", TRIG_LINE_X, -y1);   j.v:SetSize(1, math.max(1, y2 - y1))
-  j.top:ClearAllPoints(); j.top:SetPoint("TOPLEFT", TRIG_LINE_X, -y1); j.top:SetSize(armW, 1)
-  j.bot:ClearAllPoints(); j.bot:SetPoint("TOPLEFT", TRIG_LINE_X, -y2); j.bot:SetSize(armW, 1)
+  local b = C._brk
+  local y1, y2 = aBottom - b.bite, bTop + b.bite
+  local armW = TRIG_INSET_L - b.x
+  j.v:ClearAllPoints();   j.v:SetPoint("TOPLEFT", b.x, -y1);   j.v:SetSize(b.t, math.max(1, y2 - y1))
+  j.top:ClearAllPoints(); j.top:SetPoint("TOPLEFT", b.x, -y1); j.top:SetSize(armW, b.t)
+  j.bot:ClearAllPoints(); j.bot:SetPoint("TOPLEFT", b.x, -y2); j.bot:SetSize(armW, b.t)
   j.chip:ClearAllPoints()
-  j.chip:SetPoint("CENTER", j.chip:GetParent(), "TOPLEFT", TRIG_LINE_X, -(y1 + y2) / 2)
+  j.chip:SetPoint("CENTER", j.chip:GetParent(), "TOPLEFT", b.x, -(y1 + y2) / 2)
   j.chip.text:SetText(word)
   j.v:Show(); j.top:Show(); j.bot:Show(); j.chip:Show()
 end
 
 function C:HideTrigJoin(j) j.v:Hide(); j.top:Hide(); j.bot:Hide(); j.chip:Hide() end
+
+-- Live-tune the bracket (temporary — see the note on C._brk).
+function C:SetBracket(x, bite, t)
+  local b = C._brk
+  b.x, b.bite, b.t = tonumber(x) or b.x, tonumber(bite) or b.bite, tonumber(t) or b.t
+  GA.msg(("bracket: line x=%d · bite=%d · thickness=%d  →  arm %d long (%d past the chip), vertical %d tall (%d showing each end)")
+    :format(b.x, b.bite, b.t, TRIG_INSET_L - b.x, TRIG_INSET_L - b.x - TRIG_CHIP_W / 2,
+            b.bite * 2 + TRIG_ROW_GAP, (b.bite * 2 + TRIG_ROW_GAP - TRIG_CHIP_H) / 2))
+  C:TrigInlineRender()
+end
 
 function C:FillTrigRow(row, ti, ci, leaf)
   row._ti, row._ci, row._leaf = ti, ci, leaf
