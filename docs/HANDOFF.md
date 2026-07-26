@@ -139,6 +139,38 @@ Two GA-specific things worth knowing before touching that code:
 It is the suite's biggest open item and needs a design decision (`AuraContainer` vs combat-log
 tracking vs presence-only degradation), not a patch.
 
+**★ But know how far it actually reaches, proven 2026-07-26 (`~/GloomsHub/docs/FINDINGS.md` §7).**
+Only the **data** path is dead. A display that triggers on presence — `buff_active`,
+`buff_inactive`, `cd_ready` — is **unaffected**, because `CDM:EvalCondition` (`CDM.lua:213`) reads
+the `buffActive` boolean table and never an aura. The owner's MM Hunter profile is entirely
+presence-driven and works correctly on 12.1; his Warlock profile is the one that is broken. Do not
+describe §1 as "GA is broken in combat" — it is narrower than that, and the difference decides how
+much rework is really owed.
+
+⚠ **The one place presence could still fail is `CDM.lua:550`.** `RepollBuffPresence` falls back to
+`frame:IsActive()` when the aura read throws; if `IsActive` ever returns a *secret*, the code keeps
+the **previous** value and an expired buff stays lit forever. It held across 14 in-combat probes,
+but that is the first thing to check if presence displays ever go sticky.
+
+---
+
+## The `/ga probe` diagnostic has two self-inflicted bugs (2026-07-26)
+
+Dev-tool only, no user impact — but this probe is the instrument the whole 12.1 investigation runs
+on, and a misleading instrument costs more than a cosmetic bug should. Both are `TESTED`.
+
+1. **It paints a full-screen cooldown sweep on every CAPTURE click.** `CDM.lua:1567` creates two
+   fresh `CooldownFrameTemplate` frames per charge-spell per capture with **no `SetSize`** (so they
+   inherit UIParent), no `SetDrawEdge(false)` and no `SetDrawBling(false)` — hence a screen-wide gold
+   wedge and a completion flash. They are never reused or hidden either, so each click leaks two
+   more; a 24-capture session parks a couple of hundred. `_ProbeShadows` (`CDM.lua:1375`) already
+   does this correctly — pool them the same way.
+2. **`spec=?` in every header.** `CDM.lua:1455` takes the **second** return of
+   `GetSpecializationInfo` (the name), which comes back empty on 12.1. The spec **ID** is fine and
+   the globals are alive — verified in-client: `GetSpecialization` → `function`, index `2`, ID
+   `254`. This cost a false alarm about spec-gated groups failing closed; see FINDINGS §7's
+   `KILLED` list.
+
 ---
 
 ## Parked / deferred — owner-requested, none of it active
