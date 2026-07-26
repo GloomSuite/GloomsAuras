@@ -86,7 +86,7 @@
 > tab of the Suite window (GloomsHub — hard dependency; standalone window + minimap button
 > deleted; toolkit = LibGloomSkin-1.0; media picker reads `GloomsHub:ListMedia`). Everything
 > below about the CDM engine/displays still holds; anything about the standalone panel
-> window is superseded — see `~/GloomsHub/docs/HANDOFF.md` + SUITE-STATE.md.
+> window is superseded — see `~/GloomsHub/docs/SUITE-STATE.md` + ARCHIVE.md.
 
 **New session: read this file first, then `docs/API-NOTES.md`, then `docs/REQUIREMENTS.md`,
 then `CLAUDE.md`.** The vendored WoW skill lives in `docs/wow-addon-dev/`. This file is the
