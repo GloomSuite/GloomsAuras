@@ -240,11 +240,23 @@ PLACED in a CDM viewer are trackable** (registry ≠ placed).
   returning a plain boolean so the caller can fall back. Now used at `Displays.lua:379` (aura label),
   `Displays.lua:238` (bar value text) and `Core.lua:66` (`PreloadFonts`). **Never call `SetFont`
   bare in this repo again.**
-  ⚠ **Why GA was hit and the other tools weren't: GA stores the resolved font PATH in SavedVariables**
-  (e.g. `Interface\AddOns\NiceDamage\fonts\pepsi_modern.ttf`), so an aura's font can point into an
-  addon the user doesn't have. GB and the Hub store an **LSM name** and resolve at call time, falling
-  back to a bundled file. If the font picker is ever reworked, **saving the name instead of the path
-  would remove this whole class of bug.**
+  ★ **There was a FOURTH exposed site, missed on 2026-07-26 and fixed later the same day:**
+  `Config.lua:1833` (the font-picker flyout row) hands a **saved raw path** — `item.path` — to the
+  *shared* `setFont`, i.e. `LibGloomSkin`'s helper, not GA's. `GA.SetFontSafe` never covered it
+  because it is not GA's function. The lib's `UI.setFont` now `pcall`s and returns success as well
+  (Hub CONTRACTS §4, MINOR 5), so this route is closed — but the lesson stands: **a repo-local
+  "always use our safe wrapper" rule does not cover the calls that go through the shared toolkit.**
+  ⚠ **Why GA was hit hardest: GA stores the resolved font PATH in SavedVariables** (e.g.
+  `Interface\AddOns\NiceDamage\fonts\pepsi_modern.ttf`), so an aura's font can point into an addon
+  the user doesn't have. If the font picker is ever reworked, **saving the name instead of the path
+  would remove most of this class of bug.**
+  ⚠⚠ **CORRECTED 2026-07-26 — this used to read "and the other tools weren't", claiming GB and the
+  Hub were safe because they store an LSM NAME and fall back to a bundled file. That was wrong**, and
+  it was the reasoning that got the follow-up deferred as a tidy-up. `Fetch(name, true)`'s silent-nil
+  rescue only fires when the lookup **misses**; anything that registers a name for a file it never
+  verified — including the Hub's own Media tab, which *cannot* verify, as WoW exposes no filesystem
+  API — makes the lookup **succeed** and return a dead path. Both other tools were exposed too. See
+  the Hub's FINDINGS §5 `KILLED` list.
   ⚠ **The blast radius was profile-wide, not one display.** `Displays.lua:151` is outside the
   `if not f then` create-branch, so `ApplyConfig` re-runs for every display on every `GetOrCreate`,
   and `RefreshAll` is called unguarded at the top of `CDM:Discover()` — so one dead font aborted
