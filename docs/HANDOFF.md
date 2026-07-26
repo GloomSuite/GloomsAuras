@@ -105,6 +105,29 @@ single source of "where we are + what not to relitigate."
 
 ---
 
+## GA's colour controls — the private picker is GONE (2026-07-26)
+
+`MakeColor` (the `[✓ label] + swatch` control behind **Recolor**, **Text Color** and glow **Custom
+Color**) no longer drives Blizzard's `ColorPickerFrame`. It calls the suite's own `UI.colorPicker`.
+**`ColorPickerFrame` now appears nowhere in this repo.** `SKIN_NEEDS` is **6**.
+
+Two GA-specific things worth knowing before touching that code:
+
+- **Cancelling must be able to leave a colour UNSET.** `MakeColor` seeds white when the colour is
+  nil, so a plain "restore what we opened with" would leave white applied. It captures `wasUnset`
+  and clears back to nil in `onCancel`. ⚠ **This path has never been clicked in-game** — it is
+  suite backlog item 4.
+- **`AuraColorSources` walks EVERY display**, and the Hub's picker uses it for its "in use" palette
+  and its "where is this colour used" tooltip. It exists because the editor has **one** Recolor
+  swatch that re-points at the selected aura, so a per-control getter could only ever report that
+  one — and recolouring a texture per aura is the owner's main workflow. Names come from
+  `cfg.label`, else the spell name via `cfg.spellID` (duplicates are keyed `"dN"` and have no
+  numeric key, which is why `cfg.spellID` is tried first), else `"Display <id>"`.
+
+**The contract itself lives in `~/GloomsHub/docs/CONTRACTS.md` §4 — do not restate it here.**
+
+---
+
 ## ⚠ READ THIS BEFORE ANY DoT / DURATION WORK
 
 **12.1 makes aura instance IDs SECRET in combat, and every read call throws.** GA keeps aura

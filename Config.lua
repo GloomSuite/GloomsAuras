@@ -38,7 +38,7 @@ local issecret = _G.issecretvalue or function() return false end
 -- actionable sentence instead.
 -- ★ BUMP SKIN_NEEDS IN THE SAME COMMIT that first calls a newer widget.
 -- --------------------------------------------------------------------------
-local SKIN_MAJOR, SKIN_NEEDS = "LibGloomSkin-1.0", 4   -- 4: UI.tabHeader (the rail header)
+local SKIN_MAJOR, SKIN_NEEDS = "LibGloomSkin-1.0", 6   -- 6: UI.colorPicker (MakeColor's swatch)
 
 local Skin, skinMinor = LibStub(SKIN_MAJOR, true)
 if not Skin or (skinMinor or 0) < SKIN_NEEDS then
@@ -518,8 +518,42 @@ end
 -- (makeToggle — the single on/off sliding switch — comes from LibGloomSkin;
 -- aliased at the top of this file.)
 
--- Colour control: [✓ <label>] + a swatch. Clicking either opens the game
--- ColorPickerFrame; unchecking clears the colour (set(nil)). Label defaults to
+-- Every colour on EVERY display, named — what the Hub's color picker lists as
+-- "where is this in use". It has to be a walk of the whole config rather than a
+-- per-control getter: the editor has one Recolor swatch that re-points at the
+-- selected display, so a getter could only ever report that one. Recoloring a
+-- texture per aura is the common workflow (the owner, 2026-07-26), which makes
+-- this the tool that most needed it.
+-- Unset colours are simply absent — an aura that was never recoloured has no
+-- `color`, so nothing is reported and nothing is invented.
+local function AuraColorSources()
+  local out, db = {}, DB()
+  if not db then return out end
+  for id, cfg in pairs(db) do
+    if type(cfg) == "table" then
+      -- Originals are keyed by spellID; DUPLICATES are keyed "dN" and would have
+      -- no name to fall back on — but they carry cfg.spellID, so ask that first
+      -- and the key is only ever the last resort.
+      local sid = cfg.spellID or (type(id) == "number" and id) or nil
+      local name = cfg.label
+        or (sid and C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(sid))
+        or ("Display " .. tostring(id))
+      local function add(c, what)
+        if type(c) == "table" and c[1] then
+          out[#out + 1] = { color = c, label = ("Auras › %s (%s)"):format(what, name) }
+        end
+      end
+      add(cfg.color, "Recolor")
+      add(cfg.text and cfg.text.color, "Text Color")
+      if cfg.glow and cfg.glow.customColor then add(cfg.glow.color, "Custom Color") end
+    end
+  end
+  return out
+end
+if UI.RegisterColorProvider then UI.RegisterColorProvider("GloomsAuras", AuraColorSources) end
+
+-- Colour control: [✓ <label>] + a swatch. Clicking either opens the suite's
+-- UI.colorPicker; unchecking clears the colour (set(nil)). Label defaults to
 -- "Tint" (reused for the glow drawer's "Custom Color").
 local function MakeColor(parent, x, yOff, get, set, label)
   local chk = flatCheck(parent, label or "Tint")
@@ -530,28 +564,33 @@ local function MakeColor(parent, x, yOff, get, set, label)
 
   local function updateSwatch()
     local col = get()
-    if col then sw:SetColorTexture(col[1] or 1, col[2] or 1, col[3] or 1, 1)
+    if col then
+      UI.NoteColor(col)   -- it is live on an aura: it belongs in the shared palette
+      sw:SetColorTexture(col[1] or 1, col[2] or 1, col[3] or 1, 1)
     else sw:SetColorTexture(0.28, 0.28, 0.32, 1) end
   end
+  -- Cancelling must be able to leave the colour UNSET again. The picker restores
+  -- whatever it was opened with, but "unset" isn't a colour it can hold — so when
+  -- we opened on an empty swatch (which seeds white), clear it back afterwards.
   local function openPicker()
-    local col = get() or { 1, 1, 1 }
-    local function apply()
-      local r, g, b = ColorPickerFrame:GetColorRGB()
-      set({ r, g, b }); chk:Set(true); updateSwatch(); ReapplySelected()
-    end
-    local info = { hasOpacity = false, r = col[1], g = col[2], b = col[3], swatchFunc = apply }
-    if ColorPickerFrame.SetupColorPickerAndShow then
-      ColorPickerFrame:SetupColorPickerAndShow(info)
-    else  -- pre-10.2.5 fallback
-      ColorPickerFrame.func = apply
-      ColorPickerFrame:SetColorRGB(col[1], col[2], col[3]); ColorPickerFrame:Show()
-    end
+    local wasUnset = get() == nil
+    UI.colorPicker({
+      color = get() or { 1, 1, 1 },
+      title = (label or "Tint"):upper(),
+      owner = swatch,
+      onChange = function(c) set(c); chk:Set(true); updateSwatch(); ReapplySelected() end,
+      onCancel = function()
+        if wasUnset then set(nil); chk:Set(false); updateSwatch(); ReapplySelected() end
+      end,
+    })
   end
   swatch:SetScript("OnClick", openPicker)
   chk:SetScript("OnClick", function()
     if get() then set(nil); chk:Set(false); updateSwatch(); ReapplySelected() else openPicker() end
   end)
 
+  -- No UI.RegisterColorSource here: `get` reads whichever display is SELECTED,
+  -- so it could only ever report one aura. AuraColorSources below walks them all.
   local row = {}
   function row:refresh() chk:Set(get() ~= nil); updateSwatch() end
   function row:setEnabled(on) chk:SetEnabled(on); swatch:SetEnabled(on) end
