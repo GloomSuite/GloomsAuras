@@ -235,8 +235,8 @@ function D:ApplyBarStyle(f, cfg)
   if vt then
     if b.showValue then
       local font = (GA.FONT and GA.FONT.body) or (STANDARD_TEXT_FONT or "Fonts\\FRIZQT__.TTF")
-      if not vt:SetFont(font, b.valueSize or 14, "OUTLINE") then
-        vt:SetFont(STANDARD_TEXT_FONT or "Fonts\\FRIZQT__.TTF", b.valueSize or 14, "OUTLINE")
+      if not GA.SetFontSafe(vt, font, b.valueSize or 14, "OUTLINE") then
+        GA.SetFontSafe(vt, STANDARD_TEXT_FONT or "Fonts\\FRIZQT__.TTF", b.valueSize or 14, "OUTLINE")
       end
       vt:SetTextColor(1, 1, 1)
       vt:Show()
@@ -376,7 +376,9 @@ function D:ApplyConfig(spellID)
     local a = LABEL_ANCHOR[(t and t.anchor) or "BOTTOM"] or LABEL_ANCHOR.BOTTOM
     local ux, uy = (t and t.x) or 0, (t and t.y) or 0
 
-    if not f.label:SetFont(font, size, flags) then f.label:SetFont(fallbackFont, size, flags) end
+    if not GA.SetFontSafe(f.label, font, size, flags) then
+      GA.SetFontSafe(f.label, fallbackFont, size, flags)
+    end
     f.label:SetTextColor(col and col[1] or 1, col and col[2] or 1, col and col[3] or 1)
     f.label:SetText(str)
     f.label:ClearAllPoints()

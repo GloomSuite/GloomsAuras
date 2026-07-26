@@ -1,4 +1,4 @@
-# GloomsAuras — Session Handoff  (last updated 2026-07-25)
+# GloomsAuras — Session Handoff  (last updated 2026-07-26)
 
 > ## ▶▶ THE AURAS TAB LAYOUT REWORK IS DONE — QA'd by the owner, 2026-07-25.
 > Suite to-do item 1 is closed. Every step below was verified in-game by the owner before the next
@@ -233,6 +233,23 @@ PLACED in a CDM viewer are trackable** (registry ≠ placed).
   the shadow API is invisible at any offset. We dropped the shadow option (outline flags are the text
   styling). If a shadow is ever truly needed, draw it manually (a black text copy offset behind), but
   even a behind-sublevel copy layered awkwardly — not worth it; outline suffices.
+- **★ `SetFont` RAISES on a missing font asset — it does NOT return false** (proven in-client on live
+  12.0.7, 2026-07-26). Three sites here were written on the opposite assumption, so the fallback never
+  ran and the enclosing function aborted mid-way. **Always go through `GA.SetFontSafe(fs, path, size,
+  flags)`** (`Core.lua`) — it `pcall`s the set and treats a raise *or* an explicit `false` as failure,
+  returning a plain boolean so the caller can fall back. Now used at `Displays.lua:379` (aura label),
+  `Displays.lua:238` (bar value text) and `Core.lua:66` (`PreloadFonts`). **Never call `SetFont`
+  bare in this repo again.**
+  ⚠ **Why GA was hit and the other tools weren't: GA stores the resolved font PATH in SavedVariables**
+  (e.g. `Interface\AddOns\NiceDamage\fonts\pepsi_modern.ttf`), so an aura's font can point into an
+  addon the user doesn't have. GB and the Hub store an **LSM name** and resolve at call time, falling
+  back to a bundled file. If the font picker is ever reworked, **saving the name instead of the path
+  would remove this whole class of bug.**
+  ⚠ **The blast radius was profile-wide, not one display.** `Displays.lua:151` is outside the
+  `if not f then` create-branch, so `ApplyConfig` re-runs for every display on every `GetOrCreate`,
+  and `RefreshAll` is called unguarded at the top of `CDM:Discover()` — so one dead font aborted
+  Discover before anything was bound. Full record + the killed theories: the Hub's
+  `docs/FINDINGS.md` §2.
 - **Lua 5.1 caps a function at 60 UPVALUES (`local`s captured from enclosing scope).** `Config.lua`'s
   giant `Build()` hit exactly 60 after Phase 1; one more (a `DEFAULT_FONT` ref) → `function ... has
   more than 60 upvalues` at LOAD time and the panel wouldn't open. luac 5.5's `-p` does NOT enforce the

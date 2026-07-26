@@ -50,6 +50,17 @@ function GA:Version()
   return v
 end
 
+-- Apply a font, surviving a missing asset. SetFont READS like it returns false on a
+-- bad path; it does not — it RAISES, so an unguarded call aborts whatever function it
+-- sits in. That once broke an entire aura display rather than just its text, because
+-- everything after the SetFont (color, text, anchor, Show, glow) was skipped. Fires
+-- whenever a config's font points into an addon the user hasn't installed.
+-- Returns true only if the face was actually applied, so callers can fall back.
+function GA.SetFontSafe(fs, path, size, flags)
+  local ok, applied = pcall(fs.SetFont, fs, path, size, flags)
+  return ok and applied ~= false   -- nil counts as success; only an explicit false is a refusal
+end
+
 -- Pre-warm the bundled TTF fonts at login. WoW sometimes hasn't finished loading a
 -- runtime custom font on the FIRST login of a session, so any label built in that
 -- window (e.g. the options panel on an early /ga) renders BLANK until a /reload
@@ -63,7 +74,7 @@ local function PreloadFonts()
   for _, path in pairs(GA.FONT) do
     local fs = warmer:CreateFontString(nil, "OVERLAY")
     fs:SetPoint("TOPLEFT")
-    if fs:SetFont(path, 14, "") then
+    if GA.SetFontSafe(fs, path, 14, "") then
       fs:SetText(".")
       fs:GetStringWidth()   -- force the face to load + shape now, not on first visible use
     end
