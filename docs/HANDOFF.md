@@ -115,8 +115,9 @@ Two GA-specific things worth knowing before touching that code:
 
 - **Cancelling must be able to leave a colour UNSET.** `MakeColor` seeds white when the colour is
   nil, so a plain "restore what we opened with" would leave white applied. It captures `wasUnset`
-  and clears back to nil in `onCancel`. ⚠ **This path has never been clicked in-game** — it is
-  suite backlog item 4.
+  and clears back to nil in `onCancel`. ✅ **Owner-QA'd 2026-07-26** — cancelling an unset Recolor
+  leaves the checkbox off, the swatch on its grey placeholder and the aura untinted. **Don't
+  "simplify" this into a plain restore**; a plain restore applies white.
 - **`AuraColorSources` walks EVERY display**, and the Hub's picker uses it for its "in use" palette
   and its "where is this colour used" tooltip. It exists because the editor has **one** Recolor
   swatch that re-points at the selected aura, so a per-control getter could only ever report that
