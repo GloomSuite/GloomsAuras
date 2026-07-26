@@ -1,0 +1,656 @@
+# GloomsAuras — ARCHIVE
+
+> **History. Not current state.** The build log, the completed NEXT list, and the session records.
+>
+> Split out of `HANDOFF.md` on 2026-07-26 so the handoff could become a short statement of where
+> this addon stands. Nothing was deleted. If this file and [HANDOFF.md](HANDOFF.md) disagree,
+> HANDOFF wins.
+>
+> Almost everything in the old "NEXT / pending" list was already ✅ DONE when it was archived — it
+> had become a record of finished work rather than a plan. The items that are genuinely still parked
+> were lifted into HANDOFF. Suite-wide history lives in `~/GloomsHub/docs/ARCHIVE.md`.
+
+---
+
+## What's BUILT + QA status
+- ✅ **QA'd** Buff mirror — Trick Shots texture shows while buff active (in combat).
+- ✅ **QA'd** Options panel — texture path, width/height, X/Y, alpha; each control = slider +
+  −/+ steppers + numeric box; movable window; remembers position.
+- ✅ **QA'd** Aura picker — "Browse auras" scroll list of the CDM registry (icon+name), click to add.
+- ✅ **QA'd** Drag-to-position auras (while panel open), synced with the X/Y numbers.
+- ✅ **QA'd** Cooldown availability mirror for **non-charge** cooldowns (Rapid Fire) — shows when
+  ready, hides on cooldown, in combat.
+- ✅ **QA'd** Conditions/Trigger system — per-display trigger: conditions on any spells, combined
+  AND/OR; Trigger editor UI (Edit Trigger… button → editor window). Full sweep passed 2026-07-07:
+  all four leaf types (buff_active, buff_inactive, cd_ready, cd_oncd) + both AND and OR logic, in
+  combat. Data structured so it can grow to nested/mixed groups later.
+- ✅ **QA'd** Panel restyle (2026-07-07) — two-pane layout: LEFT = scrollable list of created
+  displays (replaces the old `< prev / next >` scrubber), RIGHT = the settings editor. Skinned
+  to match GloomsBuildBarn (navy plate, purple accents, bundled Khand/GeneralSans fonts in
+  `Media/`, flat buttons). Picker + trigger-editor windows reskinned to match.
+- ✅ **QA'd** Display render options (2026-07-07) — Tint (opens ColorPickerFrame), Desaturate,
+  Blend Mode (Blend/Add/Modulate/Alpha Key/Opaque), Frame Strata. All pure rendering.
+- ✅ **QA'd** Texture picker (2026-07-07) — "Choose…" button → window with a category dropdown +
+  search + scrollable grid + live preview swatch. Categories: **254 bundled aura shapes** (Shapes,
+  PowerAuras Heads-Up/Icons/Separated/Words, Beams, Sparks, Runes), **Game Icons** (all game icons
+  via `GetMacroIcons`/`GetLooseMacroIcons`), **StoneTweaks Graphics** (read from `StoneTweaksDB`,
+  by path), **Shared Media (bars)** (LibSharedMedia — bar textures only).
+- ✅ **QA'd** Flat input styling (no `InputBoxTemplate`), size cap raised **512 → 8192**, display
+  frames **un-clamped** so auras can sit partially/fully off-screen. X/Y offset **slider** range is
+  **±2000** (narrowed from ±4000 on 2026-07-07 — ±4000 made the slider too coarse; drag-to-move and
+  `/ga pos` stay un-clamped for bigger moves).
+- ✅ **QA'd 2026-07-07** — **Custom flat sliders** (dropped `OptionsSliderTemplate` for a
+  plain Slider: dark track = input-field fill, no border, bright-purple vertical marker thumb) +
+  **aspect-ratio lock** on Width/Height (thin 1px purple bracket in the right margin joining the two
+  boxes; when engaged, scaling one scales the other by `cfg.aspect`, the w/h ratio captured at lock
+  time). Lock icon = the owner's custom 24×24 PNGs `Media/lock_locked.png` / `Media/lock_unlocked.png`
+  (colors baked in → shown **untinted**, `SetVertexColor(1,1,1,1)`; state = which texture, not tint).
+  **Texture facts (verified this client):** PNG loads fine AND non-power-of-two is fine — `Media/
+  bg_flame.png` is 5000×4107 and renders. SVG unsupported.
+- ✅ **Panel tweaks (QA'd 2026-07-07)** — **Remove** button moved from the editor pane to the
+  LEFT pane; all button labels to **Title Case**. Left pane now stacks **Add / Duplicate / Remove**
+  (`LIST_ROWS` → 17).
+- ✅ **Duplicate Aura (QA'd 2026-07-07, REGRESSION-SENSITIVE)** — "Duplicate Aura" button makes
+  an exact copy of the selected aura, INCLUDING on the same spell. Required re-keying `db.displays`
+  from spellID → display id (see data-model note above); done backward-compatibly (originals keep
+  their spellID key + `cfg.spellID`, so existing auras behave identically). Copy is deep-copied
+  (independent trigger/visibility/sound), labelled "… (copy)", nudged +24/−24 so it doesn't overlap.
+  **Restore point before this work: commit `248a9a7`** (`git reset --hard 248a9a7` to undo). QA order:
+  FIRST confirm existing auras still show/hide + render exactly as before, THEN test Duplicate.
+  - **Drag = selected only (2026-07-07):** with the panel open, only the aura selected in the left
+    list is mouse-draggable on screen (others are visible but click-through) — so overlapping
+    duplicates don't fight for the cursor. `D.selectedID` + `D:ApplyInteractivity`; Config sets it in
+    `SetSelected` and clears it on panel close (nil ⇒ `/ga preview` back-door still drags all).
+- ✅ **QA'd 2026-07-07 — Docked side-panel (drawer)** — the Trigger/Visibility/Sound/Texture editors
+  attach flush to the main panel's RIGHT edge (parented to it → follows on drag, closes with it),
+  flipping LEFT if they'd run off-screen. One at a time (`CloseSubWindows`/`DockRight`). Drag disabled
+  when docked (`SetMovable(false)` + `if f:IsMovable()` guards on each titlebar). The aura picker stays
+  floating (it can overlay the Trigger editor when adding a condition).
+- ✅ **QA'd 2026-07-07 — UI cleanup batch** — borderless text inputs (focus brightens the fill);
+  lighter button font (GeneralSans-Medium); **Blend + Strata are dropdown menus** (`MakeDropdown`),
+  Blend trimmed to Blend/Add(glow)/Modulate; "Choose…" inline with the path field (no preview swatch);
+  Game-Icons texture search is a **"Spell ID"** lookup (icons are nameless fileIDs); Title Case labels;
+  X/Y offset slider ±2000; Trigger editor footer width-capped so it stops overrunning the frame.
+- ✅ **QA'd** Per-display sound picker (2026-07-07) — "Sound" button → picker window (LibSharedMedia
+  sounds + None, click-to-preview, draggable scrollbar) + a Test button. `cfg.sound = {file,name,
+  channel}`; fires on hidden→shown via `CDM:PlaySound` (throttled). NOTE: **no per-sound volume** —
+  `PlaySoundFile` takes only (file, channel); the only volume lever is WoW's global channel sliders.
+- ✅ **QA'd** Minimap button (2026-07-07) — `MinimapButton.lua` via LibDBIcon/LibDataBroker (embedded),
+  uses `Media/minimap.png` (the owner's 256×256 icon; also wired as `## IconTexture`). Left-click opens
+  the panel; `/ga minimap` toggles; pos+hide saved in `db.minimap`. Self-contained fallback if libs absent.
+- ✅ **QA'd** Visibility system (2026-07-07) — per-display player/game-state gate that **ANDs with the
+  Trigger**. "Visibility…" editor: Combat/Target 3-way, toggles (casting, mounted, vehicle, instance,
+  encounter, resting, stealthed, group, raid, warmode, alive), **Specialization** multi-select,
+  **Spell/Talent known**. Engine = `CDM:VisibilityGate` + a 0.2s poll (`UpdateVisibilityPoll`) that
+  runs only while some display uses visibility. All plain game APIs (no secret data). See learnings.
+- ✅ **QA'd — Hide Blizzard's Cooldown Manager** (global toggle): checkbox in the panel's bottom strip +
+  `/ga hidecdm`. Drives the four viewers' **alpha** only (0 = hidden), NEVER `Hide()` — because
+  `CooldownViewerMixin:OnHide()` unregisters UNIT_AURA/SPELL_UPDATE_COOLDOWN (client source), so a real
+  hide would silently break our mirror. `IsShown()` stays true → tracking keeps running. Suspended while
+  Edit Mode is open (so the viewers stay visible/movable); re-asserts alpha-0 after Blizzard re-applies
+  its own Opacity setting via a per-viewer `hooksecurefunc(v,"UpdateSystemSettingOpacity")`. Engine:
+  `CDM:ApplyBlizzardHide` / `ToggleBlizzardHide` + `EditMode.Enter`/`Exit` callbacks. Global `db.hideBlizzardCDM`.
+  - ✅ **QA'd 2026-07-07**: `/ga hidecdm` hides the CDM icons AND tracking still fires (Rapid Fire aura
+    confirmed working with the CDM invisible — proves alpha-0 keeps the mirror alive). Edit Mode
+    round-trip confirmed: CDM reappears + movable while editing, re-hides on exit.
+  - **LEARNING (Edit Mode = sample data):** entering Edit Mode makes the CDM display SAMPLE/preview
+    state (all items look active) — our mirror faithfully reflected it, so auras flipped on + sounds
+    fired. `RefreshDisplays`/`PlaySound` now bail while suppressed. **Subtle bug (fixed 2026-07-07):**
+    the sound leaked on Edit Mode *EXIT*, not enter — `EditModeManagerFrame:ExitEditMode()` clears
+    `editModeActive` on its FIRST line, THEN tears down the sample data, so those teardown transitions
+    saw `EditModeActive()==false` and slipped a stray show/sound through. Fix: a `CDM._emSettling`
+    window (set on `EditMode.Exit`, cleared after 0.4s) extends the freeze past exit, then a silent
+    `Discover` re-syncs. ✅ QA'd — no sound on EM enter OR exit.
+  - ✅ **QA'd**: the panel checkbox reflects/toggles state; persists across `/reload`.
+
+- ✅ **QA'd 2026-07-07 — Groups Phase 1 (data + engine)** — auras can be bucketed into named
+  **groups**, each carrying one **load rule** (a `visibility` table) + an **OFF/ON switch** that
+  gate ALL the group's auras at once, ANDed **in front of** each aura's own visibility+trigger.
+  Engine: `CDM:GroupGate(cfg)` (reuses `VisibilityGate` on `group.visibility` — zero new logic,
+  no secret data) called first in `EvalDisplay`; `UpdateVisibilityPoll` also turns on for a live
+  group rule. UI: new **GROUP** section in the aura editor — group dropdown (assign / "+ New
+  Group…"), **Load Rule…** (opens the now group-aware Visibility editor via `OpenGroupVisibilityEditor`),
+  an OFF/ON **switch** (`makeSwitch`, ported from GloomsBuildBarn — the owner prefers sliding switches
+  over checkboxes for on/off), and **Delete Group** (members fall back to Ungrouped; auras never
+  deleted). Group naming uses a **skinned** `OpenNameDialog` (NOT StaticPopup — see learning).
+  Data at `GA.db.groups[gid]` + `db.groupSeq` (top level under schema 1; **Phase 3 migration must
+  move them into the profile** — noted in the design doc). Panel grew (628→704h, LIST_ROWS 17→20)
+  to fit the section. **Gating only applies with the panel CLOSED** (auras are force-shown while
+  it's open — same as trigger/visibility), so QA it on a dummy in combat. QA passed: spec load-rule
+  gates the whole set both ways; on/off switch hides/shows the set; create/delete/name all clean.
+- ✅ **QA'd 2026-07-07 — Groups Phase 2 (grouped left pane + Manage drawer)** — the LEFT pane now
+  renders **group headers** (custom triangle caret `Media/triangle.png`, rotated 90° for expanded;
+  a **settings gear** `Media/settings.png` on the right) with their auras nested beneath, then an
+  **Ungrouped** section, then the Add/Duplicate/Remove stack. Clicking a header collapses/expands
+  (`group.collapsed`; Ungrouped uses `db.ungroupedCollapsed`). The gear opens a docked **Manage
+  Group drawer** (`OpenGroupManager`) — **Rename** (reuses `OpenNameDialog`), **Load Rule…**
+  (`OpenGroupVisibilityEditor`), an OFF/ON **switch**, **Move Up/Down** (`MoveGroup`, normalizes
+  `group.order` then swaps), **Delete Group** (`DeleteGroup` → members to Ungrouped). The aura
+  editor's GROUP section shrank to just the **assign dropdown + hint** (group settings moved to the
+  drawer). Render model = `BuildLeftPaneEntries()` (typed rows: group / aura / ungrouped) fed to a
+  reused row pool in `RefreshList`. QA passed: collapse, gear→drawer, rename, load rule, on/off,
+  reorder, delete all clean.
+- ✅ **QA'd 2026-07-07 — Per-aura eye toggle** (owner-requested) — each aura row has an **eye icon**
+  on its right (`Media/unhidden.png` = shown, `Media/hidden.png` = disabled) that toggles
+  `cfg.enabled`. Disabling greys the row + hides the aura (via `CDM:Discover`, which excludes
+  disabled auras from the watch set and hides their frames even while the panel forces others shown).
+- ✅ **QA'd 2026-07-07 — Aura rename** — the aura-name title at the top of the editor is a click-to-edit
+  EditBox (faint fill + "click to rename" hint); Enter renames `cfg.label` (list name), independent of
+  the tracked spell + the on-screen text. Left-pane list rows use `SetWordWrap(false)` so long names
+  truncate on one line instead of wrapping.
+- ✅ **QA'd 2026-07-07 — On-screen Text overlay** (the label under each aura, fully configurable) —
+  `cfg.text = { show, str, font, size, outline, anchor, x, y, color }`. Opened via **Text…** on the
+  editor's "Sound & Text" row → a docked **Text drawer**: Show OFF/ON, content box (blank = the aura's
+  name — a SEPARATE field from the list name, the owner's choice), **Font** (a picker previewing bundled
+  GeneralSans/Khand + LSM fonts in their own typeface), Size, **Outline** (None/Outline/Thick), Color
+  (Tint), **Anchor** (Below/Above/On aura/Left/Right via `Displays.LABEL_ANCHOR`), X/Y offset. The
+  on-screen label in `Displays:ApplyConfig` is now fully data-driven (bundled font + outline, NOT the
+  old `GameFontNormal`); no `cfg.text` ⇒ legacy `showLabel` + name (backward-compatible). Drawer follows
+  the panel selection (`C.RefreshTextEditor`, self-guards to when open so it doesn't seed `text` on every
+  select). This closes the deferred "Text overlays + LSM font picker" item.
+- ✅ **QA'd 2026-07-08 — Profiles (Groups+Profiles Phase 3), the whole feature.** Named, switchable configs
+  with a per-character default (WeakAuras-style). Shipped in two committed sub-steps:
+  - **3A — data foundation** (`fc41649`): schema 1→2 migration + a `GA.global` (account-wide) / `GA.db`
+    (active profile) split. `GA.db` is REPOINTED to the active profile, so the ~40 existing
+    `GA.db.displays`/`groups`/`seq` call sites are untouched (the `DB()`/`Groups()` accessors already
+    indirect through `GA.db`). Migration runs at **PLAYER_LOGIN** (char name reliable then, NOT
+    ADDON_LOADED): the old flat top-level keys (`displays/groups/seq/groupSeq/hideBlizzardCDM/
+    ungroupedCollapsed`) MOVE into a profile named `"Name - Realm"` before being cleared. `panelPos` +
+    `minimap` moved to `GA.global` (account-wide). QA'd: existing auras + the Marksmanship group survived.
+  - **3B — switcher UI** (`6deae65`): a bottom-right **"Profile: ‹name›"** button opens a docked **Profiles
+    drawer** — a click-to-switch profile list + **New / Copy Current / Rename / Delete** (Delete confirms via
+    a small skinned `C:OpenConfirm`, and refuses to delete the only profile). Core API in `Core.lua`
+    (`GA:SwitchProfile/CreateProfile/CopyProfile/RenameActiveProfile/DeleteProfile/ProfileNames/
+    ActiveProfileName`); each repoints `GA.db` then `GA.RefreshForProfile` (hide the old profile's frames →
+    `CDM:Discover` → `C:OnProfileSwitched` rebuilds the panel + re-shows the new set). `/ga profile [name]`
+    back-door. QA sweep passed: create+switch both ways, delete+fallback+confirm, and **copy independence**
+    (deep-copied — editing the copy left the original untouched). Deleting the ACTIVE profile falls back to
+    the first remaining one; chars pointing at a deleted profile re-resolve to their own default next login.
+- ✅ **QA'd 2026-07-08 — Slider thumbs recolored** purple → **orange `#FF7729`** (`COLOR.orange`) on the
+  Alpha/Width/Height/X/Y sliders (the owner request). `MakeSlider` only.
+  **⚠ SUPERSEDED TWICE.** The Figma redesign (session 9) put the slider thumb BACK to purple as part
+  of its control language, and that still stands. **SCROLLBAR thumbs, which this line used to say
+  stay purple, are now ORANGE** (the owner, 2026-07-25: "we use orange in bars, and it's right") —
+  all four of them: the editor pane, both trigger-picker columns, and the sound picker. The rule to
+  carry forward: **scrollbars orange, slider thumbs and selection highlights purple.**
+- ✅ **QA'd 2026-07-08 — Appearance-first aura creation + DECORATION auras** (`bcb1912`). Scope had
+  outgrown "pick a spell first": **`+ Add Aura` now makes a BLANK aura** (placeholder `Circle_Smooth`
+  graphic, name "New Aura", `showLabel=false`), selected in the editor — NO picker popup. **Spells enter
+  ONLY via the Trigger** now (the picker still backs "Edit Trigger… → + Add Condition"; the "Track a
+  Spell" shortcut the owner briefly considered was dropped as redundant with triggers). `cfg.spellID` is now
+  **optional**. `EvalDisplay` has THREE cases after the Group+Visibility gates: (1) has a Trigger → trigger
+  decides; (2) no trigger + has `spellID` → auto-show on that spell's state (**legacy back-compat, no
+  migration**); (3) no trigger + no `spellID` → **pure decoration, always shown** (e.g. a graphic gated to
+  out-of-combat via Visibility — the owner's "pink cat in the corner" case). Trigger summary now says which:
+  "always shown (decoration)" vs "shows on its own spell's state". QA'd: blank create, decoration persists
+  when panel closed, Visibility(Out-of-Combat) hides/shows it on a dummy. **The engine already watched
+  trigger-condition spells (`WatchedSpells`) and already treated the Trigger as the sole source of truth
+  when present — this change just made that the primary model + allowed no-spell auras.**
+- ✅ **QA'd 2026-07-08 — Glow effects (LibCustomGlow)** (`fa12820`). New **"Effects"** section at the
+  bottom of the editor with a **"Glow…"** button → docked **glow drawer**: Type (None / Autocast Shine /
+  Pixel Glow / Proc Glow / Action Button Glow) + optional **Custom Color**. `cfg.glow = { type,
+  customColor, color }`. Engine in `Displays.lua`: `StartGlow`/`StopGlow`/`ApplyGlow` (all **pcall-guarded**
+  → a bad arg degrades to "no glow", never a Lua error); the glow follows the frame's shown state via
+  **OnShow/OnHide hooks** (starts on show, stops on hide, no per-poll churn since those fire only on real
+  transitions) and re-applies on any config change (`ApplyConfig` calls `ApplyGlow`). **Pure rendering, no
+  aura data.** LibCustomGlow-1.0 embedded like our other libs (TOC loads it after LibStub; `.pkgmeta`
+  fetches it). ★ **That flagged URL was in fact DEAD, caught at the first release (Phase G, 2026-07-24):**
+  the wowace SVN path `wow/libcustomglow-1-0/trunk` **404s** — the lib is not hosted there, so GA's very
+  first packaged build would have failed. Repointed at `https://github.com/Stanzilla/LibCustomGlow`, whose
+  repo root holds exactly what `Libs/LibCustomGlow-1.0` holds locally; the fetch is confirmed working in
+  the shipped `v1.0.0` zip. **Probe every external URL before a repo's first release** — the wowace
+  front-end 301s for a project that exists, 404s for one that doesn't. Panel grew 704→740 / `PANE_H` 600→636 for the
+  Effects row; `MakeColor` gained an optional label (reused as "Custom Color"); glow UI state on `C._glow`.
+  **KNOWN + inherent:** the glow traces the aura's **frame rectangle** (bounding box), NOT the texture's
+  alpha shape — so it looks best on square-ish icons and boxy on non-square/irregular art. Not fixable
+  (LibCustomGlow limitation); crop-to-fit (Frame & Shaping roadmap) is the mitigation for non-square icons.
+- ✅ **QA'd 2026-07-08 — One-level GROUPED trigger logic (AND/OR/NONE)** (`1294c8f`). A trigger condition
+  can now be a **group** (`{logic, conditions={leaf,…}}`) alongside leaves, so `(X OR Y) AND Z` etc. are
+  expressible. `EvalTrigger` recurses + supports **NONE** (NOR = NOT any, group-level negation);
+  `WatchedSpells` recurses (`CollectCondSpells`) so group-nested spells get mirrored. Backward-compatible
+  (flat triggers = a top group of leaves). Editor rewritten as a scrolling tree: top logic + leaf rows +
+  group headers (own AND/OR/NONE) + indented conditions + a purple **"+ Add to group" text link** +
+  "+ Add Condition" / "+ Add Group". State on `C._trig`. **Per-condition NOT** already exists via the
+  inverse states (Buff Inactive / CD On Cooldown). **⚠ Flat triggers verified in combat (auras show); a
+  trigger with an actual GROUP has NOT been end-to-end QA'd in combat yet — do that next session.**
+- ✅ **QA'd 2026-07-08 — Eye = editor preview + Disabled toggle** (`3e5d34a`). The eye icon was RE-scoped
+  (the owner clarified it never meant enable/disable): it now = **"show THIS aura on screen while the panel is
+  open"** (`cfg.preview`, default off), purely an editor convenience. While the panel is open the preview
+  shows only the **selected aura + eye-on auras** (`Displays:RefreshForced`) instead of all at once — fixes
+  the "every aura visible while editing" clutter. In-game (panel closed) is unchanged. **Enable/disable**
+  moved to a **"Disabled | Enabled" switch** at the bottom of the Visibility editor — drives `cfg.enabled`
+  for an aura, or `group.enabled` in a group's **Load Rule** (both places). Greys the list row when off.
+  A one-time **v2 migration** (`prof._eyeFixed=2`) re-enables every aura to recover from (a) the old eye
+  mis-setting `enabled=false` and (b) an interim switch's Lua-idiom bug (see LEARNINGS).
+- ✅ **QA'd 2026-07-08 — Target-DoT / debuff tracking** (`bc6cdb0`). DoT auras now follow the current target
+  (verified Warlock: single-target, target-swap, multi-target Agony; Hunter: no regression). Route CDM state
+  by a per-FRAME role (`CDM.frameKind`) so a spell in two viewers stops clobbering its own state. See ACTIVE
+  THREAD + API-NOTES §9. ⏳ instance/raid unverified.
+- ✅ **QA'd 2026-07-08 — Aimed Shot / charge-spell availability** (`74a6ae0`). Hidden shadow `Cooldown` fed a
+  duration OBJECT → `IsShown()` gives ≥1-charge-castable secret-safely; flows into `cd_ready`. Verified over a
+  full charge cycle incl. procs/reset. API-NOTES §9.3. ⏳ instance/raid unverified; exact count = backlog.
+- ✅ **QA'd 2026-07-08 — Two-panel trigger picker** (`e98d706`). Cooldowns | Buffs & Debuffs columns + search;
+  `selfAura` (Buff/Debuff) labels + unit-aware wording; sourced from live frames (only lists trackable spells).
+- ✅ **QA'd 2026-07-08 — `/ga probe` + `/ga capture`** — read-only secret-safe-signal diagnostics that log to
+  `GloomsAurasDB.probeLog` (Claude reads it off disk after `/reload`). Keep until the CDM-tracking thread closes.
+
+## NEXT / pending
+
+### ▶ ACTIVE THREAD (2026-07-08) — secret-safe DoT tracking (the owner's Affliction Warlock)
+**DoT approach VERIFIED (API-NOTES §9). Step 1 SHIPPED + QA'd — and it fixed the target-swap for FREE.**
+Root-cause bugs (§9.2) were (1) no re-eval on target change and (2) spellID-only matching COLLIDING when a
+spell sits in two viewers (Haunt = Essential `cat=0` + BuffBar `cat=3`). **the owner wants to test EVERYTHING —
+one step per QA pass; never declare done before he confirms in-game.**
+
+- **Step 1 (frameKind disambiguation) — DONE + COMMITTED, QA'd on Warlock AND Hunter.** Route state by a
+  per-FRAME role (`CDM.frameKind`) so a spell's cooldown entry can't clobber its aura entry's `buffActive`
+  (and vice-versa); aura wins for the per-spell `kind` (auto path). Fixed the "goes random" flicker.
+  **SURPRISE (verified): it ALSO fixed the target-swap** — once the cooldown entry stopped stomping it, the
+  BAR entry's own `OnActiveStateChanged` (fires when the DoT leaves the current target) drives hide/show
+  correctly. So the planned "Step 2" (`PLAYER_TARGET_CHANGED` + `auraInstanceID`) turned out **UNNECESSARY
+  for correctness**. QA'd on Warlock: aura follows current target — shows on the DoTted dummy, hides on a
+  clean one, returns on swap-back, hides on expiry; no errors, no flicker.
+- **KNOWN ISSUE (minor; the owner deferred it) — reappear LAG.** Swapping BACK to a DoTted target occasionally
+  lags ~0.5s before the aura returns (sometimes instant). Root cause = the CDM's target re-scan latency (it
+  only knows the DoT is on the new target after its `UNIT_AURA`-driven rescan; we update exactly then).
+  Re-polling the CDM's own state CAN'T beat this (its flag flips + fires its event simultaneously). The ONLY
+  lever = scan the target OURSELVES on `PLAYER_TARGET_CHANGED` via `C_UnitAuras` (by spellID), independent of
+  the CDM — UNVERIFIED (secret-safety in combat) → needs a probe first. Not worth derailing; revisit later.
+  (ArcUI has the same constraint; its "High Frequency Updates" toggle is its mitigation.)
+- **QA STATUS:**
+  1. **Hunter regression — ✅ PASSED (2026-07-08).** Existing auras unchanged (Rapid Fire cd, Trick Shots
+     buff, "Precise Shots active AND Kill Shot cd_ready" combo).
+  2. **Multi-target DoT — ✅ PASSED (2026-07-08).** Agony on 2 dummies, swapping between them: stays shown on
+     both, hides on a clean target. Semantic confirmed: tracks "on my CURRENT target," NOT any-enemy/count.
+  3. **Instance check — ✅ GOOD ENOUGH (2026-07-08, sixth session; follower dungeon, Gloomwick).** Ran 7 `/ga
+     probe` captures dotting two targets in a follower dungeon; all four DoTs (Haunt/Agony/UA/Corruption) read
+     **present on target** with plain-int auraInstanceIDs + duration objects, and followed the target across
+     captures. **KEY (verify-before-claiming):** under the hood the follower dungeon was **identical to open-world
+     combat** — cooldown fields came back `SECRET(boolean)` (normal in ANY combat), but **auraInstanceID stayed a
+     plain readable int, never secret**. So it did NOT exercise the feared "auras go secret in group content" path;
+     it's the same difficulty as the open-world test. The truly-stricter tier (real M+/raid) was NOT tested — the owner
+     called it: he judges the secret-value rules don't vary by content tier (a global anti-automation gate, not
+     difficulty-gated), and the captures show no content-based aura secrecy. Banked as sufficient; the
+     `secret⇒present` fallback remains reasoned-but-unexercised. Bonus: the charge **shadow** readback returned a
+     clean value even while raw cooldown fields were secret — confirms that mechanism survives combat secrecy.
+  4. **Deathblow / proc (`hasAura=false`) tracking — ✅ PASSED (2026-07-09, sixth session; Hunter/dummy).**
+     Made a "Deathblow — buff is active" aura, fished the proc off Aimed Shot/Rapid Fire — it **lights up** on
+     the proc and hides when consumed. So a `hasAura=false` activation-driven proc DOES register through our
+     normal buff mirror (`item:IsActive()` / `OnActiveStateChanged`); **no separate activation-overlay path
+     (§9.1) is needed.** The `hasAura` flag matters only for picker LABELING (already dropped as unreliable),
+     not for whether the buff tracks.
+- **Charge "shadow cooldown" (Aimed Shot) — ✅ BUILT + QA'd + committed (Hunter, 2026-07-08).**
+  `CDM.chargeShadow[sid]` = a hidden `Cooldown` fed the GCD-stripped `GetSpellCooldownDuration`; its
+  `OnShow → available=false` / `OnHide → available=true` fire exactly at the 0↔1-charge boundary; re-fed on
+  `SPELL_UPDATE_COOLDOWN` + `PLAYER_REGEN_ENABLED`; seeded from `IsShown()` at Discover (`FeedChargeShadow`
+  `seed=true`). Flows into the existing `cd_ready` machinery — **no new trigger types.** QA'd flawless over a
+  couple minutes incl. natural regens, **procs, and shortened cooldowns**. Isolated to the `if charge` branch,
+  so DoT / non-charge paths are structurally untouched. API-NOTES §9.3. **LIMIT: "≥1 available", not exact
+  count** (that's the next revisit — see pending; 2-charge spells CAN get exact count via the charge shadow).
+- **Optional payoff:** a real **duration countdown** on auras (`GetAuraDuration` → duration object → bar).
+- **Tooling:** `/ga probe [filter]` + `/ga capture`; captures land in `probeLog` (read off disk). Don't
+  delete/rewrite the probe code until this thread closes.
+
+### Groups + Profiles — ALL THREE PHASES DONE ✅ (spec: [docs/GROUPS-PROFILES-DESIGN.md](GROUPS-PROFILES-DESIGN.md))
+- **Phase 1 — Groups data + engine.** ✅ **DONE + QA'd 2026-07-07** (see BUILT list). Committed.
+- **Phase 2 — Grouped left pane + Manage drawer.** ✅ **DONE + QA'd 2026-07-07** (see BUILT list).
+- **Phase 3 — Profiles.** ✅ **DONE + QA'd 2026-07-08** (see BUILT list): schema-2 migration + `GA.global`/
+  `GA.db` split (`fc41649`), switcher UI (`6deae65`). Feature complete; nothing left open here.
+
+### ▶▶ START HERE (session 12) — RECONFIRM the session-11 UI batch, then CONTINUE the UI build
+
+**READ [docs/UI-REDESIGN.md](UI-REDESIGN.md) — the "▶▶ BUILD STATUS & ARCHITECTURE" section at the BOTTOM is the
+live pickup point** (control language, panel geometry, Lua caps, accordion architecture, what's built + QA'd, the
+exact NEXT steps, and the session-11 Learnings). The section above it holds the session-8 design decisions (valid).
+
+**Where we are (end of session 11, 2026-07-13):** Sound-timing feature + target-debuff tracking fix are DONE, QA'd,
+committed + pushed (`55a2d97`). On top of that, a **UI batch is BUILT + committed but NOT reconfirmed in-game**:
+**Sounds section**, **Aura Load Conditions section**, **editor scrollbar**, **glow overflow fix**, **left-list
+RefreshList fix**, and a **`SetSelected` crash fix** (a row missing `setEnabled` blanked the Trigger section + hid
+the group controls — see UI-REDESIGN Learnings). **▶ DO FIRST:** `/reload` → click an existing aura → confirm the
+**Trigger section shows conditions + group controls are back** → open **Load Conditions**, confirm it **scrolls,
+doesn't spill into the footer** → glance at **Glow** Custom-Color on its own row. THEN: **deferred-polish pass** →
+**Slice 4 = the BAR editor** (real engine-vs-mock gaps to resolve with the owner: segments/border/2nd-color + bar
+text/countdown) → **Slice 5 = Texture editor**. Full detail + gotchas in the UI-REDESIGN build-status section.
+
+Locked bar decisions (unchanged): **only TWO bar types — Duration & Stacks** (Cooldown = a Duration bar on a
+different clock). **A bar has NO multi-trigger builder — its source IS its trigger.** The bar ENGINE (all 3 modes)
+is DONE + shipped (`/ga bar` back-doors work now); Slice 4 is the presentation layer for it.
+
+---
+
+### ✅ DONE — Bar display type (all 3 modes shipped session 8; design [docs/BARS-DESIGN.md](BARS-DESIGN.md))
+
+A Bar is a display *kind* (`cfg.kind="bar"`) that
+reuses the whole pipeline (list/position/trigger/visibility/group/sound) and only swaps *rendering* to a
+StatusBar. Three modes: **Aura Duration** (DONE), **Cooldown Duration**, **Stacks**.
+
+- ✅ **QA'd 2026-07-09 (seventh session) — Bar rendering + Aura-Duration mode (slice 1a).** New `cfg.kind="bar"`
+  path: a lazily-created `StatusBar` child (`Displays:ApplyBarStyle`/`EnsureBar`; self-contained white fill tinted
+  by `SetStatusBarColor` — no Blizzard chrome — or an LSM `statusbar` texture), driven **secret-safely** by the
+  source aura's live **duration OBJECT** via `StatusBar:SetTimerDuration(durObj, interp, RemainingTime)` — the bar
+  self-animates the drain; **we never read the time.** Engine in CDM: `BarDurationObject(cfg)` resolves the aura's
+  native `frame.auraInstanceID` off its CDM item + the unit from `selfAura` (captured into `CDM.auraUnit` at
+  Discover), then `GetAuraDurationObject(unit,aiid)` (module-level, validates the instance then returns the object,
+  all pcall-guarded → a secret aiid in instances degrades to "no drain", never throws). **Show/hide is 100% reused**
+  — a bar's `cfg.spellID` drives `EvalDisplay`'s auto-path exactly like a DoT texture (the whole target-swap +
+  frameKind machinery applies for free). Feeds: on show (in `RefreshDisplays`), plus `RefeedBars()` on **UNIT_AURA**
+  (DoT refresh/extension) + **PLAYER_TARGET_CHANGED** (swap between two DoTted targets) — those two events are
+  registered only while a bar exists (`UpdateBarEvents`, gated like the visibility poll). **Catch-up fix:** the bar
+  keeps its stale fill while hidden, so the first feed after a (re)show uses `Immediate` (snap), live re-feeds use
+  `ExponentialEaseOut` (smooth refresh growth) — a `bar.__needSnap` flag set on OnHide + at style time.
+  - **VERIFY-FIRST done (against THIS client's source + ArcUI):** `SetTimerDuration` exists + is `AllowedWhenUntainted`
+    (same tag as the proven charge-shadow `SetCooldownFromDurationObject` → duration-OBJECT feed is tainted-safe);
+    `SetValue`/`SetMinMaxValues` are `AllowedWhenTainted` w/ `SecretAspect.BarValue` (secret stacks render — for the
+    Stacks slice); `StatusBarTimerDirection` = ElapsedTime(0)/RemainingTime(1). Copied ArcUI's exact aura-duration call.
+  - **DESIGN DEVIATION (intentional):** the bar's source spell is stored in **`cfg.spellID`** (the canonical
+    tracked-spell field the whole engine already uses), **NOT** a separate `cfg.bar.spellID` as the design doc drafted
+    — one source of truth, maximum reuse. `cfg.bar` holds only mode + rendering (see data model).
+  - **Testable via a back-door** (no editor UI yet — the owner's Figma redesign will inform the type-aware editor):
+    **`/ga bar <spellID>`** (`C:AddBar` in Config.lua) makes a new aura_dur bar bound to that spell. QA'd on the
+    **Warlock (Gloomwick), Agony 980**: shows on apply → smooth drain → hides on expiry; hides on target-away,
+    reappears at the right fill on target-back (**no catch-up slide**); refresh mid-duration grows it; **pandemic
+    recast extends correctly** (the durObj reflects the 130% cap on its own). **KNOWN (deferred, the owner's call):** the
+    reappear on swap-BACK still lags ~0.5s — the CDM's own target-rescan latency (same as the DoT-texture reappear-lag).
+- ✅ **QA'd 2026-07-09 (seventh session) — Bar Stacks mode (slice 2).** A `cfg.bar.mode="stacks"` bar fills with an
+  aura's **`applications`** count + shows the number. Secret-safe by the OTHER half of the design: `applications` is
+  **PLAIN out of combat / SECRET in combat** (probe-confirmed), so we feed it straight to `StatusBar:SetValue`
+  (fill) + `FontString:SetText` (the number) — **both `AllowedWhenTainted`** (verified in client source), so they
+  render a secret without us ever operating on it. **Smarter unit resolution (`CDM:ResolveAuraUnit`) — handles the
+  Freezing/selfAura-LIE:** Freezing (Shatter 1246769, `cat=2`, `selfAura=true`) actually lives on the **TARGET**
+  (probe: `player[absent] target[PRESENT:Freezing]`); the resolver trusts selfAura as a hint but, if the aura isn't
+  on that unit while the item's `auraInstanceID` is present, flips to the other unit — auto-correcting the lie
+  without a blind "try both" (§9.1 false-positive risk). This also upgraded aura_dur's resolver for free. Reads via
+  a shared `CDM:BarSource(cfg)` → (unit, aiid); `BarStackValue` reads `applications` (pcall-guarded). Show/hide reuses
+  the aura-present auto-path. Value text = its own centred FontString on the bar (`bar.valueText`; `SetText(secret)`
+  in combat, `tostring` OOC). Back-door: **`/ga bar stacks <spellID> [max]`**. **QA'd on Frost Mage Freezing 1246769
+  (max 20):** bar filled/emptied with the stack count, number tracked (incl. Ice Lance consuming 6), followed target
+  swaps; only the usual ~0.5s swap lag. **Deferred:** segments (N sub-bars) — smooth fill only for now.
+  - **Also fixed:** `Displays.lua` now defines `local issecret = _G.issecretvalue or …` (the bare `issecret` at the old
+    UpdateCooldown line was an undefined global silently swallowed by its pcall — now the secret guard actually works).
+
+**▶ NEXT on bars (pick up here):**
+1. **Type-aware editor (slice 1b)** — a "Type: Texture | Bar" switch at the top of the editor that branches the
+   right pane: bar shows bar controls (mode, source spell via the existing picker → sets `cfg.spellID`, bar texture
+   via the LSM "Shared Media (bars)" category, fill colour, orientation, value-text) + the shared rows; texture shows
+   today's controls. This is the **first UI-declutter step** ([[avoid-ui-bloat]]) — RECONCILE with the owner's Figma
+   design (tokens in the style-guide artifact) before over-building. Watch Config.lua caps (chunk **184/200**;
+   `Build` ~56/60 — put new state/functions on the `C` table).
+2. ~~**Stacks mode**~~ ✅ DONE + QA'd (see above). Remaining polish: **segments** (N sub-bars, ArcUI "perStack")
+   for a Freezing-style segmented look — deferred; smooth fill ships today.
+3. ~~**Cooldown-Duration mode**~~ ✅ DONE + QA'd 2026-07-09 (Frost Mage, Cone of Cold 120). A `cfg.bar.mode="cd_dur"`
+   bar shows WHILE the spell is on its real cooldown (drains via `SetTimerDuration` fed
+   `GetSpellCooldownDuration(id,true)`) and hides when ready. **Show/hide gotchas that cost 3 QA rounds — READ:**
+   (a) `GetSpellCooldownDuration` returns a **non-nil (spent) object when READY**, and remaining time is secret, so a
+   nil-check NEVER hides it. Fix: read "on cooldown" from a **shadow Cooldown widget's `IsShown()`** (`CDM.cdBarShadow`
+   / `CdBarOnCooldown` — feed the object to a hidden Cooldown; it hides itself when spent, the proven charge-shadow
+   trick). (b) That hide has **no reliable event** (SPELL_UPDATE_COOLDOWN fires on cd START, not END), so the re-eval
+   **poll** (`UpdateVisibilityPoll` now turns on for cd bars) re-reads it ~5×/s. (c) The shadow **completes naturally**
+   in the poll gap → fired the cooldown-finish **bling (screen-filling sparkle)**; `mkShadowCooldown` now
+   `SetDrawBling(false)` + 1×1 + alpha 0 (hardens the charge shadows too, no effect on IsShown). Works whether or not
+   the spell is placed in the CDM. (The "loud sound" in QA was a red herring — a leftover test aura with an Applause
+   sound, not the cd bar.) Back-door: `/ga bar cd <spellID>`.
+4. **Value-text / countdown number for DURATION bars** — stacks already shows its number; a duration COUNTDOWN
+   number is still open. A hidden Cooldown widget with `SetHideCountdownNumbers(false)` fed the same durObj is the
+   proposed secret-safe ticking number (BARS-DESIGN.md verify-item #3) — PROTOTYPE it; bar-only is fine.
+
+- **Parallel track — UI reorg in Figma.** the owner is mocking up a redesigned UI in Figma (the addon is getting
+  bloated; see [[avoid-ui-bloat]] memory). Design tokens were handed off as a **style-guide artifact**:
+  https://claude.ai/code/artifact/f49b70bb-72e4-4cfc-b6a5-48cb92f0b9a1 (color/type/panel dims, in-brand).
+  The Bar work should introduce a **type-aware editor** (bar displays show bar controls, textures show texture
+  controls) — the first concrete declutter step. Reconcile with the owner's Figma design as it lands.
+
+**Everything below is verified/shipped this session (context only):**
+- ~~**Instance / M+ / raid check**~~ ✅ BANKED (follower dungeon = open-world-equiv; the owner's call). QA STATUS #3.
+- ~~**Deathblow / proc tracking**~~ ✅ PASSED — proc lights up via the buff mirror. QA STATUS #4.
+- ~~**Exact charge COUNT**~~ ✅ **SHIPPED (Pass 1 conditions + Pass 2 text; `3ada124`, `849a75c`)** — see BUILT list.
+
+**B. Then resume the EFFECTS/appearance push** (Glow ✅ + grouped triggers ✅ + eye-preview/Disabled ✅ shipped):
+0. ~~**⚠ QA a GROUPED trigger IN COMBAT first.**~~ ✅ **DONE + QA'd (2026-07-08, sixth session; Hunter/dummy).**
+   Built `(Rapid Fire ready OR Aimed Shot ready) AND Precise Shots active` and drove it through all states in
+   combat — the nested OR group holds while one leaf is true, the whole group correctly goes false only when
+   BOTH leaves are false, and it ANDs with the top-level Precise Shots leaf. Grouped triggers work end-to-end.
+   (NONE-group test was set up as a quick follow-on but not run — low risk; the recursion + NONE path is the
+   same code the AND/OR path exercised.)
+1. **Motion** — animate auras via native WoW **AnimationGroups** (pure rendering, no lib, no secret data):
+   presets Pulse (scale) / Spin (rotation) / Bounce/Drift (translate) / Fade (alpha) / Orbit, each with
+   speed + amount, plus a one-shot "pop/flash on show". Build as a **"Motion…"** button on the existing
+   **Effects** row → its own docked drawer (mirror the glow drawer). Start/stop the AnimationGroup on the
+   frame's OnShow/OnHide (same hook points glow uses).
+2. **Frame & Shaping** — colored **border** (TWA "Add Border"; we bundle ring/border textures) + **crop-to-fit
+   / zoom** for non-square icons (`SetTexCoord` to crop instead of stretch — ALSO the mitigation for the
+   boxy-glow-on-non-square-art issue) + **rounded-corner presets** via `MaskTexture` (Square/Rounded/More/
+   Circle — radius is baked into the mask, NOT a free px slider; verify masks work in Midnight first).
+- **Dynamic group layout** — backburnered (the owner's call: "can of worms").
+- Then **Export/import strings** (a `PROFILE` or single aura is one serializable table now).
+- Watch the two Config.lua limits (60 upvalues on `Build` = 56 now; 200 chunk locals = **187 now** after
+  moving trigger state to `C._trig` — see LEARNINGS): put new drawer state/functions on the `C` table,
+  controls as Build-locals.
+
+### Exact charge COUNT — ✅ SHIPPED (2026-07-09, sixth session; `3ada124` engine+conditions, `849a75c` text)
+Two hidden shadow Cooldowns per charge spell: shadow A (real cd → availability, existing) + shadow B (fed
+`GetSpellChargeDuration` → "at max?"). Together they read the count: max={A hidden,B hidden}; partial={A
+hidden,B shown}; 0={A shown,B shown}. **Exact for 2-charge (Aimed Shot 2/1/0); full/partial/empty buckets for
+3+** (middle unreadable in combat). `CDM:ChargeCount(sid)` exposes it. **Pass 1** = two new trigger states
+`charges_max` / `charges_notmax` ("at max charges" / "NOT at max charges"), reached by cycling a charge-spell
+cooldown condition's state label (4-state cycle). **Pass 2** = a "Charge count" switch in the Text drawer that
+shows the live count as text (`DisplayChargeSpell` resolves which spell). Both QA'd on the Hunter.
+- **LEARNING (fixed a latent Discover gap):** charge-ness was classified only inside the frame-match loop, but
+  an idle Essential cooldown's frame is hidden (`hideWhenInactive` clears its cooldownID → `GetCooldownInfo`
+  nil → no match), so an idle-OOC Aimed Shot never got `isCharge`/shadow set (→ no charge states in the UI).
+  Fix: a frame-INDEPENDENT fallback in Discover that classifies watched charge cooldowns from `GetSpellCharges`
+  (maxCharges persists cached from OOC) and sets up the shadow. Also hardens Aimed Shot's regular availability.
+
+### ▶ Stacks / Freezing investigation — DONE (feeds the Bar work). Probe extended: `7c2c9cd`.
+The owner's Frost Mage tracks a stacking target debuff **Freezing (spellID 1246769; CDM lists it under the
+cooldown name "Shatter", cooldownID 93744; stacks to 20)**. Findings from `/ga probe` (extended with a
+`stacks: player[..] target[..]` line reading aura `applications` + issecret):
+- **Stack count is PLAIN out of combat, SECRET in combat** (C4 `target[PLAIN=20]` OOC; C2/C3
+  `target[SECRET(number)]` in combat). Same secrecy pattern as everything else.
+- **The debuff lives on the TARGET despite `selfAura=true`** (`aura: player[absent] target[PRESENT:Freezing]`)
+  — so `selfAura` is misleading here; read the unit where the auraInstanceID actually resolves. (This is why
+  GA labels it "buff on you" but it correctly fires on the target — `IsActive()` is computed secure-side.)
+- **Implication:** a stacks/duration **DISPLAY (bar)** is feasible (feed the widget the secret value/duration
+  object). A **"stacks ≥ X" TRIGGER in combat is NOT** (comparing a secret throws; no known widget sink for a
+  threshold — the charge shadow works only because a cooldown duration maps to a widget's shown-state). This
+  motivated the **Bar display type** (see BARS-DESIGN.md) — build DISPLAY, not a stacks-threshold trigger.
+- **Naming quirk to fix (backlog):** the CDM shows the cooldown's name ("Shatter") not the aura's ("Freezing")
+  → the "override display" polish + "on target" wording fix should land with the Bar work.
+
+### Trigger-chooser UX — ✅ DONE + QA'd (2026-07-08). Two-panel picker (Config.lua).
+
+### Trigger-chooser UX — ✅ DONE + QA'd (2026-07-08). Two-panel picker (Config.lua).
+Rewrote the condition picker (`BuildAuraLists` + BuildPicker/RefreshPicker on `C._pick`): **two columns** —
+Cooldowns (Essential/Utility) | Buffs & Debuffs (TrackedBuff/Bar) — each independently scrolled, with a
+shared **search** box on top (padding: search at y-46, headers at -84, rows at -104). Labels come from
+`selfAura`: **(Buff)** = on you, **(Debuff)** = on target; the condition rows + wording follow via
+`StateLabel(state, k)` → "buff is active (on you)" / "debuff is active (on target)" / "cooldown is ready".
+Picking from a column sets the right default state (`TrigAddLeaf(item, ti)` carries `item.state` + `item.k`);
+the state click now toggles within its family (active↔inactive / ready↔on-cd), not all four. **The picker
+sources from the LIVE item frames** (not the category set), so it only ever lists spells with a trackable
+frame (see Placement note). A **(Proc)** tag was tried via `hasAura=false` but DROPPED — `hasAura` also flags
+cooldown-granted buffs (Aspect of the Turtle), so it's not a reliable proc signal. Future proc-detection: a
+real proc is **aura-only (no matching cooldown entry)**; a cooldown-buff appears in both columns.
+
+### Other pending / deferred
+- **Sound trigger MODES (owner-requested backlog, 2026-07-09) — its own small project, NOT now.** Today a
+  display's sound fires on every hidden→shown edge (`CDM:RefreshDisplays` → `PlaySound` on `lastShown` false→true).
+  For a **target-DoT** aura "shown" legitimately toggles on every retarget, so the sound **re-fires each time you
+  target away and back** — the owner's gripe. Wants configurable sound triggers: **(1) on initial application only**
+  (suppress the re-target refire — clean fix keys on the aura *instance* becoming NEWLY present, not just re-shown;
+  a cheap band-aid = suppress a re-show sound within ~Ns of hiding, but that also swallows a genuine fast recast),
+  **(2) on wear-off** (a "fell off" edge), **(3) in the pandemic window** (remaining < ~30% — that's time math =
+  secret in combat, but likely reachable secret-safely via a duration-object curve à la ArcUI's
+  `durObj:EvaluateRemainingPercent`; probe when we build it). Build as a proper "sound trigger" sub-feature after
+  the Bar work. The owner explicitly parked it — don't pay attention to it now.
+- **Auto-icon a new aura from its first trigger (owner-requested backlog, 2026-07-09).** A new `+ Add Aura`
+  gets a fixed placeholder graphic (`Circle_Smooth`); `cfg.texture` nil + a `spellID` falls back to that spell's
+  icon in `Displays:ApplyConfig`. Idea: when NO texture is explicitly set, adopt the **icon of the first trigger
+  condition's spell** (WeakAuras-style) so a freshly-triggered aura looks right with zero styling. Feasible —
+  the first leaf's spellID → `C_Spell.GetSpellTexture`. Keep it as a *fallback only* (an explicit `cfg.texture`
+  always wins), and re-derive when the trigger's first condition changes. Decide: does an explicit texture pick
+  set `cfg.texture` (so the auto-icon is purely the unset default)?
+- **Override display polish (optional, offered, the owner didn't decide):** show a spell's **override** name+
+  icon in the picker/list when `info.overrideSpellID ~= spellID` (e.g. "Black Arrow" not "Kill Shot"),
+  storing the **base** spellID for stable matching. Cosmetic — tracking already follows overrides.
+- **Deferred texture transforms** — Mirror, Rotation, Texture Wrap (SetRotation interacts with SetTexCoord).
+- **Visibility Phase 2** — rarer load conditions (Race/Faction/Level, Zone/Instance/difficulty, M+ affix,
+  Equipment, Spec Role, PvP talent). Dropped Skyriding (no reliable "am I skyriding now" API).
+- ~~Text overlays + LSM font picker~~ ✅ DONE 2026-07-07 (see BUILT list — on-screen Text overlay).
+- **Export/import** strings for sharing (later; naturally follows Profiles).
+
+## Current in-game context — session records
+- **Session end 2026-07-25 (TWELFTH session) — THE AURAS TAB LAYOUT REWORK. Suite to-do item 1,
+  closed.** Everything below was QA'd in-game by the owner, one step at a time, before the next step
+  started. Full detail + settled decisions: the block at the TOP of this file. Nine commits:
+  1. **Splash + name banner retired** (`95de8f2`) — the tab opens on the last-edited aura; renaming
+     moved to the rail (button + double-click) via `UI.nameDialog`; buttons restyled to the suite's
+     language (22px, Title Case, bodyM 11, purple create / heroic secondary / red delete).
+  2. **The rail + groups as a first-class selection** (`480e721`) — the big one. Flush-left 240 rail
+     with `UI.tabHeader` (gate → MINOR 4) and the shared `UI.profileBlock`; clicking a group's NAME
+     fills the editor pane with its settings, retiring the ⚙ gear, the Manage Group drawer and the
+     green "Group:" button; the Visibility drawer died too, because the group's load rule is now the
+     SAME inline block the aura editor uses (built twice from one implementation via `o.target`).
+     **Delete Aura gained its missing confirmation here** — the owner caught it.
+  3. **Build-failure fix** (`c9ad9ec`) — see the ⚠ orphaned-local trap at the top of this file.
+  4. **Editor sections re-laid for the 560 pane** (`109377f`) — `MakeSlider` measures its parent, so
+     one change widened every slider; paired controls went two-column; Effects and Sounds each got a
+     row back. The Text and Glow drawers (dead since the accordion) were deleted here.
+  5. **Eye icons** (`cf051eb`) — report `selected OR preview`, orange/purple, on WHITE art.
+  6–9. **The Trigger section**, rebuilt to the owner's mocks over four passes (`12acfe7`, `e641364`,
+     `d29f505`, `8023082`, `e322ff0`): condition CARDS, then bracket connectors with the one nesting
+     rule (every operand inset 52/14), then the bracket proportions — which took three tries because
+     we were measuring in different units, and landed only when the owner gave a RULE ("the stub
+     above and below the label should be about as tall as the label") instead of a number.
+  Plus: **all four scrollbars → orange** (`e60efac`), and a **rail-tree scrollbar** that appears only
+  past 11 entries (`dff7b63`). **`Config.lua` chunk locals 193 → ~170 of 200** — four deleted drawers.
+  **Left open, owner's call:** modal dimming in `~/GloomsHub/Skin.lua` — the shared `UI.nameDialog` /
+  `UI.confirm` blend into the panel behind them (his words), and it now affects every delete in the
+  tab. **SETTLED, do not reopen:** the trigger condition-card height stays **40** (the owner mocked
+  ~48 and, shown the difference, said "I'm fine with how it is"). Note the bracket arms land on a
+  40px card's exact centre line — a coincidence of that height, since the bracket rule is derived
+  from the LABEL's height; changing the card height would need that checked.
+  **No open bugs.** All committed, NOT pushed.
+- **Session end 2026-07-13 (ELEVENTH session) — Sound-timing feature + tracking fix SHIPPED; UI batch BUILT
+  (pending in-game reconfirm).** TWO commits' worth, but note the UI half wasn't re-QA'd before close.
+  1. **Per-timing aura sounds + target-debuff tracking fix — DONE, QA'd, committed + pushed (`55a2d97`).**
+     Sounds now have a **"Play:" timing** (`cfg.sound.on` = trigger / untrigger / pandemic) driven by hooking
+     Blizzard's `CooldownViewerItemMixin:TriggerAlertEvent` (secret-safe — plain enum). A single "debuff active on
+     target" trigger leaf routes its sound through the aura's real apply/remove events → **no re-fire on target
+     swap** (the owner's gripe). QA'd: trigger + wear-off + pandemic (on Agony). **Pandemic is PER-SPELL + target-only**
+     (`GetValidAlertTypes` must list it; UA = noPANDEMIC, Agony/Corruption/Haunt = yes); self-buff "about to expire"
+     is NOT reachable (secret time). BUNDLED FIX: a `buff_active` condition on a debuff in **Tracked Buffs** went
+     stale (OnActiveStateChanged doesn't re-fire for target debuffs) → `CDM:RepollBuffPresence` re-derives
+     `buffActive` from live aura PRESENCE (auraInstanceID + C_UnitAuras) on UNIT_AURA/PLAYER_TARGET_CHANGED + a
+     ~0.2s safety poll + a Discover seed, with an IsActive fallback. **CDM placement (Tracked Buffs vs Bars) no
+     longer matters** — a bug made it seem to; fixed. `/ga trace` rewritten: recurses trigger groups (was crashing
+     on `GetSpellName(nil)`), shows each leaf's mirror + bound state + `alerts=[…PANDEMIC/noPANDEMIC]`.
+  2. **UI batch — BUILT + committed, PENDING FINAL QA (Config.lua):** **Sounds** section (`C:BuildSoundSection`),
+     **Aura Load Conditions** section (`C:BuildLoadConditionsSection` — inline visibility, replaces the per-aura
+     Visibility drawer), **editor scrollbar** (ScrollFrame + scroll child + draggable margin thumb, so a tall
+     section doesn't spill into the footer), **glow Custom-Color own-row** overflow fix, **left-list RefreshList
+     on ShowEditor** (was blank until scroll), and a **`SetSelected` crash fix** (Load-Conditions disable-switch
+     row shipped without `setEnabled` → `r:setEnabled()` threw → blanked Trigger section + hid group controls; the
+     "Survival Hunter spec-switch bug" was really this). **⚠ NOT reconfirmed in-game after the crash fix** — the owner
+     closed the session for handoff. **Watch:** a `MakeDropdown` menu near a scrolled viewport bottom can clip (see
+     Learnings). **Lua caps OK:** chunk 194/200, `Build` 34/60 upvalues. All committed + pushed at session end.
+- **Session end 2026-07-10 (NINTH session) — UI REDESIGN BUILD, slices 1–3c. Mid-build; details in
+  [docs/UI-REDESIGN.md](UI-REDESIGN.md) "▶▶ BUILD STATUS" (the live pickup point).** Built + QA'd pixel-perfect
+  to Figma: **Landing/shell** (620×740, state machine, footer, `ga_logo_full.png`), **Appearance** section,
+  **left-pane button stack** (New/Duplicate/Delete/Group), **Aura Trigger(s)** (Match segmented + bordered box +
+  nested orange TRIGGER GROUP + shift-click-to-group + per-group "+ Add to Group"), **Text** (Size cap → 300).
+  Built pending-QA: **Effects & Motion → Glow** (Motion parked per the owner). The editor is now an **accordion of
+  `C:` methods** (`C:BuildEditor` + `AccordionAddSection/Toggle/Open/Layout/SetHeight` + per-section builders),
+  which freed `Build` from ~58→35 upvalues; chunk 194/200. Reworked shared controls to the redesign language
+  (`MakeSlider`/`MakeDropdown`/`MakeColor`/`flatCheck` + new `makeToggle`/`twoWeightLabel`). `COLOR.dark` gamma-
+  compensated to `#12131F` (renders as Figma `#060714`); added `COLOR.red`. Assets: `ga_logo_full.png`,
+  `checkmark_white.png` (the owner's); still need a chain-link PNG for the aspect lock. Detour: chased a "bar duration
+  won't drain" bug → RED HERRING (the landing "Add Bar Aura" makes an unconfigured shell; `/ga bar` works). NEXT:
+  Sounds → Load Conditions → deferred polish → **Slice 4 Bar editor** (resolve segments/border/2nd-color +
+  bar-text gaps with the owner) → Texture editor. **No open bugs.** All committed + pushed at session end.
+- **Session end 2026-07-09 (EIGHTH session) — Bar type SHIPPED + UI-redesign design pass. NEXT = build the UI.**
+  (1) **All three Bar modes shipped + QA'd + committed:** Aura-Duration (`6ac6b8a`, Warlock Agony), Stacks
+  (`a55b206`, Frost Mage Freezing — incl. the selfAura-lie unit resolver), Cooldown-Duration (`5581ecc`, Cone of
+  Cold — needed a shadow-Cooldown IsShown() for hide + a bling/sparkle fix on `mkShadowCooldown`). Back-doors:
+  `/ga bar <id>` / `/ga bar cd <id>` / `/ga bar stacks <id> [max]`. (2) **Fixed the Figma MCP:** `figma-desktop`
+  was scoped only to the `hodguild` project in `~/.claude.json`; registered it at USER scope + GloomsAuras (backed
+  up first, atomic write). Now connects each fresh session. (3) **Long UI-redesign DESIGN conversation → [docs/
+  UI-REDESIGN.md](UI-REDESIGN.md)** (landing → type-specific accordion; only TWO bar types; bars have no trigger
+  builder; unit auto-detect; picker can't pre-filter no-duration toggles; countdown-number feasible-unbuilt,
+  stacks colour-by-fullness needs a probe, sound-at-stack-level walled). (4) **HTML prototype built + REJECTED**
+  by the owner as a control-dump (artifact `325ae79c`) — the real addon UI gets built next, pixel-perfect to Figma,
+  use-case-first. The owner has NEW bar mocks ready. **No open bugs. Config.lua 184/200 locals.** All committed; pushing.
+- **Session end 2026-07-09 (sixth session) — verification + a picker regression fix.** (1) **Instance check
+  banked** — follower dungeon on Gloomwick (Warlock); DoT tracking works, but the follower dungeon behaved
+  identically to open-world combat (auras readable, cooldowns secret-in-combat as always), so it did NOT
+  exercise the feared "auras go secret in group content" path; the owner called it sufficient (rules don't vary by
+  content tier). (2) **Grouped triggers verified in combat** — `(RF ready OR Aimed ready) AND Precise active`
+  on the Hunter, all states correct → closes the ⚠ item. (3) **Fixed a trigger-picker regression** (Config.lua
+  `BuildAuraLists`): the fifth session's "source from live frames" approach silently dropped ready-OOC Essential
+  cooldowns (Rapid Fire) because hidden frames clear their cooldownID; an interim "raw category set + HideByDefault
+  filter" fix then dropped 18 known Tracked Buffs (Lock and Load, Trueshot…). Final correct source = the settings
+  **data provider** `GetOrderedCooldownIDsForCategory` (see the picker LEARNING above). Both columns QA'd correct.
+  (4) **Deathblow / proc verified** — a `hasAura=false` activation proc DOES light up through the normal buff
+  mirror; no separate activation path needed (QA STATUS #4). (5) **Doc fix:** the Warlock is **Gloomwick**, the
+  Hunter is **Gloomvale** (handoff had them swapped).
+  **Then the session kept going (it was LONG):** (6) **Exact charge COUNT shipped** — Pass 1 (trigger states
+  `charges_max`/`charges_notmax`, `3ada124`) + Pass 2 (Charge-count text overlay, `849a75c`), QA'd on the
+  Hunter; also fixed a latent frame-independent-classification gap in Discover (see the charge-COUNT section).
+  (7) **Stacks/Freezing investigation** — extended `/ga probe` to read aura stack `applications` (`7c2c9cd`);
+  proved the count is PLAIN OOC / SECRET in combat, and that Freezing lives on the TARGET despite selfAura=true
+  (see the Stacks section). (8) **Bar display type — DESIGN PASS done** ([docs/BARS-DESIGN.md](BARS-DESIGN.md)):
+  a new display *kind* with Aura-Duration / Cooldown-Duration / Stacks modes; **build Duration-first next
+  session.** (9) **UI/Figma:** the owner flagged the UI is getting bloated ([[avoid-ui-bloat]] memory) and is
+  redesigning it in Figma; handed him a design-token **style-guide artifact** (URL in START HERE). The Bar work
+  introduces a type-aware editor as the first declutter step. **No open bugs. Config.lua chunk 184/200 locals.**
+  **All committed + pushed at session end.**
+- **Session end 2026-07-08 (fifth session) — the "secret-safe signals" session. BIG.** Reverse-engineered
+  **ArcUI** (installed, readable) and cracked two things we'd previously called walls. Built a read-only
+  probe (`/ga probe` + a movable `/ga capture` button, logging to `probeLog` → Claude reads it off disk) and
+  used it to VERIFY, then SHIP:
+  1. **DoT / target-debuff tracking** (`bc6cdb0`) — Haunt & co. now follow the current target. Root cause: a
+     spell in TWO viewers (Haunt = Essential cooldown + BuffBar aura) had both frames writing one `buffActive`
+     var and fighting. Fix = route state by a per-FRAME role (`CDM.frameKind`). Fixed the flicker AND the
+     target-swap for free. QA'd Warlock (single/swap/multi-target) + Hunter (no regression).
+  2. **Aimed Shot charge availability** (`74a6ae0`) — the charge WALL is RETIRED. Can't read the count
+     (secret), but a hidden shadow `Cooldown` fed the GCD-stripped duration OBJECT (which does NOT throw in
+     combat) exposes `IsShown()` = a plain bool: `mainShown==false` ⇔ ≥1 charge castable. Verified on Aimed
+     Shot 2→1→0→1→2. Flows into existing `cd_ready`. (§9.3.)
+  3. **Two-panel trigger picker** (`e98d706`) — Cooldowns | Buffs & Debuffs, search, `selfAura`-based
+     (Buff)/(Debuff) labels + unit-aware wording, sourced from LIVE frames so it only lists trackable spells.
+  Also **corrected the core premise**: "GloomsAuras never reads aura data" was too strict — the real rule is
+  "no arithmetic/compare on a secret." Reading aura PRESENCE (`auraInstanceID` existence) + DURATION (duration
+  objects), unit from `selfAura`, is sanctioned + verified (API-NOTES §9, CLAUDE.md nuance note). **Do NOT
+  re-apologize for it.** OPEN: instance/raid verification, Deathblow/proc tracking, exact charge count (see
+  START HERE). All committed + pushed. No open bugs.
+- **Session end 2026-07-07 (third session):** shipped **Groups Phase 1** (group data + `CDM:GroupGate`
+  engine, skinned name dialog) AND **Phase 2** (grouped/collapsible left pane with custom triangle +
+  settings-gear icons, gear→Manage Group drawer for rename/rule/on-off/reorder/delete, group settings
+  moved out of the aura editor) PLUS a **per-aura eye toggle** (`hidden/unhidden.png`). Hit + fixed the
+  **Lua 5.1 60-upvalue limit** on `Build()` (extracted sub-functions). THEN added **aura rename**
+  (click-to-edit title + list truncation) and the full **on-screen Text overlay** (Text drawer + font
+  picker; dropped shadow — `SetShadow*` renders nothing here). All QA'd, no open bugs. `Build()` at ~57
+  upvalues (watch the 60 cap). **Next: Phase 3 — Profiles.**
+- **Session end 2026-07-08 (fourth session):** shipped **Profiles (Phase 3)** end to end — schema 1→2
+  migration + `GA.global`/`GA.db` split (`fc41649`), then the switcher UI: bottom-strip "Profile: ‹name›"
+  button → docked **Profiles drawer** (switch/new/copy/rename/delete, skinned confirm) with the full Core
+  profile API (`6deae65`). Also recolored slider thumbs purple→**orange `#FF7729`** and fixed the drawer
+  footer overlapping its buttons. Hit a NEW wall — the **200-locals-per-chunk** cap in `Config.lua` (chunk
+  is at 198/200); worked around by hanging all profile state on the `C` table (see LEARNINGS). All QA'd
+  (create/switch/delete+fallback/copy-independence), committed. THEN reworked **aura creation**: dropped
+  the "pick a spell first" entry point for **appearance-first** creation — `+ Add Aura` makes a blank
+  aura, spells enter via the Trigger only, and a **no-trigger aura is a decoration that's always shown**
+  (Visibility-gated). All QA'd. THEN the **effects push**: fixed the **list-row mini-icon** (preview the
+  aura's texture, not the tracked-spell icon), shipped **Glow** (LibCustomGlow embedded, `fa12820`), then
+  **one-level grouped trigger logic** AND/OR/NONE (`1294c8f`), then re-scoped the **eye → editor preview**
+  + a **Disabled/Enabled toggle** for auras & groups (`3e5d34a`) — fixing an ugly `v and nil or false`
+  Lua trap along the way (see LEARNINGS) that had stranded auras disabled. Chunk 187/200 locals, `Build`
+  56 upvalues. **No open bugs.** **Pushed to origin/main at session end.**
+  **▶ Next: (1) QA a GROUPED trigger in combat — only flat triggers were verified. (2) Motion. (3) Frame
+  & Shaping.**
+- **Session end 2026-07-07 (second session):** shipped the **Hide-Blizzard-CDM toggle**, **aspect-ratio
+  lock** (custom lock PNGs), **custom flat sliders**, **Duplicate Aura** (multi-per-spell via display-id
+  re-key), **drag-selected-only**, **font preload** (first-login blank-label fix), a **UI-cleanup batch**
+  (borderless inputs, lighter button font, Blend/Strata **dropdowns**, inline Choose, Spell-ID icon search,
+  Title Case), the **docked side-panel drawer** for the editors, and fixed the **Black Arrow / 1-charge
+  cooldown** tracking bug. All QA'd, committed, pushed. **No open bugs.** Next: Groups + Profiles Phase 1.
