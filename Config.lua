@@ -789,9 +789,14 @@ function C:AddBar(arg)
     barcfg.showValue = true                          -- show the live count number on the bar
   end
   local id = NewDisplayID()
+  -- Stagger each new bar below the last one. Every `/ga bar` used to land on the same CENTER
+  -- 0,-120, so a second bar sat exactly on top of the first and looked like one broken bar.
+  local nbars = 0
+  for _, c in pairs(db) do if c.kind == "bar" then nbars = nbars + 1 end end
   db[id] = {
     kind = "bar", spellID = sid, label = nm, enabled = true,
-    width = 220, height = 24, point = { "CENTER", 0, -120 }, alpha = 1, showLabel = true,
+    width = 220, height = 24, point = { "CENTER", 0, -120 - (nbars * 34) },
+    alpha = 1, showLabel = true,
     bar = barcfg,
   }
   if GA.CDM then GA.CDM:Discover() end

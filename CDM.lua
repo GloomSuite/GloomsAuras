@@ -452,6 +452,55 @@ function CDM:BarDurationObject(cfg)
   return GetAuraDurationObject(unit, aiid)
 end
 
+-- 12.1 MIRROR PATH — the replacement for BarDurationObject when auras are secret.
+-- `TESTED` 2026-08-03, PTR 12.1.0.68914, Agony on a training dummy: a Tracked-Bar item frame's
+-- `.Bar` returns GetValue()/GetMinMaxValues() as SECRET numbers WITHOUT throwing, and
+-- StatusBar:SetValue / SetMinMaxValues both ACCEPT those secrets from tainted code — where
+-- Cooldown:SetCooldownDuration refuses them (plain number accepted, secret refused, same call).
+-- So we never obtain a duration: we let Blizzard compute the countdown in its secure context and
+-- copy the rendered value across. No arithmetic, no comparison, no instance-id API.
+-- ⚠ Requires the aura to be in Blizzard's "Tracked Bars" list — that is where `.Bar` comes from.
+-- Returns (value, min, max) or nil.
+function CDM:BarMirrorValues(cfg)
+  local sid = cfg and cfg.spellID
+  if not sid then return nil end
+  for frame, fsid in pairs(self.frameToSpell) do
+    if fsid == sid then
+      local b = frame.Bar
+      if b and b.GetValue and b.GetMinMaxValues then
+        local ok, v = pcall(b.GetValue, b)
+        if ok and v ~= nil then
+          local ok2, lo, hi = pcall(b.GetMinMaxValues, b)
+          if ok2 and hi ~= nil then return v, lo, hi end
+        end
+      end
+    end
+  end
+  -- FALLBACK: no `.Bar` means the spell sits in Tracked BUFFS, not Tracked Bars, so there is no
+  -- Blizzard bar to mirror. The icon frame still owns a Cooldown widget, and `TESTED` 2026-08-03
+  -- its GetCooldownDuration returns a SECRET number that StatusBar:SetValue accepts.
+  -- ⚠ UNKNOWN whether that number is REMAINING or TOTAL — it is secret, so it cannot be read to
+  -- find out. Returning nil for max tells the caller to latch the first value as the scale; the
+  -- bar then answers the question by behaviour: remaining drains, total pins it full.
+  for frame, fsid in pairs(self.frameToSpell) do
+    if fsid == sid and frame.GetCooldownFrame then
+      local ok, cdf = pcall(frame.GetCooldownFrame, frame)
+      -- GetCooldownDuration was `TESTED` 2026-08-03 and is the TOTAL: mirrored to a bar it pins
+      -- full and never moves. GetCooldownDisplayDuration is the remaining candidate — by name,
+      -- the value Blizzard is currently DISPLAYING rather than the configured length. Untested.
+      if ok and cdf then
+        for _, m in ipairs({ "GetCooldownDisplayDuration", "GetCooldownDuration" }) do
+          if cdf[m] then
+            local ok2, d = pcall(cdf[m], cdf)
+            if ok2 and d ~= nil then return d, 0, nil end
+          end
+        end
+      end
+    end
+  end
+  return nil
+end
+
 -- The live cooldown duration object for a spell (cd_dur mode), or nil when the spell is READY.
 -- GetSpellCooldownDuration returns an object only while on the REAL cooldown (ignoreGCD=true strips
 -- the GCD → no false-show during the global cooldown), nothing/nil otherwise. AllowedWhenTainted →
@@ -845,23 +894,63 @@ end
 -- It drives per-timing SOUNDS for AUTO-path displays; the key win is that OnAuraApplied
 -- fires only on a genuine (re)application, NOT on a target swap, killing the DoT re-fire.
 local ALERT_ENUM   -- Enum.CooldownViewerAlertEventType, resolved lazily (nil pre-login)
+
+-- DIAGNOSTIC (`/ga alertlog`). These alert events are the ONLY secret-safe timing signal GA
+-- receives on 12.1 -- they carry a plain enum out of Blizzard's secure context -- so they are
+-- the foundation for both pandemic sounds and any self-timed duration bar. This records every
+-- event AS IT ARRIVES and at each filter it is dropped by, so "the sound never played" can be
+-- told apart from "the event never fired". Off by default; costs nothing when off.
+CDM.alertLogOn = false
+local ALERT_NAMES
+local function LogAlert(event, spellID, stage)
+  if not CDM.alertLogOn then return end
+  local root = _G.GloomsAurasDB
+  if type(root) ~= "table" then return end
+  root.alertLog = root.alertLog or {}
+  local L = root.alertLog
+  if #L >= 400 then return end          -- hard cap: a long fight must not bloat SavedVariables
+  if not ALERT_NAMES and Enum and Enum.CooldownViewerAlertEventType then
+    ALERT_NAMES = {}
+    for k, v in pairs(Enum.CooldownViewerAlertEventType) do ALERT_NAMES[v] = k end
+  end
+  local ev
+  if event == nil then ev = "nil"
+  elseif issecret(event) then ev = "SECRET(" .. type(event) .. ")"
+  else ev = tostring(event) .. "/" .. tostring((ALERT_NAMES and ALERT_NAMES[event]) or "?") end
+  local nm = "?"
+  if spellID and not issecret(spellID) then
+    nm = tostring((C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(spellID)) or spellID)
+  end
+  L[#L + 1] = ("%8.2f  %-22s %-9s event=%-22s %s"):format(
+    GetTime() % 100000, nm, tostring(spellID), ev, stage)
+end
+function CDM:ToggleAlertLog()
+  self.alertLogOn = not self.alertLogOn
+  return self.alertLogOn
+end
+
 local function OnItemAlertEvent(itemFrame, event)
   local spellID = CDM.frameToSpell[itemFrame]
+  LogAlert(event, spellID, "ARRIVED")
   if not spellID then return end
   -- A spell in two viewers has two hooked frames; only its PRIMARY frame (the one whose
   -- role matches CDM.kind — aura wins) may drive sound, so a cooldown frame's "ready"
   -- can't double-fire an aura-driven display's "trigger".
-  if CDM.frameKind[itemFrame] ~= CDM.kind[spellID] then return end
+  if CDM.frameKind[itemFrame] ~= CDM.kind[spellID] then
+    LogAlert(event, spellID, "drop:frameKind")
+    return
+  end
   ALERT_ENUM = ALERT_ENUM or (Enum and Enum.CooldownViewerAlertEventType)
-  if not ALERT_ENUM then return end
+  if not ALERT_ENUM then LogAlert(event, spellID, "drop:noEnum"); return end
   local bucket
   if     event == ALERT_ENUM.OnAuraApplied then bucket = "trigger"
   elseif event == ALERT_ENUM.OnAuraRemoved then bucket = "untrigger"
   elseif event == ALERT_ENUM.PandemicTime  then bucket = "pandemic"
   elseif event == ALERT_ENUM.Available     then bucket = "trigger"
   elseif event == ALERT_ENUM.OnCooldown    then bucket = "untrigger"
-  else return end
-  if EditModeActive() or CDM._emSettling then return end
+  else LogAlert(event, spellID, "drop:unmappedEvent"); return end
+  LogAlert(event, spellID, "bucket:" .. bucket)
+  if EditModeActive() or CDM._emSettling then LogAlert(event, spellID, "drop:editMode"); return end
   local db = GA.db and GA.db.displays
   if not db then return end
   for id, cfg in pairs(db) do
@@ -1420,6 +1509,9 @@ function CDM:Probe(filter)
     pcall(function() if type(data) == "table" and data.name and not issecret(data.name) then nm = data.name end end)
     return "PRESENT"..(nm and (":"..nm) or "")
   end
+  -- Declared up here because auraDurRem below needs it too; a later `local` would leave these
+  -- helpers binding to a GLOBAL of the same name instead.
+  local probeBar, probeCD
   local function auraDur(unit, aiid)
     if not (C_UnitAuras and C_UnitAuras.GetAuraDuration) then return "noAPI" end
     if not UnitExists(unit) then return "no-"..unit end
@@ -1428,6 +1520,26 @@ function CDM:Probe(filter)
     if not ok then return "THREW" end
     if d == nil then return "nil" end
     return "obj:"..type(d)
+  end
+  -- GetAuraDurationREMAINING — a DIFFERENT API from GetAuraDuration, and one GA has never
+  -- called. ArcUI uses this one. Every "the duration channel is closed" result on record was
+  -- measured against GetAuraDuration only, so this has never actually been tested. If it
+  -- returns a value (secret or not) instead of throwing, the icon path opens with no Tracked
+  -- Bar needed. Also reports whether the result FEEDS a StatusBar, since that is the sink
+  -- that was measured to accept secrets.
+  local function auraDurRem(unit, aiid)
+    if not (C_UnitAuras and C_UnitAuras.GetAuraDurationRemaining) then return "absent" end
+    if not UnitExists(unit) then return "no-"..unit end
+    if not present(aiid) then return "noID" end
+    local ok, d = pcall(C_UnitAuras.GetAuraDurationRemaining, unit, aiid)
+    if not ok then return "THREW" end
+    if d == nil then return "nil" end
+    local kind = issecret(d) and ("SECRET("..type(d)..")") or (type(d)..":"..tostring(d))
+    if not probeBar then
+      probeBar = CreateFrame("StatusBar", nil, UIParent)
+      probeBar:SetSize(1, 1); probeBar:Hide()
+    end
+    return kind .. "/bar:" .. (pcall(probeBar.SetValue, probeBar, d) and "ok" or "no")
   end
   -- STACK COUNT probe (the Freezing/Shatter question): read the aura's `applications` and report
   -- whether it's a PLAIN number (=> comparable => "stacks >= X" triggers possible) or SECRET (=>
@@ -1446,14 +1558,187 @@ function CDM:Probe(filter)
     if issecret(ap) then return "SECRET(number)" end
     return "PLAIN="..tostring(ap)
   end
+  -- 12.1 ESCAPE-ROUTE PROBE: Blizzard's OWN Cooldown widget on the CDM item frame.
+  -- Blizzard draws a swipe for a secret aura from its secure context, so if that widget can
+  -- hand back a duration OBJECT we can pass it straight to our StatusBar -- never reading a
+  -- number, never touching an index/slot/instance-ID API. Every other probe here asks "can we
+  -- READ it?"; this one asks "will a sink ACCEPT it?", which is the question that decides §1.
+  -- The bar is created once and reused (1x1, hidden) -- deliberately NOT the leaking pattern
+  -- at the charge-shadow probe below.
+  -- BACKLOG item 1 names GetPlayerAuraBySpellID as the one channel that could collapse §1 to a
+  -- patch. It is PLAYER-ONLY, so it can never serve target DoTs -- but if it yields a duration
+  -- OBJECT it would still rescue player-buff bars. Report the SHAPE of what comes back, since
+  -- a secret NUMBER is now known to be unfeedable and only an OBJECT would be worth anything.
+  local function playerAuraProbe(sid)
+    local f = C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID
+    if type(f) ~= "function" then return "absent" end
+    if not sid or issecret(sid) or type(sid) ~= "number" then return "noSID" end
+    local ok, d = pcall(f, sid)
+    if not ok then return "THREW" end
+    if d == nil then return "nil" end
+    if issecret(d) then return "SECRET(whole)" end
+    if type(d) ~= "table" then return type(d) end
+    local out = {}
+    for _, k in ipairs({ "duration", "expirationTime", "applications" }) do
+      local ok2, v = pcall(function() return d[k] end)
+      if not ok2 then out[#out + 1] = k .. "=THREW"
+      elseif v == nil then out[#out + 1] = k .. "=nil"
+      elseif issecret(v) then out[#out + 1] = k .. "=SECRET(" .. type(v) .. ")"
+      else out[#out + 1] = k .. "=" .. type(v) .. ":" .. tostring(v) end
+    end
+    return "table{" .. table.concat(out, ",") .. "}"
+  end
+
+  local function cdFrameProbe(frame)
+    if type(frame.GetCooldownFrame) ~= "function" then return "noMethod" end
+    local ok, cdf = pcall(frame.GetCooldownFrame, frame)
+    if not ok then return "THREW" end
+    if cdf == nil then return "nil" end
+    local out = {}
+    local s = "?"; pcall(function() s = tostring(cdf:IsShown()) end)
+    out[#out + 1] = "shown=" .. s
+    -- What duration/cooldown-shaped methods does this widget actually expose on this build?
+    local found = {}
+    pcall(function()
+      local mt = getmetatable(cdf)
+      local idx = mt and mt.__index
+      if type(idx) == "table" then
+        for k, v in pairs(idx) do
+          if type(v) == "function" and (k:find("Duration") or k:find("Cooldown")) then
+            found[#found + 1] = k
+          end
+        end
+      end
+    end)
+    table.sort(found)
+    out[#out + 1] = "methods{" .. ((#found > 0) and table.concat(found, ",") or "none") .. "}"
+    -- ⚠ SINKS COME IN TWO SHAPES AND THE VALUE MUST MATCH THE SHAPE.
+    -- GetCooldownDuration returns a NUMBER. StatusBar:SetTimerDuration wants a duration
+    -- OBJECT, so it rejects a number whether or not the number is secret -- proven here by
+    -- inactive frames, whose PLAIN number is rejected identically. Secrecy is not the gate;
+    -- shape is. The number-shaped sinks are Cooldown:SetCooldownDuration / SetCooldown, so
+    -- test those too, and only a difference between the plain and secret cases means anything.
+    local function sinkTest(v, second)
+      local r = {}
+      if not probeBar then
+        probeBar = CreateFrame("StatusBar", nil, UIParent)
+        probeBar:SetSize(1, 1); probeBar:Hide()
+      end
+      if not probeCD then
+        probeCD = CreateFrame("Cooldown", nil, UIParent, "CooldownFrameTemplate")
+        probeCD:SetSize(1, 1)
+        if probeCD.SetDrawEdge then probeCD:SetDrawEdge(false) end
+        if probeCD.SetDrawBling then probeCD:SetDrawBling(false) end
+        if probeCD.SetHideCountdownNumbers then probeCD:SetHideCountdownNumbers(true) end
+        probeCD:Hide()
+      end
+      if probeBar.SetTimerDuration and Enum and Enum.StatusBarInterpolation
+         and Enum.StatusBarTimerDirection then
+        r[#r + 1] = "bar=" .. (pcall(function()
+          probeBar:SetMinMaxValues(0, 1)
+          probeBar:SetTimerDuration(v, Enum.StatusBarInterpolation.Immediate,
+                                       Enum.StatusBarTimerDirection.RemainingTime)
+        end) and "ok" or "no")
+      end
+      if probeCD.SetCooldownDuration then
+        r[#r + 1] = "cdDur=" .. (pcall(probeCD.SetCooldownDuration, probeCD, v) and "ok" or "no")
+      end
+      -- ★ THE SINK ARCUI ACTUALLY USES. ArcUI_Display.lua:4095 does
+      -- `bar:SetValue(sourceBar:GetValue())` -- a StatusBar VALUE sink, not a Cooldown sink and
+      -- not the duration-object sink. Both of those were tested and both refuse secrets; this
+      -- one was never tried, which is the hole that produced the "no sink accepts a secret"
+      -- claim. SetMinMaxValues is tested too: a fill needs a scale, and computing one from a
+      -- secret would be arithmetic (forbidden), so the max must be settable from a secret too.
+      if probeBar.SetValue then
+        r[#r + 1] = "barVal=" .. (pcall(probeBar.SetValue, probeBar, v) and "ok" or "no")
+      end
+      if probeBar.SetMinMaxValues then
+        r[#r + 1] = "barMax=" .. (pcall(probeBar.SetMinMaxValues, probeBar, 0, v) and "ok" or "no")
+      end
+      -- GetCooldownTimes yields (start, duration) in that order, so feed the pair as given.
+      if second ~= nil and probeCD.SetCooldown then
+        r[#r + 1] = "cdSet=" .. (pcall(probeCD.SetCooldown, probeCD, v, second) and "ok" or "no")
+      end
+      -- The "SetCooldownFrom*" family: SetCooldownFromDurationObject is a known
+      -- AllowedWhenUntainted sink (API-NOTES §9.3), so its siblings are the last plausible
+      -- pass-through. If one of THESE takes a secret where SetCooldownDuration refused, the
+      -- route reopens.
+      if probeCD.SetCooldownFromExpirationTime then
+        r[#r + 1] = "cdExp=" .. (pcall(probeCD.SetCooldownFromExpirationTime, probeCD, v) and "ok" or "no")
+      end
+      if probeCD.SetCooldownFromDurationObject then
+        r[#r + 1] = "cdObj=" .. (pcall(probeCD.SetCooldownFromDurationObject, probeCD, v, true) and "ok" or "no")
+      end
+      -- Did anything actually take? Read the sink back and report whether it now holds a
+      -- secret -- "no error" is not the same as "the widget is running a timer".
+      local back = "?"
+      pcall(function()
+        local b = probeCD.GetCooldownDuration and probeCD:GetCooldownDuration()
+        back = (b == nil) and "nil" or (issecret(b) and "SECRET" or tostring(b))
+      end)
+      r[#r + 1] = "readback=" .. back
+      return table.concat(r, ",")
+    end
+
+    for _, m in ipairs({ "GetCooldownDuration", "GetCooldownTimes", "GetCooldownDisplayDuration" }) do
+      if type(cdf[m]) == "function" then
+        local ok2, v, v2 = pcall(cdf[m], cdf)
+        if not ok2 then
+          out[#out + 1] = m .. "=THREW"
+        elseif v == nil then
+          out[#out + 1] = m .. "=nil"
+        else
+          local kind = issecret(v) and ("SECRET(" .. type(v) .. ")") or ("plain:" .. tostring(v))
+          -- GetCooldownTimes yields (start, duration): feed the pair to SetCooldown as well.
+          out[#out + 1] = m .. "=" .. kind .. "[" .. sinkTest(v, (m == "GetCooldownTimes") and v2 or nil) .. "]"
+        end
+      end
+    end
+    return table.concat(out, " ")
+  end
+
+  -- BuffBar viewer item frames carry a .Bar StatusBar that Blizzard drives from secure code.
+  -- That is ArcUI's mirroring source: read GetValue() (a secret) and push it straight into our
+  -- own StatusBar's SetValue -- no arithmetic, no aura API. Reports "noBar" when the spell is
+  -- not in Blizzard's "Tracked Bars" list, since then no such widget exists to mirror.
+  local function barWidgetProbe(frame)
+    local b = frame and frame.Bar
+    if b == nil then return "noBar" end
+    if not probeBar then
+      probeBar = CreateFrame("StatusBar", nil, UIParent)
+      probeBar:SetSize(1, 1); probeBar:Hide()
+    end
+    local out = {}
+    local s = "?"; pcall(function() s = tostring(b:IsShown()) end)
+    out[#out + 1] = "shown=" .. s
+    if b.GetValue then
+      local ok, v = pcall(b.GetValue, b)
+      if not ok then out[#out + 1] = "GetValue=THREW"
+      elseif v == nil then out[#out + 1] = "GetValue=nil"
+      else
+        out[#out + 1] = "GetValue=" .. (issecret(v) and ("SECRET(" .. type(v) .. ")") or tostring(v))
+        out[#out + 1] = "mirror=" .. (pcall(probeBar.SetValue, probeBar, v) and "ok" or "no")
+      end
+    end
+    if b.GetMinMaxValues then
+      local ok, lo, hi = pcall(b.GetMinMaxValues, b)
+      if ok then
+        out[#out + 1] = ("minmax=%s/%s"):format(
+          issecret(lo) and "SECRET" or tostring(lo), issecret(hi) and "SECRET" or tostring(hi))
+      end
+    end
+    return table.concat(out, " ")
+  end
 
   local inCombat = InCombatLockdown() and true or false
   local tName = UnitExists("target") and (UnitName("target") or "?") or "<none>"
   local spec = "?"
   pcall(function()
     local i = GetSpecialization and GetSpecialization()
-    local _, nm = i and GetSpecializationInfo and GetSpecializationInfo(i)
-    if nm then spec = nm end
+    -- 12.1 returns an EMPTY name from GetSpecializationInfo while the ID stays good, which is
+    -- what produced `spec=?` on every header and cost a false alarm (FINDINGS §7 KILLED list).
+    local id, nm = i and GetSpecializationInfo and GetSpecializationInfo(i)
+    if nm and nm ~= "" then spec = nm elseif id then spec = tostring(id) end
   end)
 
   -- Register this capture up-front in the SavedVariables log so the deferred
@@ -1538,10 +1823,15 @@ function CDM:Probe(filter)
           shown, active, pval(aiid), tostring(present(aiid)), expUnit))
         emit(("     aura: player[%s] target[%s] | dur player[%s] target[%s]"):format(
           unitAura("player", aiid), unitAura("target", aiid), auraDur("player", aiid), auraDur("target", aiid)))
+        emit(("     durRemaining: player[%s] target[%s]"):format(
+          auraDurRem("player", aiid), auraDurRem("target", aiid)))
         emit(("     stacks: player[%s] target[%s]"):format(auraStacks("player", aiid), auraStacks("target", aiid)))
         emit(("     cd: isOnActualCooldown=%s cooldownIsActive=%s isOnGCD=%s startTime=%s"):format(
           pval(frame.isOnActualCooldown), pval(frame.cooldownIsActive),
           pval(frame.isOnGCD), pval(frame.cooldownStartTime)))
+        emit(("     cdframe: %s"):format(cdFrameProbe(frame)))
+        emit(("     playerAura: %s"):format(playerAuraProbe(sid)))
+        emit(("     barwidget: %s"):format(barWidgetProbe(frame)))
 
         -- shadow readiness (immediate; IsShown may lag one frame — see deferred pass below)
         if sid and not issecret(sid) and type(sid) == "number" and main and charge then

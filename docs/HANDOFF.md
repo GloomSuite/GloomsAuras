@@ -1,4 +1,34 @@
-# GloomsAuras — Session Handoff  (last updated 2026-07-26)
+# GloomsAuras — Session Handoff  (last updated 2026-08-03)
+
+> ## ▶▶ 2026-08-03 — 12.1 DURATION BARS ARE SOLVED. The route is `AuraContainer`.
+> **The suite-wide record lives in `~/GloomsHub/docs/FINDINGS.md` §1 (the ANSWERED block) and §10.
+> Read those; they are not restated here.** What follows is GA-specific only.
+>
+> **Corrected, and repeated in this file until today:** *"the owner's Warlock profile is genuinely
+> broken."* **It is not.** Every display in it triggers on presence, and all four DoTs were watched
+> on screen in combat — lighting on application, following target swaps, clearing on expiry. The
+> sticky-value risk flagged at `CDM.lua:550` was predicted again and **did not occur**, tested on
+> target debuffs (the harder case than the Hunter's player buffs).
+>
+> **What is genuinely lost on 12.1:** reading duration/stacks. Every instance-ID call throws.
+> **What is recoverable:** the visible countdown, via `AuraContainer` — Blizzard renders it into
+> regions the aura BUTTON owns and GA never touches a number.
+>
+> ### Code that landed here 2026-08-03 (uncommitted work is now committed; QA state varies)
+> | Change | State |
+> |---|---|
+> | `Core.lua` — **`/ga remove` fixed.** It did `tonumber(arg)` against string-keyed displays, so it could **never delete anything**. Now takes the `d11`-style id `/ga list` prints, still accepts a spellID. | owner-QA'd |
+> | `Config.lua` — `/ga bar` **staggers** each new bar 34px below the last instead of stacking them all at `CENTER 0,-120`. | owner-QA'd |
+> | `CDM.lua` — **`spec=?` fixed** (falls back to the spec ID when 12.1 returns an empty name). | fixed, low risk |
+> | `CDM.lua` + `Core.lua` — **`/ga alertlog`**, a new diagnostic recording every CDM alert event as it ARRIVES and at each filter that drops it. Off by default; resets on `/reload`; capped at 400 lines. | owner-QA'd, produced FINDINGS §10 |
+> | `CDM.lua` — `/ga probe` gained `cdframe:`, `playerAura:`, `barwidget:` and `durRemaining:` lines. Probe-only. **The StatusBar it creates is pooled and hidden — deliberately NOT the leaking pattern the charge probe still has.** | owner-QA'd |
+> | `CDM:BarMirrorValues` + `Displays.lua` `StartMirror`/`StopMirror` — the **Tracked-Bar mirror**. Works, drains correctly. **Superseded by `AuraContainer` and not yet decided on — see backlog item 1.** | works, fate undecided |
+>
+> ⚠ **The mirror's icon-frame fallback is a dead end and is documented as such in the code.** Both
+> `GetCooldownDuration` and `GetCooldownDisplayDuration` on the icon frame's Cooldown widget return
+> the **total**, not the remaining — mirrored to a bar they pin full and never move. Tested twice.
+> Don't retry it.
+
 
 > ## ▶▶ THE AURAS TAB LAYOUT REWORK IS DONE — QA'd by the owner, 2026-07-25.
 > Suite to-do item 1 is closed. Every step below was verified in-game by the owner before the next
@@ -143,21 +173,26 @@ tracking vs presence-only degradation), not a patch.
 Only the **data** path is dead. A display that triggers on presence — `buff_active`,
 `buff_inactive`, `cd_ready` — is **unaffected**, because `CDM:EvalCondition` (`CDM.lua:213`) reads
 the `buffActive` boolean table and never an aura. The owner's MM Hunter profile is entirely
-presence-driven and works correctly on 12.1; his Warlock profile is the one that is broken. Do not
-describe §1 as "GA is broken in combat" — it is narrower than that, and the difference decides how
-much rework is really owed.
+presence-driven and works correctly on 12.1. ~~his Warlock profile is the one that is broken~~ —
+**struck 2026-08-03: the Warlock profile works too**, watched on screen. Do not describe §1 as "GA
+is broken in combat"; it is far narrower than that.
 
-⚠ **The one place presence could still fail is `CDM.lua:550`.** `RepollBuffPresence` falls back to
-`frame:IsActive()` when the aura read throws; if `IsActive` ever returns a *secret*, the code keeps
-the **previous** value and an expired buff stays lit forever. It held across 14 in-combat probes,
-but that is the first thing to check if presence displays ever go sticky.
+~~⚠ **The one place presence could still fail is `CDM.lua:550`.**~~ **`TESTED` 2026-08-03 and it did
+not happen.** `RepollBuffPresence` falls back to `frame:IsActive()` when the aura read throws; the
+worry was that a *secret* `IsActive` would pin the previous value and leave an expired buff lit
+forever. Checked on the Warlock's four target debuffs — structurally the harder case — through
+application, target swap and natural expiry: every display cleared correctly. Keep it only as the
+first thing to check if presence ever does go sticky.
 
 ---
 
-## The `/ga probe` diagnostic has two self-inflicted bugs (2026-07-26)
+## The `/ga probe` diagnostic — one bug left (2026-07-26, half fixed 2026-08-03)
 
 Dev-tool only, no user impact — but this probe is the instrument the whole 12.1 investigation runs
-on, and a misleading instrument costs more than a cosmetic bug should. Both are `TESTED`.
+on, and a misleading instrument costs more than a cosmetic bug should. Both were `TESTED`.
+**Bug 2 (`spec=?`) is FIXED as of 2026-08-03. Bug 1 (the frame leak) is still open** — see backlog
+item 3. Note the new probe code added the same day pools its StatusBar correctly; copy that, or
+`_ProbeShadows`, when fixing bug 1.
 
 1. **It paints a full-screen cooldown sweep on every CAPTURE click.** `CDM.lua:1567` creates two
    fresh `CooldownFrameTemplate` frames per charge-spell per capture with **no `SetSize`** (so they

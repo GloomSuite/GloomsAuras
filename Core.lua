@@ -308,15 +308,39 @@ local function AddDisplay(arg)
   if GA.CDM then GA.CDM:Discover() end
 end
 
+-- `/ga list` prints the DISPLAY id ("d11"), so accept that. This used to call tonumber() on the
+-- argument and index displays with the result — but displays are keyed by that string id, so a
+-- number never matched and `/ga remove` could not delete anything at all. A bare number is still
+-- accepted and matched against cfg.spellID, which is what the old form was reaching for.
 local function RemoveDisplay(arg)
-  local spellID = tonumber(arg)
-  if not spellID or not GA.db.displays[spellID] then
-    msg("no display for that spellID. |cffffd200/ga list|r to see them.")
+  local db = GA.db and GA.db.displays
+  if not db then return end
+  local key = arg and arg:match("^%s*(%S+)%s*$")
+  if not key then
+    msg("usage: |cffffd200/ga remove <id>|r — the id from |cffffd200/ga list|r (e.g. d11).")
     return
   end
-  GA.db.displays[spellID] = nil
-  if GA.Displays and GA.Displays.frames[spellID] then GA.Displays.frames[spellID]:Hide() end
-  msg("removed display " .. spellID .. ".")
+  local id = db[key] and key or nil
+  if not id then
+    local n = tonumber(key)
+    if n then
+      for k, cfg in pairs(db) do
+        if cfg.spellID == n then id = k; break end
+      end
+    end
+  end
+  if not id then
+    msg(("no display |cffffd200%s|r. |cffffd200/ga list|r to see them."):format(key))
+    return
+  end
+  local label = db[id].label or id
+  db[id] = nil
+  if GA.Displays and GA.Displays.frames then
+    local f = GA.Displays.frames[id]
+    if f then f:Hide(); GA.Displays.frames[id] = nil end
+  end
+  if GA.CDM and GA.CDM.Discover then GA.CDM:Discover() end
+  msg(("removed |cffffd200%s|r (%s)."):format(id, tostring(label)))
 end
 
 local function ListDisplays()
@@ -456,6 +480,17 @@ local function SlashHandler(input)
       msg("probe log cleared.")
     elseif GA.CDM and GA.CDM.Probe then
       GA.CDM:Probe(rest)
+    else
+      msg("CDM engine not ready yet.")
+    end
+  elseif cmd == "alertlog" then
+    if rest == "clear" then
+      if _G.GloomsAurasDB then _G.GloomsAurasDB.alertLog = nil end
+      msg("alert log cleared.")
+    elseif GA.CDM and GA.CDM.ToggleAlertLog then
+      local on = GA.CDM:ToggleAlertLog()
+      msg("CDM alert logging " .. (on and "|cff55ff55ON|r — fight for ~30s, then |cffffd200/reload|r."
+                                      or "|cffff5555OFF|r."))
     else
       msg("CDM engine not ready yet.")
     end

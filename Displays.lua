@@ -251,6 +251,45 @@ end
 -- Feed the source aura's live duration OBJECT so the bar drains itself (no polling). Resolved
 -- + validated secret-safely in CDM:BarDurationObject. No-op if the object isn't resolvable yet
 -- (e.g. a secret auraInstanceID in instances) — the bar just stays full rather than erroring.
+-- 12.1 MIRROR DRIVE. A duration OBJECT fed to SetTimerDuration animates itself; a mirrored
+-- SECRET value does not — SetValue paints one frame and stops. So while mirroring is active we
+-- re-copy Blizzard's value on an OnUpdate. Hidden frames don't receive OnUpdate, so this stops
+-- paying for itself the moment the display hides. 20fps is plenty for a bar and keeps the cost
+-- off the frame budget.
+local MIRROR_INTERVAL = 0.05
+function D:StopMirror(spellID)
+  local f = self.frames[spellID]
+  if f and f._mirrorOn then
+    if f.bar then f.bar:SetScript("OnUpdate", nil); f.bar.__latchMax = nil end
+    f._mirrorOn = nil
+  end
+end
+function D:StartMirror(spellID, cfg)
+  local f = self.frames[spellID]
+  if not (f and f.bar) or f._mirrorOn then return end
+  f._mirrorOn = true
+  local acc = 0
+  f.bar:SetScript("OnUpdate", function(bar, elapsed)
+    acc = acc + elapsed
+    if acc < MIRROR_INTERVAL then return end
+    acc = 0
+    if not GA.CDM or not GA.CDM.BarMirrorValues then return end
+    local v, lo, hi = GA.CDM:BarMirrorValues(cfg)
+    if v == nil then return end
+    -- nil max = the icon-frame fallback, which has no scale to offer. Latch the FIRST value seen
+    -- as the max: at that moment the aura has just been (re)applied, so it is the full duration.
+    -- Latching is assignment, not arithmetic, so it stays legal on a secret.
+    if hi == nil then
+      if bar.__latchMax == nil then bar.__latchMax = v end
+      lo, hi = 0, bar.__latchMax
+    end
+    pcall(function()
+      bar:SetMinMaxValues(lo or 0, hi or 1)
+      bar:SetValue(v)
+    end)
+  end)
+end
+
 function D:UpdateBar(spellID)
   local f = self.frames[spellID]; if not f or not f.bar then return end
   local cfg = self:Config(spellID); if not cfg or cfg.kind ~= "bar" then return end
@@ -283,7 +322,19 @@ function D:UpdateBar(spellID)
   else
     durObj = GA.CDM.BarDurationObject and GA.CDM:BarDurationObject(cfg)
   end
-  if not durObj then return end
+  if not durObj then
+    -- 12.1: no duration object exists while auras are secret. Fall back to mirroring the value
+    -- off Blizzard's own bar widget (CDM:BarMirrorValues). Unlike SetTimerDuration — which takes
+    -- an object and then self-animates — SetValue is a one-shot, so a mirrored bar has to be
+    -- re-fed; StartMirror drives that. Still no arithmetic: GetValue in, SetValue out.
+    if b.mode ~= "cd_dur" and GA.CDM.BarMirrorValues then
+      local v = GA.CDM:BarMirrorValues(cfg)
+      if v ~= nil then self:StartMirror(spellID, cfg); return end
+    end
+    self:StopMirror(spellID)
+    return
+  end
+  self:StopMirror(spellID)   -- a real duration object self-animates; the poll is not needed
   if not (Enum and Enum.StatusBarInterpolation and Enum.StatusBarTimerDirection and f.bar.SetTimerDuration) then return end
   local dir = (b.fill == "fill") and Enum.StatusBarTimerDirection.ElapsedTime
                                  or  Enum.StatusBarTimerDirection.RemainingTime
