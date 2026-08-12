@@ -161,6 +161,20 @@ local function SetupActiveProfile()
     MigrateToProfiles(g, charKey)   -- flat → profiles, one time
   end
   g.schema = DB_SCHEMA
+  -- Bar readout flags: THREE became TWO (2026-08-03). `showValue` used to mean "print the
+  -- stack count" but only in stacks mode, while the 12.1 duration engine needed its own gate
+  -- for the countdown — so the same field would have meant two different things depending on
+  -- mode. Now: `showTimer` = the countdown, `showStacks` = the count, on any bar. Runs over
+  -- EVERY profile, not just the active one, and is idempotent (it clears showValue as it goes).
+  for _, prof in pairs(g.profiles or {}) do
+    for _, cfg in pairs(prof.displays or {}) do
+      local b = cfg.bar
+      if b and b.showValue ~= nil then
+        if b.mode == "stacks" and b.showValue then b.showStacks = true end
+        b.showValue = nil
+      end
+    end
+  end
   local pkey = g.profileKeys[charKey] or charKey   -- default: this char's own profile
   if not g.profiles[pkey] then g.profiles[pkey] = NewProfile() end
   g.profileKeys[charKey] = pkey
@@ -343,6 +357,46 @@ local function RemoveDisplay(arg)
   msg(("removed |cffffd200%s|r (%s)."):format(id, tostring(label)))
 end
 
+-- /ga stacks <id> — toggle the stack-count readout on a DURATION bar. On 12.1 the count comes
+-- from the CDM frame's auraDataCached (CDM:BarStackValue); the fill is the engine's, this is the
+-- number over it. Slash-only for now — the Auras tab has no control for it yet.
+local function ToggleStacks(arg)
+  local db = GA.db and GA.db.displays
+  if not db then return end
+  local key = arg and arg:match("^%s*(%S+)%s*$")
+  if not key then
+    msg("usage: |cffffd200/ga stacks <id>|r — the id from |cffffd200/ga list|r (e.g. d10).")
+    return
+  end
+  local id = db[key] and key or nil
+  if not id then
+    local n = tonumber(key)
+    if n then
+      for k, cfg in pairs(db) do
+        if cfg.spellID == n then id = k; break end
+      end
+    end
+  end
+  if not id then
+    msg(("no display |cffffd200%s|r. |cffffd200/ga list|r to see them."):format(key))
+    return
+  end
+  local cfg = db[id]
+  if cfg.kind ~= "bar" then
+    msg(("|cffffd200%s|r is not a bar — stacks only apply to bar displays."):format(id))
+    return
+  end
+  cfg.bar = cfg.bar or {}
+  cfg.bar.showStacks = not cfg.bar.showStacks
+  if GA.Displays then
+    if GA.Displays.ApplyConfig then GA.Displays:ApplyConfig(id) end
+    if GA.Displays.UpdateBar then GA.Displays:UpdateBar(id) end
+  end
+  msg(("stack count on |cffffd200%s|r (%s) is now %s."):format(
+    id, tostring(cfg.label or "?"),
+    cfg.bar.showStacks and "|cff55ff55ON|r" or "|cffff5555OFF|r"))
+end
+
 local function ListDisplays()
   msg("displays:")
   local any = false
@@ -432,6 +486,7 @@ local function SlashHandler(input)
     print("  |cffffd200/ga minimap|r            — show/hide the minimap button")
     print("  |cffffd200/ga hidecdm|r            — hide/show Blizzard's Cooldown Manager")
     print("  |cffffd200/ga trace|r              — per-display trigger diagnostic")
+    print("  |cffffd200/ga auradur|r            — 12.1 duration-engine status")
     print("  |cffffd200/ga debug|r              — Cooldown Manager diagnostics")
     print("  |cffffd200/ga probe [filter]|r     — deep secret-safe signal dump → saved to file")
     print("  |cffffd200/ga capture|r            — movable CAPTURE button (click at each state)")
@@ -471,6 +526,12 @@ local function SlashHandler(input)
     if GA.CDM and GA.CDM.ReportCharges then GA.CDM:ReportCharges() else msg("CDM engine not ready yet.") end
   elseif cmd == "trace" then
     if GA.CDM and GA.CDM.Trace then GA.CDM:Trace() else msg("CDM engine not ready yet.") end
+  elseif cmd == "alerts" then
+    if GA.CDM and GA.CDM.ReportAlerts then GA.CDM:ReportAlerts() else msg("CDM engine not ready yet.") end
+  elseif cmd == "auradur" then
+    if GA.AuraDuration then GA.AuraDuration:Report(rest) else msg("duration engine not loaded.") end
+  elseif cmd == "stacks" then
+    ToggleStacks(rest)
   elseif cmd == "debug" then
     if GA.CDM and GA.CDM.Debug then GA.CDM:Debug() else msg("CDM engine not ready yet.") end
   elseif cmd == "probe" then

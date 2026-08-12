@@ -1,4 +1,4 @@
-## Interface: 120007
+## Interface: 120100
 ## Title: Gloom's Auras
 ## Notes: Custom textures + sounds mirrored from the Blizzard Cooldown Manager. Midnight secret-safe.
 ## Author: Gloom
@@ -18,10 +18,13 @@ Libs\CallbackHandler-1.0\CallbackHandler-1.0.lua
 Libs\LibSharedMedia-3.0\LibSharedMedia-3.0.lua
 Libs\LibCustomGlow-1.0\LibCustomGlow-1.0.lua
 
-# Load order: Core (namespace + slash router) → Displays (frames) → CDM (mirror
-# engine) → Config (registers the AURAS tab of the Suite window).
+# Load order: Core (namespace + slash router) → Displays (frames) → AuraDuration
+# (the 12.1 duration engine; the XML declares the AuraButton template it needs,
+# so it loads first) → CDM (mirror engine) → Config (the AURAS tab).
 Core.lua
 Displays.lua
+AuraDuration.xml
+AuraDuration.lua
 CDM.lua
 Media\TextureManifest.lua
 Config.lua

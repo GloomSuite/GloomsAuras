@@ -195,26 +195,78 @@ local function EnsureBar(f)
   bar.bg = bg
   -- Value text (stacks count). Its own FontString (NOT the shared name label) centred on the bar;
   -- fed the raw applications via SetText, which accepts a SECRET value (renders it in combat).
-  local vt = bar:CreateFontString(nil, "OVERLAY")
-  vt:SetPoint("CENTER", bar, "CENTER", 0, 0)
+  -- ⚠ The value text needs its own frame ABOVE the bar, not a FontString on the bar itself.
+  -- On 12.1 the duration engine anchors a Blizzard AuraButton over this bar to render the fill
+  -- (AuraDuration.lua), at bar level +1 — so anything drawn ON the bar is buried by the fill
+  -- whenever the bar is full. A FontString can never out-draw a higher FRAME level, no matter
+  -- its draw layer, so the text gets a frame of its own that outranks the button.
+  local top = CreateFrame("Frame", nil, bar)
+  top:SetAllPoints(bar)
+  top:SetFrameLevel(bar:GetFrameLevel() + 5)
+  bar.top = top
+  local vt = top:CreateFontString(nil, "OVERLAY")
+  vt:SetPoint("CENTER", top, "CENTER", 0, 0)
   vt:Hide()
   bar.valueText = vt
   f.bar = bar
   return bar
 end
 
+-- Where a bar READOUT sits. Shared by both of them: the stack count (GA's own FontString,
+-- below) and the countdown (a FontString the engine's AuraButton owns — AuraDuration.lua
+-- calls this too, so the two can never drift apart or land on top of each other by default).
+-- Anchors are inset a few px so text never kisses the bar's edge.
+local READOUT = {
+  CENTER = { "CENTER",       0,   0 },
+  LEFT   = { "LEFT",         5,   0 },
+  RIGHT  = { "RIGHT",       -5,   0 },
+  TOP    = { "TOP",          0,  -3 },
+  BOTTOM = { "BOTTOM",       0,   3 },
+}
+-- The fill texture a bar config asks for, as a PATH — or nil for "use the plain colour fill".
+-- ⚠ Resolve from CONFIG, never by reading a live bar's texture back with GetTexture(): that
+-- returns nil for a colour texture, and on 12.1 the engine can re-bind its own StatusBar and
+-- drop whatever we last pushed. Both the GA bar and the engine's overlay call this, so they
+-- can never disagree about what the fill should look like.
+-- cfg.bar.texture may be an LSM statusbar NAME (what /ga and older configs store) or a full
+-- path (what the texture picker hands back).
+function D:BarTexturePath(b)
+  local t = b and b.texture
+  if type(t) ~= "string" or t == "" then return nil end
+  return (LSM and LSM.Fetch and LSM:Fetch("statusbar", t, true)) or t
+end
+
+function D:AnchorReadout(fs, parent, anchor)
+  if not (fs and parent) then return end
+  local a = READOUT[anchor or "CENTER"] or READOUT.CENTER
+  fs:ClearAllPoints()
+  fs:SetPoint(a[1], parent, a[1], a[2], a[3])
+end
+
 function D:ApplyBarStyle(f, cfg)
   local bar = EnsureBar(f)
   local b = cfg.bar or {}
   -- Fill texture: an LSM statusbar name if set + resolvable, else our white fill.
-  if LSM and type(b.texture) == "string" and b.texture ~= "" and LSM.Fetch then
-    local path = LSM:Fetch("statusbar", b.texture, true)
-    bar:SetStatusBarTexture(path or bar.fill)
+  -- cfg.bar.texture may be an LSM statusbar NAME (what /ga and older configs store) or a
+  -- full PATH (what the Bar section's texture picker hands back, since the picker deals in
+  -- paths). Try the name first, fall back to treating it as a path, then to our white fill.
+  -- ⚠ Setting a PATH overwrites the texture object currently in the statusbar slot — which is
+  -- bar.fill, the colour texture created in EnsureBar. So handing bar.fill back later restores
+  -- an object whose texture is now a FILE, and the plain colour fill never comes back. Re-assert
+  -- the colour every time we fall back to it; that is what makes "Default" actually work.
+  local texPath = self:BarTexturePath(b)
+  if texPath then
+    bar:SetStatusBarTexture(texPath)
   else
     bar:SetStatusBarTexture(bar.fill)
+    bar.fill:SetColorTexture(1, 1, 1, 1)
   end
   bar:SetOrientation((b.orientation == "VERTICAL") and "VERTICAL" or "HORIZONTAL")
   bar:SetReverseFill(b.reverse and true or false)
+  -- Rotate the fill art with the bar. A gradient drawn for a horizontal bar reads wrong
+  -- stood on end, so a vertical bar usually wants this on — but it is a choice, not a
+  -- consequence, since a plain or symmetric texture looks the same either way.
+  if bar.SetRotatesTexture then bar:SetRotatesTexture(b.rotateTexture and true or false) end
   local oc = GA.COLOR and GA.COLOR.orange
   local col = b.color or (oc and { oc.r, oc.g, oc.b }) or { 1, 0.47, 0.16 }
   bar:SetStatusBarColor(col[1] or 1, col[2] or 1, col[3] or 1)
@@ -233,12 +285,22 @@ function D:ApplyBarStyle(f, cfg)
   -- Value text (stacks count) — its own font, shown only when the bar asks for it.
   local vt = bar.valueText
   if vt then
-    if b.showValue then
-      local font = (GA.FONT and GA.FONT.body) or (STANDARD_TEXT_FONT or "Fonts\\FRIZQT__.TTF")
-      if not GA.SetFontSafe(vt, font, b.valueSize or 14, "OUTLINE") then
-        GA.SetFontSafe(vt, STANDARD_TEXT_FONT or "Fonts\\FRIZQT__.TTF", b.valueSize or 14, "OUTLINE")
+    -- showStacks prints the stack count on ANY bar — a ramping DoT like Agony drains and
+    -- stacks at the same time. (It replaced the old mode-dependent `showValue`; Core.lua
+    -- migrates that at login.)
+    if b.showStacks then
+      -- cfg.bar.font is shared by BOTH readouts (see the Bar section) so a bar's numbers
+      -- always match each other; AuraDuration reads the same field for the countdown.
+      local font = b.font or (GA.FONT and GA.FONT.body) or (STANDARD_TEXT_FONT or "Fonts\\FRIZQT__.TTF")
+      local size = b.stackSize or b.valueSize or 14
+      if not GA.SetFontSafe(vt, font, size, "OUTLINE") then
+        GA.SetFontSafe(vt, STANDARD_TEXT_FONT or "Fonts\\FRIZQT__.TTF", size, "OUTLINE")
       end
-      vt:SetTextColor(1, 1, 1)
+      local sc = b.stackColor
+      vt:SetTextColor(sc and sc[1] or 1, sc and sc[2] or 1, sc and sc[3] or 1)
+      -- ★ Defaults to TOP, not CENTER — on a duration bar the countdown already owns the
+      -- centre, and two readouts defaulting to the same spot print one over the other.
+      self:AnchorReadout(vt, bar, b.stackAnchor or (b.mode == "stacks" and "CENTER" or "TOP"))
       vt:Show()
     else
       vt:Hide()
@@ -251,42 +313,27 @@ end
 -- Feed the source aura's live duration OBJECT so the bar drains itself (no polling). Resolved
 -- + validated secret-safely in CDM:BarDurationObject. No-op if the object isn't resolvable yet
 -- (e.g. a secret auraInstanceID in instances) — the bar just stays full rather than erroring.
--- 12.1 MIRROR DRIVE. A duration OBJECT fed to SetTimerDuration animates itself; a mirrored
--- SECRET value does not — SetValue paints one frame and stops. So while mirroring is active we
--- re-copy Blizzard's value on an OnUpdate. Hidden frames don't receive OnUpdate, so this stops
--- paying for itself the moment the display hides. 20fps is plenty for a bar and keeps the cost
--- off the frame budget.
-local MIRROR_INTERVAL = 0.05
-function D:StopMirror(spellID)
-  local f = self.frames[spellID]
-  if f and f._mirrorOn then
-    if f.bar then f.bar:SetScript("OnUpdate", nil); f.bar.__latchMax = nil end
-    f._mirrorOn = nil
-  end
-end
-function D:StartMirror(spellID, cfg)
-  local f = self.frames[spellID]
-  if not (f and f.bar) or f._mirrorOn then return end
-  f._mirrorOn = true
-  local acc = 0
-  f.bar:SetScript("OnUpdate", function(bar, elapsed)
-    acc = acc + elapsed
-    if acc < MIRROR_INTERVAL then return end
-    acc = 0
-    if not GA.CDM or not GA.CDM.BarMirrorValues then return end
-    local v, lo, hi = GA.CDM:BarMirrorValues(cfg)
-    if v == nil then return end
-    -- nil max = the icon-frame fallback, which has no scale to offer. Latch the FIRST value seen
-    -- as the max: at that moment the aura has just been (re)applied, so it is the full duration.
-    -- Latching is assignment, not arithmetic, so it stays legal on a secret.
-    if hi == nil then
-      if bar.__latchMax == nil then bar.__latchMax = v end
-      lo, hi = 0, bar.__latchMax
-    end
-    pcall(function()
-      bar:SetMinMaxValues(lo or 0, hi or 1)
-      bar:SetValue(v)
-    end)
+-- REMOVED 2026-08-03 — the Tracked-Bar MIRROR (StartMirror/StopMirror + CDM:BarMirrorValues).
+-- It polled a Blizzard Tracked-Bar frame's .Bar on an OnUpdate and copied the secret value
+-- across. It worked, but AuraContainer superseded it outright: the mirror required the user to
+-- add every aura to Blizzard's "Tracked Bars" list by hand (which also removes it from Tracked
+-- Buffs), and it became unreachable once the engine started attaching first. Full record in
+-- ~/GloomsHub/docs/FINDINGS.md §1 — do not rebuild it.
+
+-- The stack count on a DURATION bar (cfg.bar.showStacks). Kept separate from the fill: the
+-- engine owns the drain, we own the number. The value arrives as a SECRET on 12.1, so it goes
+-- straight into SetText — which renders a secret — and is never compared or formatted.
+function D:UpdateStackText(spellID, cfg)
+  local f = self.frames[spellID]; if not f or not f.bar then return end
+  local b = cfg.bar or {}
+  local vt = f.bar.valueText
+  if not vt or not b.showStacks then return end
+  if not (GA.CDM and GA.CDM.BarStackValue) then return end
+  local v = GA.CDM:BarStackValue(cfg)
+  if v == nil then vt:SetText("") return end
+  pcall(function()
+    if issecret(v) then vt:SetText(v)          -- SetText accepts the secret directly
+    else vt:SetText(tostring(v)) end
   end)
 end
 
@@ -306,7 +353,7 @@ function D:UpdateBar(spellID)
       f.bar:SetMinMaxValues(0, b.max or 10)
       f.bar:SetValue(v)
       local vt = f.bar.valueText
-      if vt and b.showValue then
+      if vt and b.showStacks then
         if issecret(v) then vt:SetText(v)              -- SetText accepts the secret directly
         else vt:SetText(tostring(v)) end               -- plain (out of combat)
       end
@@ -318,23 +365,43 @@ function D:UpdateBar(spellID)
   -- code — only the object's source differs (the source aura's remaining vs the spell's cooldown).
   local durObj
   if b.mode == "cd_dur" then
-    durObj = GA.CDM.CdDurationObject and GA.CDM:CdDurationObject(cfg.spellID)
+    -- Resolve through DisplaySpellID: a display built in the Auras tab keeps its spell in
+    -- the first trigger condition, not in cfg.spellID.
+    local cdSid = GA.CDM.DisplaySpellID and GA.CDM:DisplaySpellID(cfg) or cfg.spellID
+    durObj = cdSid and GA.CDM.CdDurationObject and GA.CDM:CdDurationObject(cdSid)
   else
     durObj = GA.CDM.BarDurationObject and GA.CDM:BarDurationObject(cfg)
   end
   if not durObj then
-    -- 12.1: no duration object exists while auras are secret. Fall back to mirroring the value
-    -- off Blizzard's own bar widget (CDM:BarMirrorValues). Unlike SetTimerDuration — which takes
-    -- an object and then self-animates — SetValue is a one-shot, so a mirrored bar has to be
-    -- re-fed; StartMirror drives that. Still no arithmetic: GetValue in, SetValue out.
-    if b.mode ~= "cd_dur" and GA.CDM.BarMirrorValues then
-      local v = GA.CDM:BarMirrorValues(cfg)
-      if v ~= nil then self:StartMirror(spellID, cfg); return end
+    -- 12.1 ROUTE: hand the bar to the AuraContainer engine, which renders the drain into
+    -- regions a Blizzard AuraButton owns (AuraDuration.lua). This is the ONLY route now —
+    -- the Tracked-Bar mirror that used to sit below was removed 2026-08-03.
+    if b.mode ~= "cd_dur" and GA.AuraDuration and GA.AuraDuration:Attach(spellID, f, cfg) then
+      -- ⚠ EMPTY OUR OWN FILL — but NOT while the editor is open. Once the engine drives
+      -- this bar it owns the fill, and leaving ours full underneath masks the drain
+      -- completely. In PREVIEW though there is usually no live aura, so the engine draws
+      -- nothing and a zeroed bar means the user is styling something invisible: texture,
+      -- colour and rotation all apply correctly and show nothing at all. Measured
+      -- 2026-08-03 — that is why picking a texture appeared to do nothing, while nudging a
+      -- slider "fixed" it (MakeSlider fires an extra ReapplySelected AFTER this, which
+      -- re-fills the bar). Keeping it full while forced makes the preview honest.
+      if not self.forced then pcall(function() f.bar:SetValue(0) end) end
+      -- Paint AFTER the attach: a re-parse can hand the slot a different button whose
+      -- regions have never been styled, and Attach clears the style fingerprint precisely
+      -- so this push is not skipped as redundant.
+      -- (An earlier version of this comment claimed the engine RESETS the region and wiped
+      -- our paint. That was disproved 2026-08-03 by reading the texture back — it always
+      -- returned what we last set. The real cause of "the texture does nothing" was the
+      -- preview blanking GA's own bar, fixed just above.)
+      if GA.AuraDuration.ApplyStyle then GA.AuraDuration:ApplyStyle(spellID, f, cfg) end
+      self:UpdateStackText(spellID, cfg)
+      return
     end
-    self:StopMirror(spellID)
+    -- No duration object and no engine attach: nothing can drive this bar. It keeps whatever
+    -- ApplyBarStyle last set rather than erroring — the usual cause is a bar with no
+    -- cfg.spellID, which Attach refuses outright.
     return
   end
-  self:StopMirror(spellID)   -- a real duration object self-animates; the poll is not needed
   if not (Enum and Enum.StatusBarInterpolation and Enum.StatusBarTimerDirection and f.bar.SetTimerDuration) then return end
   local dir = (b.fill == "fill") and Enum.StatusBarTimerDirection.ElapsedTime
                                  or  Enum.StatusBarTimerDirection.RemainingTime
@@ -371,6 +438,14 @@ function D:ApplyConfig(spellID)
     f.tex:Hide()
     if f.cd then f.cd:Hide() end
     self:ApplyBarStyle(f, cfg)
+    -- On 12.1 the visible fill of a duration bar belongs to the engine's button, not to
+    -- f.bar — so restyling f.bar alone changes nothing the user can see. Push the same
+    -- look onto the engine's region too (it no-ops unless this display is attached, and
+    -- defers itself if auras are currently secret).
+    if GA.AuraDuration and GA.AuraDuration.ApplyStyle then
+      GA.AuraDuration:ApplyStyle(spellID, f, cfg)
+    end
+    self:UpdateStackText(spellID, cfg)
   else
     -- Icon/texture display (default). Hide any bar child a kind-switch left behind.
     if f.bar then f.bar:Hide() end
@@ -463,6 +538,13 @@ function D:SetShown(spellID, value)
   if self.forced then return end
   local f = self.frames[spellID] or self:GetOrCreate(spellID)
   if f then pcall(f.SetShown, f, value) end
+  -- ⚠ The 12.1 duration engine draws into a button owned by the AuraContainer, not by this
+  -- frame — hiding `f` hides the label and the stack count but NOT the countdown, which keeps
+  -- drawing over nothing. Tell the engine to release its button too, or a hidden display
+  -- leaves a floating timer behind (seen after a mid-fight /reload, 2026-08-03).
+  if GA.AuraDuration and GA.AuraDuration.SetSlotActive then
+    GA.AuraDuration:SetSlotActive(spellID, value)
+  end
 end
 function D:Show(spellID) self:SetShown(spellID, true) end
 function D:Hide(spellID) self:SetShown(spellID, false) end

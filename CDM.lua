@@ -432,7 +432,7 @@ end
 -- Find a bar's source aura on its CDM item frame → returns (unit, auraInstanceID) or nil.
 -- Shared by every aura-reading bar mode (aura_dur duration, stacks count).
 function CDM:BarSource(cfg)
-  local sid = cfg and cfg.spellID
+  local sid = self:DisplaySpellID(cfg)   -- trigger-built displays carry no cfg.spellID
   if not sid then return nil end
   for frame, fsid in pairs(self.frameToSpell) do
     if fsid == sid and self.frameKind[frame] == "buff" then
@@ -452,53 +452,144 @@ function CDM:BarDurationObject(cfg)
   return GetAuraDurationObject(unit, aiid)
 end
 
--- 12.1 MIRROR PATH — the replacement for BarDurationObject when auras are secret.
--- `TESTED` 2026-08-03, PTR 12.1.0.68914, Agony on a training dummy: a Tracked-Bar item frame's
--- `.Bar` returns GetValue()/GetMinMaxValues() as SECRET numbers WITHOUT throwing, and
--- StatusBar:SetValue / SetMinMaxValues both ACCEPT those secrets from tainted code — where
--- Cooldown:SetCooldownDuration refuses them (plain number accepted, secret refused, same call).
--- So we never obtain a duration: we let Blizzard compute the countdown in its secure context and
--- copy the rendered value across. No arithmetic, no comparison, no instance-id API.
--- ⚠ Requires the aura to be in Blizzard's "Tracked Bars" list — that is where `.Bar` comes from.
--- Returns (value, min, max) or nil.
-function CDM:BarMirrorValues(cfg)
-  local sid = cfg and cfg.spellID
-  if not sid then return nil end
+-- REMOVED 2026-08-03 — CDM:BarMirrorValues, the Tracked-Bar mirror. It read a Blizzard
+-- Tracked-Bar frame's `.Bar` (GetValue/GetMinMaxValues return SECRETs that StatusBar:SetValue
+-- accepts) and copied the value across on an OnUpdate. It worked and is superseded: the mirror
+-- needed the user to add each aura to Blizzard's "Tracked Bars" list by hand, which also takes
+-- it out of Tracked Buffs, whereas AuraContainer needs no CDM configuration at all. The icon-
+-- frame fallback it carried was a dead end regardless — GetCooldownDuration returns the TOTAL,
+-- not the remaining, so a bar fed from it pins full and never drains (TESTED twice).
+-- Full record in ~/GloomsHub/docs/FINDINGS.md §1. Do not rebuild it.
+
+-- Which sound TIMINGS a spell can actually produce, keyed by the values the Sounds dropdown
+-- stores. Blizzard's CDM only fires the alert types GetValidAlertTypes lists for that cooldown,
+-- so anything absent here is a trigger that can never fire — the Auras tab greys those out.
+--
+-- ⚠ Returns nil when it CANNOT be determined (no CDM frame discovered yet, API missing, secret
+-- cooldownID). nil means "grey out nothing": an unknown must never be shown to the user as a
+-- definite no. `TESTED` 2026-08-03 — Unstable Affliction reports no PandemicTime (it stacks, so
+-- it has no refresh window), which is why the owner's UA pandemic sound could never play.
+-- The spell a display actually tracks. `cfg.spellID` is set by /ga add and /ga bar, but a display
+-- created through the Auras tab has NO cfg.spellID at all — its spell lives in the first trigger
+-- condition. `TESTED` 2026-08-03: the owner's Unstable Affliction and Corruption displays are both
+-- of that shape, which is why anything keyed on cfg.spellID silently did nothing for them.
+-- Recurses, because a trigger node is either a LEAF or a nested GROUP of conditions.
+function CDM:DisplaySpellID(cfg)
+  if not cfg then return nil end
+  if cfg.spellID then return cfg.spellID end
+  local function firstLeaf(node)
+    if type(node) ~= "table" then return nil end
+    if node.conditions then
+      for _, c in ipairs(node.conditions) do
+        local r = firstLeaf(c)
+        if r then return r end
+      end
+      return nil
+    end
+    return node.spellID
+  end
+  return firstLeaf(cfg.trigger)
+end
+
+function CDM:ValidAlerts(spellID)
+  local A = Enum and Enum.CooldownViewerAlertEventType
+  if not (A and spellID and C_CooldownViewer and C_CooldownViewer.GetValidAlertTypes) then return nil end
+  local function fromCooldownID(cdid)
+    if cdid == nil or issecret(cdid) then return nil end
+    local ok, types = pcall(C_CooldownViewer.GetValidAlertTypes, cdid)
+    if not (ok and type(types) == "table") then return nil end
+    local set = {}
+    for _, t in ipairs(types) do set[t] = true end
+    return {
+      trigger   = (set[A.OnAuraApplied] or set[A.Available]) and true or false,
+      untrigger = set[A.OnAuraRemoved] and true or false,
+      pandemic  = set[A.PandemicTime] and true or false,
+    }
+  end
+
+  -- 1 · A bound CDM item frame, if there is one — cheapest and most direct.
   for frame, fsid in pairs(self.frameToSpell) do
-    if fsid == sid then
-      local b = frame.Bar
-      if b and b.GetValue and b.GetMinMaxValues then
-        local ok, v = pcall(b.GetValue, b)
-        if ok and v ~= nil then
-          local ok2, lo, hi = pcall(b.GetMinMaxValues, b)
-          if ok2 and hi ~= nil then return v, lo, hi end
-        end
+    if fsid == spellID and frame.GetCooldownID then
+      local ok0, cdid = pcall(frame.GetCooldownID, frame)
+      if ok0 then
+        local r = fromCooldownID(cdid)
+        if r then return r end
       end
     end
   end
-  -- FALLBACK: no `.Bar` means the spell sits in Tracked BUFFS, not Tracked Bars, so there is no
-  -- Blizzard bar to mirror. The icon frame still owns a Cooldown widget, and `TESTED` 2026-08-03
-  -- its GetCooldownDuration returns a SECRET number that StatusBar:SetValue accepts.
-  -- ⚠ UNKNOWN whether that number is REMAINING or TOTAL — it is secret, so it cannot be read to
-  -- find out. Returning nil for max tells the caller to latch the first value as the scale; the
-  -- bar then answers the question by behaviour: remaining drains, total pins it full.
-  for frame, fsid in pairs(self.frameToSpell) do
-    if fsid == sid and frame.GetCooldownFrame then
-      local ok, cdf = pcall(frame.GetCooldownFrame, frame)
-      -- GetCooldownDuration was `TESTED` 2026-08-03 and is the TOTAL: mirrored to a bar it pins
-      -- full and never moves. GetCooldownDisplayDuration is the remaining candidate — by name,
-      -- the value Blizzard is currently DISPLAYING rather than the configured length. Untested.
-      if ok and cdf then
-        for _, m in ipairs({ "GetCooldownDisplayDuration", "GetCooldownDuration" }) do
-          if cdf[m] then
-            local ok2, d = pcall(cdf[m], cdf)
-            if ok2 and d ~= nil then return d, 0, nil end
-          end
+
+  -- 2 · ⚠ FALL BACK TO THE REGISTRY, which needs no frame at all. Frame binding is not
+  -- dependable — `TESTED` 2026-08-03, the CDM never bound an already-applied aura across 52
+  -- re-poll passes — so requiring a bound frame made this return "don't know", and the Sounds
+  -- section then correctly greyed out nothing. The category sets are plain config and always
+  -- readable. InfoMatchesSpell covers override / overrideTooltip / linked IDs, so a display
+  -- tracking an override still resolves to the right cooldown entry.
+  local E = Enum and Enum.CooldownViewerCategory
+  if not (E and C_CooldownViewer.GetCooldownViewerCategorySet
+          and C_CooldownViewer.GetCooldownViewerCooldownInfo) then return nil end
+  for _, cat in ipairs({ E.Essential, E.Utility, E.TrackedBuff, E.TrackedBar }) do
+    local ids = cat and C_CooldownViewer.GetCooldownViewerCategorySet(cat)
+    if type(ids) == "table" then
+      for _, id in ipairs(ids) do
+        if InfoMatchesSpell(C_CooldownViewer.GetCooldownViewerCooldownInfo(id), spellID) then
+          local r = fromCooldownID(id)
+          if r then return r end
         end
       end
     end
   end
   return nil
+end
+
+-- /ga alerts — what GetValidAlertTypes ACTUALLY reports per tracked display. The question it
+-- settles: does the API distinguish a spell that never fires pandemic (Unstable Affliction) from
+-- one that does (Agony, Haunt)? FINDINGS §10 proves UA emits no pandemic EVENTS; whether the API
+-- also omits it from the valid-types LIST is a separate claim, and the Sounds greying rests on it.
+function CDM:ReportAlerts()
+  local A = Enum and Enum.CooldownViewerAlertEventType
+  if not A then GA.msg("Enum.CooldownViewerAlertEventType missing."); return end
+  local db = GA.db and GA.db.displays
+  if not db then GA.msg("no displays."); return end
+  GA.msg("valid alert types per display:")
+  local NAMES = { [A.OnAuraApplied] = "apply", [A.OnAuraRemoved] = "remove",
+                  [A.Available] = "ready", [A.OnCooldown] = "oncd",
+                  [A.PandemicTime] = "PANDEMIC" }
+  for id, cfg in pairs(db) do
+    local sid = self:DisplaySpellID(cfg)
+    if sid then
+      local r = self:ValidAlerts(sid)
+      local raw = "?"
+      -- Re-resolve the cooldownID the same way ValidAlerts does, purely to print the raw list.
+      local E = Enum and Enum.CooldownViewerCategory
+      if E and C_CooldownViewer and C_CooldownViewer.GetCooldownViewerCategorySet then
+        for _, cat in ipairs({ E.Essential, E.Utility, E.TrackedBuff, E.TrackedBar }) do
+          local ids = cat and C_CooldownViewer.GetCooldownViewerCategorySet(cat)
+          if type(ids) == "table" then
+            for _, cid in ipairs(ids) do
+              if InfoMatchesSpell(C_CooldownViewer.GetCooldownViewerCooldownInfo(cid), sid) then
+                local ok, types = pcall(C_CooldownViewer.GetValidAlertTypes, cid)
+                if ok and type(types) == "table" then
+                  local parts = {}
+                  for _, t in ipairs(types) do parts[#parts + 1] = NAMES[t] or ("?" .. tostring(t)) end
+                  raw = ("cd=%d [%s]"):format(cid, table.concat(parts, ","))
+                else
+                  raw = ("cd=%d <call failed>"):format(cid)
+                end
+                break
+              end
+            end
+          end
+          if raw ~= "?" then break end
+        end
+      end
+      print(("  |cffffd200%s|r %s (spell %s)  →  %s"):format(
+        tostring(id), tostring(cfg.label or "?"), tostring(sid),
+        r and ("trigger=%s untrigger=%s pandemic=%s"):format(
+          tostring(r.trigger), tostring(r.untrigger), tostring(r.pandemic))
+          or "|cffff5555not determined|r"))
+      print("      raw: " .. raw)
+    end
+  end
 end
 
 -- The live cooldown duration object for a spell (cd_dur mode), or nil when the spell is READY.
@@ -517,13 +608,37 @@ end
 -- (both AllowedWhenTainted, so they render a secret). PLAIN out of combat. nil if unresolved.
 function CDM:BarStackValue(cfg)
   local unit, aiid = self:BarSource(cfg)
-  if not unit or not UnitExists(unit) then return nil end
-  local val
-  pcall(function()
-    local data = C_UnitAuras.GetAuraDataByAuraInstanceID(unit, aiid)
-    if data ~= nil and not issecret(data) then val = data.applications end
-  end)
-  return val
+  if unit and UnitExists(unit) then
+    local val
+    pcall(function()
+      local data = C_UnitAuras.GetAuraDataByAuraInstanceID(unit, aiid)
+      if data ~= nil and not issecret(data) then val = data.applications end
+    end)
+    if val ~= nil then return val end
+  end
+
+  -- 12.1 FALLBACK. The call above THROWS whenever auras are secret (FINDINGS §1), so on 12.1 it
+  -- never returns anything in combat. But the CDM item frame keeps `auraDataCached` — a plain,
+  -- NON-secret table describing the aura that frame is currently showing. Reading a field off it
+  -- is not an instance-ID API call and does not throw; `.applications` comes back as a SECRET
+  -- number, which SetText and StatusBar:SetValue both accept (same secret-passing rule the
+  -- duration engine relies on). This is how ArcUI keeps stack counts alive on 12.1.
+  --
+  -- ⚠ ONLY legal against the frame's OWN current aura. auraDataCached describes what that frame
+  -- is showing right now — never an arbitrary or cross-spell aura instance — so it must be read
+  -- off the frame we matched by spellID, which is exactly what this loop does.
+  local sid = self:DisplaySpellID(cfg)   -- trigger-built displays carry no cfg.spellID
+  if not sid then return nil end
+  for frame, fsid in pairs(self.frameToSpell) do
+    if fsid == sid and self.frameKind[frame] == "buff" then
+      local cached = frame.auraDataCached
+      if cached ~= nil and not issecret(cached) then
+        local ok, applications = pcall(function() return cached.applications end)
+        if ok and applications ~= nil then return applications end
+      end
+    end
+  end
+  return nil
 end
 
 -- Re-feed every SHOWN bar's duration object. Called on UNIT_AURA (catches DoT refresh/extension)
@@ -603,6 +718,18 @@ function CDM:RepollBuffPresence(silent)
   end
   if changed then self:RefreshDisplays(silent) end
 end
+
+-- ⚠ DO NOT try to recover an ALREADY-APPLIED aura here after a /reload. `TESTED` 2026-08-03
+-- over 52 re-poll passes on a mid-combat reload with four DoTs live on the target: the CDM
+-- NEVER binds an auraInstanceID to its item frame for an aura applied before the reload, and
+-- frame:IsActive() returns a plain, non-secret FALSE throughout. There is nothing to read —
+-- GA is faithfully mirroring a Cooldown Manager that has no record of the aura. Three fixes
+-- were attempted here and all three failed for that reason. The display recovers the moment
+-- the aura is re-applied, which is when the CDM finally binds it.
+--
+-- If this is ever worth solving, the route is NOT this function: Blizzard's AuraContainer
+-- DOES repopulate correctly after a reload (its countdown came back when the CDM mirror did
+-- not), so the engine's own slot is a working presence oracle. See AuraDuration.lua.
 
 -- Coalesce a burst of UNIT_AURA into one next-frame re-poll — and next-frame so the CDM has
 -- already updated its item frames' auraInstanceID for the new aura/target before we read them.
@@ -1241,7 +1368,8 @@ function CDM:UpdateCooldowns()
   local db = GA.db and GA.db.displays
   if not db then return end
   for id, cfg in pairs(db) do            -- per DISPLAY (a spell may back several)
-    if self.kind[cfg.spellID] == "cooldown" then GA.Displays:UpdateCooldown(id) end
+    local sid = self:DisplaySpellID(cfg)
+    if sid and self.kind[sid] == "cooldown" then GA.Displays:UpdateCooldown(id) end
   end
 end
 

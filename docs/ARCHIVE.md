@@ -654,3 +654,126 @@ real proc is **aura-only (no matching cooldown entry)**; a cooldown-buff appears
   (borderless inputs, lighter button font, Blend/Strata **dropdowns**, inline Choose, Spell-ID icon search,
   Title Case), the **docked side-panel drawer** for the editors, and fixed the **Black Arrow / 1-charge
   cooldown** tracking bug. All QA'd, committed, pushed. **No open bugs.** Next: Groups + Profiles Phase 1.
+
+
+---
+
+## Archived 2026-08-12 from HANDOFF.md — superseded blocks
+
+> Moved here by the handoff ritual: HANDOFF.md was 695 lines against its own ~450 rule.
+> **Nothing was deleted.** Both blocks below are settled history. The 2026-08-03 duration
+> record is superseded by the 2026-08-12 BUILT block and by `~/GloomsHub/docs/FINDINGS.md`
+> §1; the Tracked-Bar mirror it describes has since been deleted from the codebase. The
+> Auras-tab layout rework is complete and owner-QA'd — kept only for its reasoning.
+
+> ## ▶▶ 2026-08-03 — 12.1 DURATION BARS ARE SOLVED. The route is `AuraContainer`.
+> **The suite-wide record lives in `~/GloomsHub/docs/FINDINGS.md` §1 (the ANSWERED block) and §10.
+> Read those; they are not restated here.** What follows is GA-specific only.
+>
+> **Corrected, and repeated in this file until today:** *"the owner's Warlock profile is genuinely
+> broken."* **It is not.** Every display in it triggers on presence, and all four DoTs were watched
+> on screen in combat — lighting on application, following target swaps, clearing on expiry. The
+> sticky-value risk flagged at `CDM.lua:550` was predicted again and **did not occur**, tested on
+> target debuffs (the harder case than the Hunter's player buffs).
+>
+> **What is genuinely lost on 12.1:** reading duration/stacks. Every instance-ID call throws.
+> **What is recoverable:** the visible countdown, via `AuraContainer` — Blizzard renders it into
+> regions the aura BUTTON owns and GA never touches a number.
+>
+> ### Code that landed here 2026-08-03 (uncommitted work is now committed; QA state varies)
+> | Change | State |
+> |---|---|
+> | `Core.lua` — **`/ga remove` fixed.** It did `tonumber(arg)` against string-keyed displays, so it could **never delete anything**. Now takes the `d11`-style id `/ga list` prints, still accepts a spellID. | owner-QA'd |
+> | `Config.lua` — `/ga bar` **staggers** each new bar 34px below the last instead of stacking them all at `CENTER 0,-120`. | owner-QA'd |
+> | `CDM.lua` — **`spec=?` fixed** (falls back to the spec ID when 12.1 returns an empty name). | fixed, low risk |
+> | `CDM.lua` + `Core.lua` — **`/ga alertlog`**, a new diagnostic recording every CDM alert event as it ARRIVES and at each filter that drops it. Off by default; resets on `/reload`; capped at 400 lines. | owner-QA'd, produced FINDINGS §10 |
+> | `CDM.lua` — `/ga probe` gained `cdframe:`, `playerAura:`, `barwidget:` and `durRemaining:` lines. Probe-only. **The StatusBar it creates is pooled and hidden — deliberately NOT the leaking pattern the charge probe still has.** | owner-QA'd |
+> | `CDM:BarMirrorValues` + `Displays.lua` `StartMirror`/`StopMirror` — the **Tracked-Bar mirror**. Works, drains correctly. **Superseded by `AuraContainer` and not yet decided on — see backlog item 1.** | works, fate undecided |
+>
+> ⚠ **The mirror's icon-frame fallback is a dead end and is documented as such in the code.** Both
+> `GetCooldownDuration` and `GetCooldownDisplayDuration` on the icon frame's Cooldown widget return
+> the **total**, not the remaining — mirrored to a bar they pin full and never move. Tested twice.
+> Don't retry it.
+
+
+> ## ▶▶ THE AURAS TAB LAYOUT REWORK IS DONE — QA'd by the owner, 2026-07-25.
+> Suite to-do item 1 is closed. Every step below was verified in-game by the owner before the next
+> one started. **Do not re-litigate these; they are settled decisions, not defaults.**
+>
+> **What the tab is now:** a flush-left **240 rail** (shared `UI.tabHeader` · the shared
+> `UI.profileBlock`, permanently visible · the GROUPS & AURAS tree · the buttons that act on the
+> selection) beside an **editor pane that fills the rest** of the 860×626 container. The old
+> centred 620 column, with ~120px of dead margin each side, is gone.
+>
+> **The six things that changed, and why they can't be undone casually:**
+> 1. **The landing splash is RETIRED** — `ga_logo_full.png` is no longer drawn anywhere. The tab
+>    opens straight onto the last-edited aura. `C:SelectInitial` replaced the landing/editor mode
+>    switch; `C:UpdateEmptyState` covers the only state the splash genuinely carried ("no auras yet").
+> 2. **The editor's big aura-NAME banner is GONE** (the owner: "a waste of space and, more
+>    importantly, confusing and nonintuitive"). Renaming is a RAIL action — the Rename button or a
+>    double-click on the row — through the shared `UI.nameDialog`. It renames `cfg.label` only; the
+>    on-screen text an aura draws is still `cfg.text.str`, deliberately separate.
+> 3. **Profiles moved OUT of their drawer** into the rail's top, so the rail reads down the real
+>    hierarchy: profile → groups → auras.
+> 4. **★ GROUPS ARE A FIRST-CLASS SELECTION.** Clicking a group's NAME selects it and its settings
+>    fill the editor pane exactly as an aura's do; the caret alone collapses. That retired the ⚙ gear,
+>    the Manage Group drawer, AND the green "Group: <name>" button (the owner: "extraordinarily
+>    confusing" — it read as a status label but was an action, and sat nowhere near the group it
+>    named). An aura's group is now a dropdown at the top of the aura pane. Groups also SHOW what
+>    they do: dimmed + "(off)" when switched off, an orange dot when they carry a load rule.
+> 5. **The Trigger section is a bracketed tree.** Every operand — a condition card OR a whole group
+>    box — is inset the same 52px from its container's left edge and 14 from its right; the gutter
+>    holds a bracket tying each pair, with an AND/OR/**NOR** chip on it. See the trigger notes below.
+> 6. **Delete Aura CONFIRMS** (and Delete Group, and Delete Trigger Group). It used to delete on the
+>    click with no undo — the owner caught it mid-rework. CONTRACTS §4 requires the shared modal.
+>
+> **`SKIN_NEEDS` is now MINOR 4** (`Config.lua` ~line 41) — GA calls `UI.tabHeader`. Bumped in the
+> same commit, per CONTRACTS §6. **GA is no longer the tab without a header.**
+>
+> **FOUR DRAWERS ARE DELETED** — Manage Group, Visibility, Text and Glow. The accordion and the group
+> pane replaced them; nothing opened the last two at all. What REMAINS drawer-based is correct and
+> deliberate: the spell/trigger picker, the texture picker, the sound picker and the font picker,
+> which are transient pick-one-thing windows. `Config.lua` chunk locals went **193 → ~170 of Lua's
+> 200** as a result — the most headroom this file has had in months. Spend it carefully.
+>
+> ### ⚠ THE TRAP THAT COST THIS SESSION A BUILD FAILURE — READ BEFORE DELETING ANY BLOCK
+> Deleting the Visibility drawer orphaned `PlayerSpecs()`, a module-local that happened to live
+> inside it and is still called by the inline Load Conditions block. The call silently became a nil
+> GLOBAL, `BuildTab` threw on first show, and because the shell calls `build(container)` BEFORE
+> showing and focusing, **the entire tab came up blank with no tab highlighted** — not just the
+> broken section. **`luac -p` cannot catch this** (calling an undefined global is valid Lua). The
+> check that does, in one line — run it after ANY block deletion:
+> ```
+> luac -l Config.lua | grep -oE '_ENV "[A-Za-z_][A-Za-z0-9_]*"' | sort -u
+> ```
+> Diff that against a known-good revision. Anything a deletion orphaned appears as a NEW global.
+> (Against the pre-rework commit, GA's list now differs only by `GetNumSpecializations` /
+> `GetSpecializationInfo` — real WoW APIs — so nothing else was lost with the ~400 deleted lines.)
+>
+> ### Settled UI facts from this session
+> - **Suite button language:** 22px tall, Title Case, GeneralSans-Medium 11 (flatButton's own
+>   default — do NOT `setFont` over it), heroic @0.2 for secondary actions, the ONE create action in
+>   purple @0.35. Delete keeps red @0.3. GA's 28px ALL-CAPS semibold buttons predated the suite.
+> - **Carets** are the shared `UI.CARET` at 9×9 tinted `COLOR.orange` — list rows AND section
+>   headers. GA's own `Media/triangle.png` is no longer drawn.
+> - **★ Eye icons are WHITE art** (`Media/hidden.png` / `unhidden.png`, re-exported by the owner).
+>   `SetVertexColor` MULTIPLIES, so coloured art can only darken — the old purple #936bff tinted
+>   orange came out #873F15, a muddy brown. **Never re-bake a colour into those two files.** The eye
+>   reports `selected OR preview`, the same rule `Displays:RefreshForced` draws by, so a selected
+>   aura reads as visible without being toggled.
+> - **The retired Figma mocks are NOT the spec any more** (the owner, 2026-07-25: "the mocks no
+>   longer matter and are now hopelessly out of date... I'd prefer the suite be consistent with
+>   itself"). GB and Overlays are the reference. `EDITOR_W` is 560, not the old 360 column.
+> - **Trigger bracket rule:** the vertical must show a stub above and below the operator label
+>   roughly as tall as the label itself. Encoded as a relationship, not a number
+>   (`bite = (3·chip − gap)/2`), which lands the arms on each card's centre line.
+> - **NONE renders as "NOR", never "AND NOT"** — NONE negates both sides equally, while "AND NOT"
+>   reads as "the first thing and not the second". Per-condition negation never needs a chip: the
+>   state pill already carries it ("INACTIVE on You", "ON COOLDOWN", "CHARGES NOT MAX").
+> - **The rail tree's scrollbar is NOT `UI.makeScrollbar`** — that shared widget drives a real
+>   ScrollFrame, and the tree is a fixed pool of rows windowed by `listOffset` (group headers and
+>   auras are different row kinds, so the pool stays). It's a track+thumb driven by the offset,
+>   orange, in the rail's right margin, shown only when the entries exceed `LIST_ROWS`.
+> - **Measure in the same units as the owner.** Two rounds of "make the bracket read better" missed
+>   because his mock files render at ~2.5× the game's pixels. When he gives a px number, convert it,
+>   or better, ask for the RULE (he gave one — "stub ≈ label height" — and it landed first try).

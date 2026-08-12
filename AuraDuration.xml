@@ -1,0 +1,33 @@
+<Ui xmlns="http://www.blizzard.com/wow/ui/">
+  <!-- ══════════════════════════════════════════════════════════════════════
+       The AuraButton template for the 12.1 duration engine. GA ships no other
+       XML; this file exists ONLY because SetDurationBar / SetDurationText
+       refuse any region the button does not OWN. An addon-created StatusBar is
+       rejected outright, so the regions have to be declared here as children of
+       the button template and reached via parentKey inside initializeFrame.
+
+       Two owned regions, deliberately on SEPARATE frames:
+         GloomBar       — the fill the engine drains, overlaid on the display's
+                          own bar so every GA appearance option still applies.
+         GloomTextHolder/GloomTimer — the countdown, on its own frame so its
+                          FRAME LEVEL can be raised above the bar without
+                          reparenting the FontString (reparenting detaches the
+                          duration binding — see AuraDuration.lua).
+       ══════════════════════════════════════════════════════════════════════ -->
+  <Button name="GloomAuraDurButtonTemplate" virtual="true">
+    <Frames>
+      <StatusBar parentKey="GloomBar" setAllPoints="true"/>
+      <Frame parentKey="GloomTextHolder" setAllPoints="true">
+        <Layers>
+          <Layer level="OVERLAY">
+            <FontString parentKey="GloomTimer" inherits="NumberFontNormal" justifyH="CENTER">
+              <Anchors>
+                <Anchor point="CENTER" x="0" y="0"/>
+              </Anchors>
+            </FontString>
+          </Layer>
+        </Layers>
+      </Frame>
+    </Frames>
+  </Button>
+</Ui>

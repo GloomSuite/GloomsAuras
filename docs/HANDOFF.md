@@ -1,116 +1,55 @@
-# GloomsAuras — Session Handoff  (last updated 2026-08-03)
+# GloomsAuras — Session Handoff  (last updated 2026-08-12)
 
-> ## ▶▶ 2026-08-03 — 12.1 DURATION BARS ARE SOLVED. The route is `AuraContainer`.
-> **The suite-wide record lives in `~/GloomsHub/docs/FINDINGS.md` §1 (the ANSWERED block) and §10.
-> Read those; they are not restated here.** What follows is GA-specific only.
+> ## ▶▶▶ 2026-08-12 — DURATION BARS ARE BUILT AND OWNER-QA'd. Read this before the 08-03 block.
+> **The suite-wide record is `~/GloomsHub/docs/FINDINGS.md` §1 (the SHIPPED block) and §10. Read
+> those; they are not restated here.** GA-specific detail follows.
 >
-> **Corrected, and repeated in this file until today:** *"the owner's Warlock profile is genuinely
-> broken."* **It is not.** Every display in it triggers on presence, and all four DoTs were watched
-> on screen in combat — lighting on application, following target swaps, clearing on expiry. The
-> sticky-value risk flagged at `CDM.lua:550` was predicted again and **did not occur**, tested on
-> target debuffs (the harder case than the Hunter's player buffs).
+> ### The two new files
+> **`AuraDuration.lua` + `AuraDuration.xml`** — GA's first XML, and it exists only because
+> `SetDurationBar`/`SetDurationText` refuse any region the AuraButton does not OWN. The four rules
+> that make the engine work are written at the top of the `.lua`; **read them before touching it.**
+> `/ga auradur` reports counters (attach / initFired / style applied-skipped-deferred-threw), and
+> `/ga auradur debug` logs each paint. Those counters are the only instrument — the failures here
+> are silent.
 >
-> **What is genuinely lost on 12.1:** reading duration/stacks. Every instance-ID call throws.
-> **What is recoverable:** the visible countdown, via `AuraContainer` — Blizzard renders it into
-> regions the aura BUTTON owns and GA never touches a number.
+> ### What the Bar section looks like now
+> A new accordion section, **"Bar Fill & Readouts"**, between Appearance and Text. Bars previously
+> had **no editor UI at all**. It carries: fill mode · direction · texture (+ **Clear**) · bar colour
+> · orientation (which SWAPS width/height) · background · reverse fill · rotate texture · both
+> readouts with independent position / colour / size · a shared font · Stacks Max (hidden outside
+> stacks mode). `Config.lua`'s main chunk stayed at **173 of Lua's 200 locals** — every local in the
+> builder is function-scoped on purpose. **Check that count after any edit to this file.**
 >
-> ### Code that landed here 2026-08-03 (uncommitted work is now committed; QA state varies)
-> | Change | State |
-> |---|---|
-> | `Core.lua` — **`/ga remove` fixed.** It did `tonumber(arg)` against string-keyed displays, so it could **never delete anything**. Now takes the `d11`-style id `/ga list` prints, still accepts a spellID. | owner-QA'd |
-> | `Config.lua` — `/ga bar` **staggers** each new bar 34px below the last instead of stacking them all at `CENTER 0,-120`. | owner-QA'd |
-> | `CDM.lua` — **`spec=?` fixed** (falls back to the spec ID when 12.1 returns an empty name). | fixed, low risk |
-> | `CDM.lua` + `Core.lua` — **`/ga alertlog`**, a new diagnostic recording every CDM alert event as it ARRIVES and at each filter that drops it. Off by default; resets on `/reload`; capped at 400 lines. | owner-QA'd, produced FINDINGS §10 |
-> | `CDM.lua` — `/ga probe` gained `cdframe:`, `playerAura:`, `barwidget:` and `durRemaining:` lines. Probe-only. **The StatusBar it creates is pooled and hidden — deliberately NOT the leaking pattern the charge probe still has.** | owner-QA'd |
-> | `CDM:BarMirrorValues` + `Displays.lua` `StartMirror`/`StopMirror` — the **Tracked-Bar mirror**. Works, drains correctly. **Superseded by `AuraContainer` and not yet decided on — see backlog item 1.** | works, fate undecided |
+> ### Config keys that changed
+> **`cfg.bar.showValue` is RETIRED.** Two flags now: **`showTimer`** (the engine's countdown) and
+> **`showStacks`** (the count, on any bar). `Core.lua`'s login path migrates old configs across
+> **every profile**, and it is idempotent. New keys: `timerAnchor`/`stackAnchor`,
+> `timerColor`/`stackColor`, `timerSize`/`stackSize`, `font`, `rotateTexture`.
 >
-> ⚠ **The mirror's icon-frame fallback is a dead end and is documented as such in the code.** Both
-> `GetCooldownDuration` and `GetCooldownDisplayDuration` on the icon frame's Cooldown widget return
-> the **total**, not the remaining — mirrored to a bar they pin full and never move. Tested twice.
-> Don't retry it.
-
-
-> ## ▶▶ THE AURAS TAB LAYOUT REWORK IS DONE — QA'd by the owner, 2026-07-25.
-> Suite to-do item 1 is closed. Every step below was verified in-game by the owner before the next
-> one started. **Do not re-litigate these; they are settled decisions, not defaults.**
+> ### ★ `CDM:DisplaySpellID` — use it, never `cfg.spellID`
+> A display created in the Auras tab has **no `cfg.spellID`**; its spell lives in the first trigger
+> condition. That silently disabled anything keyed on `cfg.spellID` — bars built in the UI could
+> never get a duration, and the sound warning never fired for Unstable Affliction. The resolver is
+> wired into `AuraDuration:Attach`, `CandidateSpellIDs`, `BarSource`, `BarStackValue` and the
+> `cd_dur` feed. ⚠ **This last change is the one thing from the session the owner never tested.**
 >
-> **What the tab is now:** a flush-left **240 rail** (shared `UI.tabHeader` · the shared
-> `UI.profileBlock`, permanently visible · the GROUPS & AURAS tree · the buttons that act on the
-> selection) beside an **editor pane that fills the rest** of the 860×626 container. The old
-> centred 620 column, with ~120px of dead margin each side, is gone.
+> ### Deleted, do not rebuild
+> The Tracked-Bar mirror — `CDM:BarMirrorValues`, `Displays:StartMirror`/`StopMirror`. It worked but
+> required the user to add each aura to Blizzard's Tracked Bars by hand. Both files carry a comment
+> saying so.
 >
-> **The six things that changed, and why they can't be undone casually:**
-> 1. **The landing splash is RETIRED** — `ga_logo_full.png` is no longer drawn anywhere. The tab
->    opens straight onto the last-edited aura. `C:SelectInitial` replaced the landing/editor mode
->    switch; `C:UpdateEmptyState` covers the only state the splash genuinely carried ("no auras yet").
-> 2. **The editor's big aura-NAME banner is GONE** (the owner: "a waste of space and, more
->    importantly, confusing and nonintuitive"). Renaming is a RAIL action — the Rename button or a
->    double-click on the row — through the shared `UI.nameDialog`. It renames `cfg.label` only; the
->    on-screen text an aura draws is still `cfg.text.str`, deliberately separate.
-> 3. **Profiles moved OUT of their drawer** into the rail's top, so the rail reads down the real
->    hierarchy: profile → groups → auras.
-> 4. **★ GROUPS ARE A FIRST-CLASS SELECTION.** Clicking a group's NAME selects it and its settings
->    fill the editor pane exactly as an aura's do; the caret alone collapses. That retired the ⚙ gear,
->    the Manage Group drawer, AND the green "Group: <name>" button (the owner: "extraordinarily
->    confusing" — it read as a status label but was an action, and sat nowhere near the group it
->    named). An aura's group is now a dropdown at the top of the aura pane. Groups also SHOW what
->    they do: dimmed + "(off)" when switched off, an orange dot when they carry a load rule.
-> 5. **The Trigger section is a bracketed tree.** Every operand — a condition card OR a whole group
->    box — is inset the same 52px from its container's left edge and 14 from its right; the gutter
->    holds a bracket tying each pair, with an AND/OR/**NOR** chip on it. See the trigger notes below.
-> 6. **Delete Aura CONFIRMS** (and Delete Group, and Delete Trigger Group). It used to delete on the
->    click with no undo — the owner caught it mid-rework. CONTRACTS §4 requires the shared modal.
+> ### Two traps this session paid for, in GA's own code
+> - **The editor preview blanks GA's bar.** `UpdateBar` calls `f.bar:SetValue(0)` on a successful
+>   attach so the engine's fill isn't masked — but NOT while `Displays.forced` (the panel is open),
+>   or the user styles an invisible bar. Removing that guard re-creates a three-theory bug.
+> - **`MakeSlider` labels have a 66px budget** — the "−" button is pinned at x=70. "Countdown Size"
+>   ran underneath it. Keep slider labels short, like every other one in the tab.
 >
-> **`SKIN_NEEDS` is now MINOR 4** (`Config.lua` ~line 41) — GA calls `UI.tabHeader`. Bumped in the
-> same commit, per CONTRACTS §6. **GA is no longer the tab without a header.**
->
-> **FOUR DRAWERS ARE DELETED** — Manage Group, Visibility, Text and Glow. The accordion and the group
-> pane replaced them; nothing opened the last two at all. What REMAINS drawer-based is correct and
-> deliberate: the spell/trigger picker, the texture picker, the sound picker and the font picker,
-> which are transient pick-one-thing windows. `Config.lua` chunk locals went **193 → ~170 of Lua's
-> 200** as a result — the most headroom this file has had in months. Spend it carefully.
->
-> ### ⚠ THE TRAP THAT COST THIS SESSION A BUILD FAILURE — READ BEFORE DELETING ANY BLOCK
-> Deleting the Visibility drawer orphaned `PlayerSpecs()`, a module-local that happened to live
-> inside it and is still called by the inline Load Conditions block. The call silently became a nil
-> GLOBAL, `BuildTab` threw on first show, and because the shell calls `build(container)` BEFORE
-> showing and focusing, **the entire tab came up blank with no tab highlighted** — not just the
-> broken section. **`luac -p` cannot catch this** (calling an undefined global is valid Lua). The
-> check that does, in one line — run it after ANY block deletion:
-> ```
-> luac -l Config.lua | grep -oE '_ENV "[A-Za-z_][A-Za-z0-9_]*"' | sort -u
-> ```
-> Diff that against a known-good revision. Anything a deletion orphaned appears as a NEW global.
-> (Against the pre-rework commit, GA's list now differs only by `GetNumSpecializations` /
-> `GetSpecializationInfo` — real WoW APIs — so nothing else was lost with the ~400 deleted lines.)
->
-> ### Settled UI facts from this session
-> - **Suite button language:** 22px tall, Title Case, GeneralSans-Medium 11 (flatButton's own
->   default — do NOT `setFont` over it), heroic @0.2 for secondary actions, the ONE create action in
->   purple @0.35. Delete keeps red @0.3. GA's 28px ALL-CAPS semibold buttons predated the suite.
-> - **Carets** are the shared `UI.CARET` at 9×9 tinted `COLOR.orange` — list rows AND section
->   headers. GA's own `Media/triangle.png` is no longer drawn.
-> - **★ Eye icons are WHITE art** (`Media/hidden.png` / `unhidden.png`, re-exported by the owner).
->   `SetVertexColor` MULTIPLIES, so coloured art can only darken — the old purple #936bff tinted
->   orange came out #873F15, a muddy brown. **Never re-bake a colour into those two files.** The eye
->   reports `selected OR preview`, the same rule `Displays:RefreshForced` draws by, so a selected
->   aura reads as visible without being toggled.
-> - **The retired Figma mocks are NOT the spec any more** (the owner, 2026-07-25: "the mocks no
->   longer matter and are now hopelessly out of date... I'd prefer the suite be consistent with
->   itself"). GB and Overlays are the reference. `EDITOR_W` is 560, not the old 360 column.
-> - **Trigger bracket rule:** the vertical must show a stub above and below the operator label
->   roughly as tall as the label itself. Encoded as a relationship, not a number
->   (`bite = (3·chip − gap)/2`), which lands the arms on each card's centre line.
-> - **NONE renders as "NOR", never "AND NOT"** — NONE negates both sides equally, while "AND NOT"
->   reads as "the first thing and not the second". Per-condition negation never needs a chip: the
->   state pill already carries it ("INACTIVE on You", "ON COOLDOWN", "CHARGES NOT MAX").
-> - **The rail tree's scrollbar is NOT `UI.makeScrollbar`** — that shared widget drives a real
->   ScrollFrame, and the tree is a fixed pool of rows windowed by `listOffset` (group headers and
->   auras are different row kinds, so the pool stays). It's a track+thumb driven by the offset,
->   orange, in the rail's right margin, shown only when the entries exceed `LIST_ROWS`.
-> - **Measure in the same units as the owner.** Two rounds of "make the bracket read better" missed
->   because his mock files render at ~2.5× the game's pixels. When he gives a px number, convert it,
->   or better, ask for the RULE (he gave one — "stub ≈ label height" — and it landed first try).
+> ### ⚠ Known limitation, closed as not-our-bug
+> **A display does not come back after a mid-combat `/reload`** until the aura is re-applied. The CDM
+> never re-binds an already-applied aura to its item frame — `TESTED` over 52 passes. Three fixes
+> were attempted in `RepollBuffPresence` and all failed; the function carries a comment. **Do not
+> attempt a fourth there.** FINDINGS §1 names the only viable route if it ever matters.
 
 > **SUITE UPDATE (2026-07-24, Phase D):** the options panel now renders ONLY as the AURAS
 > tab of the Suite window (GloomsHub — hard dependency; standalone window + minimap button
@@ -161,13 +100,16 @@ Two GA-specific things worth knowing before touching that code:
 
 ## ⚠ READ THIS BEFORE ANY DoT / DURATION WORK
 
-**12.1 makes aura instance IDs SECRET in combat, and every read call throws.** GA keeps aura
-*presence* but loses duration, stacks and expiry — silently, with a clean BugSack. That is
-`TESTED`, and it invalidates the duration/countdown direction the parked items below assume.
+**12.1 makes aura instance IDs SECRET in combat, and every read call throws.** GA can never READ a
+duration. That is `TESTED` and permanent.
 
-**Do not build on the DoT-duration path without reading `~/GloomsHub/docs/FINDINGS.md` §1 first.**
-It is the suite's biggest open item and needs a design decision (`AuraContainer` vs combat-log
-tracking vs presence-only degradation), not a patch.
+~~It is the suite's biggest open item and needs a design decision.~~ **CLOSED 2026-08-12 — the
+design decision was made and BUILT.** GA now DISPLAYS durations and stacks without reading them, via
+`AuraDuration.lua` (the engine) and `frame.auraDataCached` (stacks). See the block at the top of
+this file and `~/GloomsHub/docs/FINDINGS.md` §1.
+
+**The rule that still stands: never try to obtain the number.** Every fix on this path works by
+handing a sink something Blizzard computed, or by letting Blizzard render into a region it owns.
 
 **★ But know how far it actually reaches, proven 2026-07-26 (`~/GloomsHub/docs/FINDINGS.md` §7).**
 Only the **data** path is dead. A display that triggers on presence — `buff_active`,
@@ -187,6 +129,10 @@ first thing to check if presence ever does go sticky.
 ---
 
 ## The `/ga probe` diagnostic — one bug left (2026-07-26, half fixed 2026-08-03)
+
+⚠ **The owner explicitly deprioritised this on 2026-08-12.** It is a dev tool, it cannot bite
+a Warlock, and he does not want it raised unless it affects normal play. Fix it silently if you
+are already in the file.
 
 Dev-tool only, no user impact — but this probe is the instrument the whole 12.1 investigation runs
 on, and a misleading instrument costs more than a cosmetic bug should. Both were `TESTED`.

@@ -623,7 +623,11 @@ end
 local openDropdownMenu
 -- Redesign dropdown (Figma): a heroic-50% pill (28px tall) with a centred two-weight
 -- label — Regular "Prefix:" + Semibold value — opening a list below.
-local function MakeDropdown(parent, x, yOff, w, prefix, values, get, set)
+-- `isDisabled(value)` (optional) greys an individual OPTION and makes its click a no-op — for
+-- choices that exist in general but cannot work for the current selection (a sound timing the
+-- spell never emits). Greyed, not hidden: "this exists but not for this spell" is more useful
+-- than an option that silently isn't there.
+local function MakeDropdown(parent, x, yOff, w, prefix, values, get, set, isDisabled)
   local H = COLOR.heroic
   prefix = (prefix or ""):gsub("%s+$", "")
   local b = flatButton(parent, w, 28, H, "", 11); b:SetBase(0.5); b:SetPoint("TOPLEFT", x, yOff)
@@ -636,13 +640,25 @@ local function MakeDropdown(parent, x, yOff, w, prefix, values, get, set)
   menu:SetPoint("TOPLEFT", b, "BOTTOMLEFT", 0, -2)
   menu:SetFrameLevel((parent:GetFrameLevel() or 1) + 20)  -- draw above the rows below
   skinPlate(menu); addEdges(menu, COLOR.rim, 1); menu:Hide()
+  local items = {}
   for i, v in ipairs(values) do
     local item = flatButton(menu, w - 8, 20, H, v[2], 12); item:SetBase(0.12)
     item:SetPoint("TOPLEFT", 4, -4 - (i - 1) * 22)
+    items[i] = item
     item:SetScript("OnClick", function()
+      if isDisabled and isDisabled(v[1]) then return end   -- unavailable: swallow the click
       menu:Hide(); openDropdownMenu = nil
       set(v[1]); refreshLabel(); ReapplySelected()
     end)
+  end
+  local function refreshItems()
+    if not isDisabled then return end
+    for i, v in ipairs(values) do
+      local off = isDisabled(v[1])
+      if items[i] and items[i].text then
+        items[i].text:SetTextColor(off and MUTE.r or 1, off and MUTE.g or 1, off and MUTE.b or 1)
+      end
+    end
   end
   b:SetScript("OnClick", function()
     if menu:IsShown() then menu:Hide(); openDropdownMenu = nil
@@ -651,9 +667,9 @@ local function MakeDropdown(parent, x, yOff, w, prefix, values, get, set)
       menu:Show(); openDropdownMenu = menu
     end
   end)
-  refreshLabel()
+  refreshLabel(); refreshItems()
   local row = {}
-  function row:refresh() refreshLabel() end
+  function row:refresh() refreshLabel(); refreshItems() end
   function row:setEnabled(on) b:SetEnabled(on); if not on then menu:Hide() end end
   return row
 end
@@ -786,7 +802,7 @@ function C:AddBar(arg)
   local barcfg = { mode = mode }
   if mode == "stacks" then
     barcfg.max = tonumber(maxTok and maxTok:match("%d+")) or 10
-    barcfg.showValue = true                          -- show the live count number on the bar
+    barcfg.showStacks = true                         -- show the live count number on the bar
   end
   local id = NewDisplayID()
   -- Stagger each new bar below the last one. Every `/ga bar` used to land on the same CENTER
@@ -1263,7 +1279,12 @@ local function BuildTexturePicker()
   return f
 end
 
-local function OpenTexturePicker(onPick, current)
+-- `only` (optional) LOCKS the picker to one category key. Used by the Bar section, which
+-- can only accept a statusbar fill: spell icons and aura shapes are real textures the
+-- picker will happily hand back, but stretched across a bar they are nonsense. Offering
+-- choices that cannot work is worse than offering fewer — so the category button is
+-- disabled rather than the wrong pick being explained away afterwards.
+local function OpenTexturePicker(onPick, current, only)
   texPickerOnPick = onPick
   texCurrentTex = current
   if not texPickerFrame then
@@ -1271,7 +1292,8 @@ local function OpenTexturePicker(onPick, current)
     if not ok then GA.msg("|cffff5555texture picker failed to build|r: " .. tostring(err)); return end
   end
   if texCatMenu then texCatMenu:Hide() end
-  SetTexCat(texCurrentCat or DEFAULT_TEX_CAT)
+  if texCatButton then texCatButton:SetEnabled(not only) end
+  SetTexCat(only or texCurrentCat or DEFAULT_TEX_CAT)
   CloseSubWindows(texPickerFrame)
   DockRight(texPickerFrame)
   texPickerFrame:Show(); texPickerFrame:Raise()
@@ -2216,6 +2238,10 @@ function C:BuildEditor(editor)
   -- Icon-aura sections. Appearance is inline; the rest bridge to their drawers for now.
   C:AccordionAddSection("trigger", "Aura Trigger(s)", 120, function(ct) C:BuildTriggerSection(ct) end)
   C:AccordionAddSection("appearance", "Appearance, Position & Size", 310, function(ct) C:BuildAppearanceSection(ct) end)
+  -- Bar sits next to Appearance because it IS the appearance of a bar aura. It stays in the
+  -- accordion for every aura (the accordion is built once, not per selection) and gates its
+  -- own controls off cfg.kind, the same way Text handles auras with nothing to label.
+  C:AccordionAddSection("bar", "Bar Fill & Readouts", 428, function(ct) C:BuildBarSection(ct) end)
   C:AccordionAddSection("text", "Text", 285, function(ct) C:BuildTextSection(ct) end)
   C:AccordionAddSection("effects", "Effects & Motion", 78, function(ct) C:BuildEffectsSection(ct) end)
   C:AccordionAddSection("sounds", "Sounds", 72, function(ct) C:BuildSoundSection(ct) end)
@@ -3027,9 +3053,50 @@ function C:BuildSoundSection(ct)
   -- The "Play:" timing dropdown — only meaningful with a sound set, so its enabled state
   -- follows both the selection AND whether a sound is chosen.
   local ON = { { "trigger", "When it triggers" }, { "untrigger", "When it wears off" }, { "pandemic", "Pandemic window" } }
+  -- Blizzard's CDM only fires the alert types a spell actually offers, so a timing it never
+  -- emits is a sound that can never play — silently. Unstable Affliction is the live example:
+  -- it stacks, so it has no pandemic refresh window and emits no PandemicTime at all.
+  -- nil from ValidAlerts = "not determined" and must grey out NOTHING.
+  local function alertOff(v)
+    local c = Cfg()
+    -- ⚠ NOT c.spellID. A display created in this tab keeps its spell in the first trigger
+    -- condition and has no cfg.spellID at all — the owner's Unstable Affliction is exactly
+    -- that shape, and reading cfg.spellID here silently disabled the whole feature for it.
+    local sid = c and GA.CDM and GA.CDM.DisplaySpellID and GA.CDM:DisplaySpellID(c)
+    if not (sid and GA.CDM.ValidAlerts) then return false end
+    -- ⚠ PANDEMIC ONLY. GetValidAlertTypes is NOT a reliable predictor for the other two:
+    -- measured 2026-08-03 via `/ga alerts`, Agony's entry reports ONLY [PANDEMIC], so trusting
+    -- it would grey out "When it triggers" and "When it wears off" for a spell whose apply and
+    -- remove sounds work fine. Silently removing working options is worse than offering an
+    -- option that does nothing.
+    --
+    -- The pandemic column, by contrast, matches FINDINGS §10's observed events exactly across
+    -- all four of the owner's DoTs — Agony/Haunt/Corruption true and firing, UA false and
+    -- silent — and both lookup paths agree on it where they disagree elsewhere. So gate that
+    -- one, and only that one, until there is evidence for the rest.
+    if v ~= "pandemic" then return false end
+    local ok = GA.CDM:ValidAlerts(sid)
+    return (ok ~= nil) and (ok.pandemic == false) or false
+  end
   local onRow = MakeDropdown(ct, COL2_X, -3, COL_W, "Play:", ON,
     function() local c = Cfg(); return (c and c.sound and c.sound.on) or "trigger" end,
-    function(v) local c = Cfg(); if c and c.sound then c.sound.on = v end end)
+    function(v) local c = Cfg(); if c and c.sound then c.sound.on = v end end,
+    alertOff)
+  -- Greying the menu only helps someone opening it. A timing already SET to something
+  -- impossible needs saying out loud, or the aura just stays quiet and looks broken.
+  local warn = newText(ct, FONT.body, 11, { r = 1, g = 0.35, b = 0.35 }, "LEFT")
+  warn:SetPoint("TOPLEFT", 2, -56); warn:SetWidth(EDITOR_W - 4); warn:SetJustifyH("LEFT")
+  warn:Hide()
+  local function refreshWarn()
+    local c = Cfg()
+    local cur = c and c.sound and c.sound.on or "trigger"
+    if c and c.sound and alertOff(cur) then
+      warn:SetText("This spell never emits that signal, so the sound can never play. Pick another timing.")
+      warn:Show()
+    else
+      warn:Hide()
+    end
+  end
   local function refreshOnEnabled() local c = Cfg(); onRow:setEnabled((c and c.sound) and true or false) end
 
   sb:SetScript("OnClick", function()
@@ -3037,7 +3104,7 @@ function C:BuildSoundSection(ct)
     OpenSoundPicker(function(item)
       if item.file then c.sound = c.sound or {}; c.sound.file = item.file; c.sound.name = item.name; c.sound.channel = "Master"
       else c.sound = nil end
-      sb:SetText(soundLabel()); onRow:refresh(); refreshOnEnabled()
+      sb:SetText(soundLabel()); onRow:refresh(); refreshOnEnabled(); refreshWarn()
     end, c.sound and c.sound.file)
   end)
   local tb = flatButton(ct, 52, 22, COLOR.heroic, "Test", 12); tb:SetBase(0.4); tb:SetPoint("LEFT", sb, "RIGHT", 8, 0)
@@ -3047,8 +3114,252 @@ function C:BuildSoundSection(ct)
   hint:SetText("Triggers = when the aura is applied (no re-fire on target swap). Pandemic works for DoT/debuff auras.")
 
   rows[#rows + 1] = {
-    refresh = function() sb:SetText(soundLabel()); onRow:refresh(); refreshOnEnabled() end,
+    refresh = function() sb:SetText(soundLabel()); onRow:refresh(); refreshOnEnabled(); refreshWarn() end,
     setEnabled = function(_, on) sb:SetEnabled(on); tb:SetEnabled(on); if on then refreshOnEnabled() else onRow:setEnabled(false) end end,
+  }
+end
+
+-- The Bar section — everything specific to a kind=="bar" display: what the fill MEANS,
+-- which way it travels, how it is painted, and the two readouts that can sit on it.
+--
+-- ⚠ On 12.1 GA does NOT draw a duration bar's fill. AuraDuration.lua overlays a Blizzard
+-- AuraButton and the ENGINE renders the drain into a region that button owns, because an
+-- addon can no longer read a remaining duration at all (FINDINGS §1). The consequence for
+-- this UI: restyling f.bar alone changes NOTHING the user can see, because f.bar's own fill
+-- is emptied the moment the engine attaches. Every control here therefore routes through
+-- Displays:ApplyConfig → AuraDuration:ApplyStyle, which re-pushes the look onto the region
+-- the BUTTON owns. That is only legal out of combat (the button is forbidden while auras
+-- are secret), so in-combat edits queue and land on PLAYER_REGEN_ENABLED. The hint says so,
+-- because a control that looks broken for ten seconds costs more trust than one that explains
+-- itself — and "I changed orientation and nothing happened" is exactly how this was caught.
+--
+-- ★ Every local here is function-scoped ON PURPOSE. Config.lua's main chunk sits at 173 of
+-- Lua's 200 locals; a new chunk-level local in this file is a real cost, and overflowing it
+-- blanks the whole tab rather than just this section (see docs/HANDOFF.md).
+function C:BuildBarSection(ct)
+  local mine = {}
+  local function add(r) if r then mine[#mine + 1] = r end; return r end
+  -- Reads must NOT seed cfg.bar — viewing a non-bar aura may not give it a bar table.
+  local function get() local c = Cfg(); return c and c.bar end
+  local function ensure() local c = Cfg(); if not c then return nil end; c.bar = c.bar or {}; return c.bar end
+  local function repaint()
+    ReapplySelected()
+    if GA.Displays and GA.Displays.UpdateBar and selectedID then GA.Displays:UpdateBar(selectedID) end
+  end
+
+  -- Row 1 — what the fill means, and which way it goes.
+  local MODES = { { "aura_dur", "Aura Duration" }, { "cd_dur", "Cooldown" }, { "stacks", "Stack Count" } }
+  add(MakeDropdown(ct, 0, 0, COL_W, "Fill shows: ", MODES,
+    function() local b = get(); return (b and b.mode) or "aura_dur" end,
+    function(v)
+      local b = ensure(); if not b then return end
+      b.mode = v
+      -- Leaving duration mode must RELEASE the engine slot, or its button keeps
+      -- painting a drain over a bar that now means something else entirely.
+      if GA.AuraDuration and selectedID then GA.AuraDuration:Detach(selectedID) end
+      repaint()
+    end))
+
+  local DIRS = { { "drain", "Drains down" }, { "fill", "Fills up" } }
+  add(MakeDropdown(ct, COL2_X, 0, COL_W, "Direction: ", DIRS,
+    function() local b = get(); return (b and b.fill == "fill") and "fill" or "drain" end,
+    function(v) local b = ensure(); if b then b.fill = (v == "fill") and "fill" or nil; repaint() end end))
+
+  -- Row 2 — the fill's texture and colour.
+  local function texName(p)
+    if type(p) ~= "string" or p == "" then return "Default" end
+    return p:match("([^\\/]+)%.%w+$") or p:match("([^\\/]+)$") or p
+  end
+  local tb = flatButton(ct, 200, 28, COLOR.heroic, "", 11); tb:SetBase(0.5); tb.text:Hide()
+  tb:SetPoint("TOPLEFT", 0, -38)
+  local tLbl = twoWeightLabel(tb, 11)
+  tb:SetScript("OnClick", function()
+    local b = get(); if not b then return end
+    -- ⚠ OpenTexturePicker hands back the PATH ITSELF, not a row table (Config.lua:1244
+    -- calls texPickerOnPick(self.item.tex)). Treating it as a table indexes a string,
+    -- which yields nil WITHOUT erroring — so every pick silently wrote nothing at all.
+    OpenTexturePicker(function(path)
+      local b2 = ensure(); if not b2 then return end
+      b2.texture = (type(path) == "string" and path ~= "") and path or nil
+      tLbl:Set("Texture:", texName(b2.texture)); repaint()
+    end, b.texture, "lsm")   -- locked to Shared Media (bars): nothing else works as a fill
+  end)
+  -- The texture picker has no "None" row (the SOUND picker does), so a bar texture was a
+  -- one-way door once set. This is the way back to the plain colour fill.
+  -- ⚠ Labelled "Clear", NOT "Default". It sits immediately after "Texture: <name>", where the
+  -- owner read "Default" as a STATUS — the texture's current value — rather than as an action.
+  -- Same trap the retired green "Group: <name>" button fell into (see HANDOFF): a control
+  -- beside a value label MUST read as a verb, or it looks like part of the label.
+  local xb = flatButton(ct, 62, 28, COLOR.heroic, "Clear", 11); xb:SetBase(0.2)
+  xb:SetPoint("LEFT", tb, "RIGHT", 8, 0)
+  xb:SetScript("OnClick", function()
+    local b2 = ensure(); if not b2 then return end
+    b2.texture = nil
+    tLbl:Set("Texture:", texName(nil)); repaint()
+  end)
+  if UI.attachTip then
+    UI.attachTip(xb, "Clear Texture", "Remove the fill texture and go back to a plain colour bar.")
+  end
+  add({ refresh = function() local b = get(); tLbl:Set("Texture:", texName(b and b.texture)) end,
+        setEnabled = function(_, on) tb:SetEnabled(on); xb:SetEnabled(on) end })
+
+  add(MakeColor(ct, COL2_X, -41,
+    function() local b = get(); return b and b.color end,
+    function(v) local b = ensure(); if b then b.color = v end end, "Bar Color"))
+
+  -- Row 3 — orientation and the backdrop behind the fill.
+  local ORIENT = { { "HORIZONTAL", "Horizontal" }, { "VERTICAL", "Vertical" } }
+  -- Changing the axis SWAPS width and height. A 220×24 bar stood on end is 220 tall and 24
+  -- wide — which is what the user meant, and making them go and swap two sliders by hand to
+  -- get there is busywork. Only fires when the axis actually changes, so re-picking the
+  -- current orientation is a no-op rather than a silent flip.
+  add(MakeDropdown(ct, 0, -76, COL_W, "Orientation: ", ORIENT,
+    function() local b = get(); return (b and b.orientation == "VERTICAL") and "VERTICAL" or "HORIZONTAL" end,
+    function(v)
+      local c = Cfg(); local b = ensure(); if not (b and c) then return end
+      local wasVert = (b.orientation == "VERTICAL")
+      local nowVert = (v == "VERTICAL")
+      b.orientation = nowVert and "VERTICAL" or nil
+      if wasVert ~= nowVert then
+        c.width, c.height = (c.height or 24), (c.width or 220)
+        -- The Width/Height sliders live in the Appearance section and hold stale numbers
+        -- until something tells them otherwise.
+        for _, r in ipairs(rows) do if r.refresh then r:refresh() end end
+      end
+      repaint()
+    end))
+
+  add(MakeColor(ct, COL2_X, -79,
+    function() local b = get(); return b and b.bg end,
+    function(v) local b = ensure(); if b then b.bg = v end end, "Background"))
+
+  -- Row 4 — reverse fill.
+  local rLbl = newText(ct, FONT.body, 11, { r = 1, g = 1, b = 1 }, "LEFT")
+  rLbl:SetPoint("TOPLEFT", 0, -116); rLbl:SetText("Reverse Fill")
+  local rTog = makeToggle(ct,
+    function() local b = get(); return (b and b.reverse) == true end,
+    function(v) local b = ensure(); if b then b.reverse = v or nil; repaint() end end)
+  rTog:SetPoint("TOPLEFT", 94, -114)
+  add({ refresh = function() rTog:refresh() end, setEnabled = function(_, on) rTog:SetEnabled(on) end })
+
+  -- Rotate Texture — StatusBar:SetRotatesTexture. Without it a gradient drawn for a
+  -- horizontal bar stays horizontal when the bar is stood on end, which is what makes a
+  -- textured vertical bar look wrong. Not automatic from Orientation: a plain or
+  -- symmetric fill looks identical either way, so it stays the user's call.
+  local roLbl = newText(ct, FONT.body, 11, { r = 1, g = 1, b = 1 }, "LEFT")
+  roLbl:SetPoint("TOPLEFT", COL2_X, -116); roLbl:SetText("Rotate Texture")
+  local roTog = makeToggle(ct,
+    function() local b = get(); return (b and b.rotateTexture) == true end,
+    function(v) local b = ensure(); if b then b.rotateTexture = v or nil; repaint() end end)
+  roTog:SetPoint("TOPLEFT", COL2_X + 108, -114)
+  add({ refresh = function() roTog:refresh() end, setEnabled = function(_, on) roTog:SetEnabled(on) end })
+
+  -- ── THE TWO READOUTS ────────────────────────────────────────────────────────
+  -- They come from different places and are styled through different code paths — the
+  -- countdown is a FontString the ENGINE's AuraButton owns (AuraDuration:ApplyStyle), the
+  -- stack count is GA's own (Displays:ApplyBarStyle) — but they land on the same bar, so
+  -- they share one anchor vocabulary via Displays:AnchorReadout. Left to themselves both
+  -- defaulted to CENTER and printed on top of each other; Stacks now defaults to Top.
+  local ANCHORS = { { "CENTER", "Center" }, { "TOP", "Top" }, { "BOTTOM", "Bottom" },
+                    { "LEFT", "Left" }, { "RIGHT", "Right" } }
+
+  local cLbl = newText(ct, FONT.body, 11, { r = 1, g = 1, b = 1 }, "LEFT")
+  cLbl:SetPoint("TOPLEFT", 0, -152); cLbl:SetText("Countdown Text")
+  local cTog = makeToggle(ct,
+    function() local b = get(); return (b and b.showTimer) == true end,
+    function(v) local b = ensure(); if b then b.showTimer = v or nil; repaint() end end)
+  cTog:SetPoint("TOPLEFT", 108, -150)
+  add({ refresh = function() cTog:refresh() end, setEnabled = function(_, on) cTog:SetEnabled(on) end })
+
+  local sLbl = newText(ct, FONT.body, 11, { r = 1, g = 1, b = 1 }, "LEFT")
+  sLbl:SetPoint("TOPLEFT", COL2_X, -152); sLbl:SetText("Stack Count")
+  local sTog = makeToggle(ct,
+    function() local b = get(); return (b and b.showStacks) == true end,
+    function(v) local b = ensure(); if b then b.showStacks = v or nil; repaint() end end)
+  sTog:SetPoint("TOPLEFT", COL2_X + 88, -150)
+  add({ refresh = function() sTog:refresh() end, setEnabled = function(_, on) sTog:SetEnabled(on) end })
+
+  add(MakeDropdown(ct, 0, -186, COL_W, "Countdown at: ", ANCHORS,
+    function() local b = get(); return (b and b.timerAnchor) or "CENTER" end,
+    function(v) local b = ensure(); if b then b.timerAnchor = v; repaint() end end))
+  add(MakeDropdown(ct, COL2_X, -186, COL_W, "Stacks at: ", ANCHORS,
+    function() local b = get(); return (b and b.stackAnchor) or "TOP" end,
+    function(v) local b = ensure(); if b then b.stackAnchor = v; repaint() end end))
+
+  add(MakeColor(ct, 0, -225,
+    function() local b = get(); return b and b.timerColor end,
+    function(v) local b = ensure(); if b then b.timerColor = v end end, "Countdown Color"))
+  add(MakeColor(ct, COL2_X, -225,
+    function() local b = get(); return b and b.stackColor end,
+    function(v) local b = ensure(); if b then b.stackColor = v end end, "Stacks Color"))
+
+  -- ⚠ SLIDER LABELS HAVE A 66px BUDGET. MakeSlider pins its "−" button at x=70 and the
+  -- label starts at x=4, so anything longer runs underneath the button — which is exactly
+  -- what "Countdown Size" and "Stack Count Size" did. Every other slider in this tab is
+  -- short for the same reason ("Alpha %", "Width", "Stacks Max"). Keep these two short.
+  add(MakeSlider(ct, -256, "Timer Size", 8, 32, 1,
+    function() local b = get(); return (b and b.timerSize) or 14 end,
+    function(v) local b = ensure(); if b then b.timerSize = v; repaint() end end))
+  add(MakeSlider(ct, -289, "Stack Size", 8, 32, 1,
+    function() local b = get(); return (b and b.stackSize) or 14 end,
+    function(v) local b = ensure(); if b then b.stackSize = v; repaint() end end))
+
+  -- ONE font for both readouts. They sit on the same bar and reading two different
+  -- typefaces off one 22px-wide bar would look accidental rather than designed; the
+  -- Text section takes the same line for an aura's label.
+  local fb = flatButton(ct, 220, 28, COLOR.heroic, "", 11); fb:SetBase(0.5); fb.text:Hide()
+  fb:SetPoint("TOPLEFT", 0, -322)
+  local fLbl = twoWeightLabel(fb, 11)
+  fb:SetScript("OnClick", function()
+    local b = get(); if not b then return end
+    OpenFontPicker(function(path)
+      local b2 = ensure(); if not b2 then return end
+      b2.font = path; fLbl:Set("Font:", fontNameFor(path)); repaint()
+    end, b.font)
+  end)
+  add({ refresh = function() local b = get(); fLbl:Set("Font:", fontNameFor(b and b.font)) end,
+        setEnabled = function(_, on) fb:SetEnabled(on) end })
+
+  -- Stacks Max lives LAST and is HIDDEN outside Stack Count mode rather than disabled.
+  -- MakeSlider's disabled state only calls SetEnabled on a plain colour-texture thumb,
+  -- which WoW does not visibly dim — so a greyed-out slider looks identical to a live one
+  -- and reads as a control that simply does nothing. It gets its own holder frame purely
+  -- so it can be hidden as a unit (the row MakeSlider returns exposes no widgets).
+  local maxHolder = CreateFrame("Frame", nil, ct)
+  maxHolder:SetPoint("TOPLEFT", 0, -360); maxHolder:SetSize(EDITOR_W, 26)
+  local maxRow = add(MakeSlider(maxHolder, 0, "Stacks Max", 1, 40, 1,
+    function() local b = get(); return (b and b.max) or 10 end,
+    function(v) local b = ensure(); if b then b.max = v; repaint() end end))
+
+  local hint = newText(ct, FONT.body, 11, MUTE, "LEFT")
+  hint:SetPoint("TOPLEFT", 2, -398); hint:SetWidth(EDITOR_W - 4); hint:SetJustifyH("LEFT")
+
+  -- One gate for the whole section: these controls only mean anything on a bar aura, and
+  -- the mode decides whether Stacks Max does. Registered as a single row so the selection
+  -- logic drives it exactly like every other section.
+  rows[#rows + 1] = {
+    refresh = function()
+      local c = Cfg()
+      local isBar = (c and c.kind == "bar") and true or false
+      local mode  = (c and c.bar and c.bar.mode) or "aura_dur"
+      for _, r in ipairs(mine) do if r.refresh then r:refresh() end end
+      if not isBar then
+        hint:SetText("This aura is not a Bar. Create one with |cffffd200/ga bar <spellID>|r, or add a Bar Aura from the rail.")
+      elseif mode == "stacks" then
+        hint:SetText("The fill tracks stacks against Stacks Max. Countdown Text needs Aura Duration mode.")
+      else
+        hint:SetText("On 12.1 Blizzard draws the fill itself. Changes apply live out of combat; anything changed |cffffd200during|r combat lands when you drop out of it.")
+      end
+      maxHolder:SetShown(isBar and mode == "stacks")
+      if maxRow and maxRow.setEnabled then maxRow:setEnabled(isBar and mode == "stacks") end
+    end,
+    setEnabled = function(_, on)
+      local c = Cfg()
+      local isBar = (c and c.kind == "bar") and true or false
+      local mode  = (c and c.bar and c.bar.mode) or "aura_dur"
+      for _, r in ipairs(mine) do if r.setEnabled then r:setEnabled(on and isBar) end end
+      if maxRow and maxRow.setEnabled then maxRow:setEnabled(on and isBar and mode == "stacks") end
+    end,
   }
 end
 
