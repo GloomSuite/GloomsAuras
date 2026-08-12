@@ -51,8 +51,7 @@
 > Full rule + ownership table: `~/GloomsHub/CLAUDE.md`.
 
 Bespoke WoW addon: shows custom textures + sounds when specific buffs/cooldowns are
-active, tracked via the Blizzard **Cooldown Manager** (CDM). Target: **Midnight 12.0.7**
-(Interface `120007`), retail only. Sibling to GloomsBuildBarn (same author "Gloom").
+active, tracked via the Blizzard **Cooldown Manager** (CDM). Target: **Midnight 12.1** (Interface `120100`), retail only. Sibling to GloomsBuildBarn (same author "Gloom").
 
 ## The one idea that matters
 Midnight makes combat aura data **secret** — tainted (addon) code throws if it does
@@ -91,7 +90,7 @@ common-patterns, widget-framework, toc-structure, + a `secret-aware-addon` templ
 - Match GloomsBuildBarn idioms (colored `PREFIX`, `Media\`, bundled TTF fonts, tokens).
 
 ## Files
-- `GloomsAuras.toc` — manifest (Interface 120007). Load order: `Libs\*` → Core → Displays →
+- `GloomsAuras.toc` — manifest (Interface 120100). Load order: `Libs\*` → Core → Displays →
   CDM → `Media\TextureManifest.lua` → Config.
 - `Core.lua` — namespace `GA`, SavedVariables + profiles, design tokens, `/ga` slash router.
 - `CDM.lua` — the Cooldown Manager mirror engine (`GA.CDM`): state tracking, grouped trigger
