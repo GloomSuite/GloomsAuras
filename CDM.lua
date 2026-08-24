@@ -174,6 +174,139 @@ end
 local function soundUsesAlert(cfg) return soundAuraSpell(cfg) ~= nil end
 
 -- ---------------------------------------------------------------------------
+-- "When it comes off cooldown" (sound timing "ready"), added 2026-08-24.
+--
+-- ⚠ THE PROBLEM IT SOLVES. Every other timing rides either the display's
+-- shown/hidden EDGE or a CDM alert. Both are wrong for this question:
+--   * The EDGE fires when a display becomes VISIBLE, and a `combat = in`
+--     visibility gate flips every such display at once the instant combat
+--     starts. The owner's cooldowns were all ready during the pull, so they all
+--     announced themselves simultaneously — a wall of noise carrying no news.
+--   * The CDM's Available ALERT is the obvious alternative and is NOT safe:
+--     Shadowburn advertises no valid alert types at all (owner's /ga trace,
+--     2026-08-24), so alert-driven cooldown sounds would be silently dead for
+--     it — and FINDINGS §10 already rules GetValidAlertTypes out as an oracle
+--     for anything except its pandemic column.
+--
+-- So this rides GA's OWN cooldown mirror, `available[spellID]` — the same
+-- signal cd_ready is built on, which the owner has verified end to end.
+--
+-- ★ THE GUARD IS `old == false`, and it is doing real work. A first seed is
+-- nil -> true, and a re-Discover NILs the entry before re-seeding it, so a
+-- reload, a spec change and a viewer rebind all pass through silently. ONLY a
+-- genuine on-cooldown -> ready transition can fire. That is also exactly why
+-- combat start is quiet: nothing transitions, because nothing was on cooldown.
+-- `quiet` = this write is a RECONCILER, not an event. It must update the mirror
+-- and never make a sound.
+--
+-- ⚠ WHY (owner-reported 2026-08-24, a regression from this feature's first cut).
+-- `available` has TWO kinds of writer and they are not equivalent:
+--   * EVENTS — CooldownFrame_Set/Clear and the charge shadow's OnShow/OnHide.
+--     A real transition happened at that instant.
+--   * RECONCILERS — SyncCooldowns (reads frame.isOnActualCooldown and runs off
+--     the 0.2s visibility poll), SeedAvailability, and Discover's re-seeds.
+--     These restate what is already true, on their own schedule.
+-- Making every write sound-eligible turned the reconcilers into a second, badly
+-- timed event source: the poll and the hooks disagree by a second or two around
+-- a cooldown ending, so Infernal announced itself early AND again on time.
+-- `available` was fine as a STATE mirror — a brief disagreement just re-settles
+-- — and that is exactly why it was never safe as an event bus. Only events
+-- speak now.
+--
+-- ⚠ A cooldown that "ends" less than this after it started never really started.
+-- Casting Malevolence produced avail true->false->true in the SAME timestamp,
+-- settling to false only ~0.9s later — so the debounce window closed on a `true`
+-- and announced a 60s cooldown 0.35s after the cast (owner-reported; log shows
+-- 30377.84 false -> READY-SOUND 30378.19 -> false again 30378.75). Lengthening
+-- the debounce would only add latency to every real completion; requiring the
+-- cooldown to have LASTED is the honest test. Nothing worth announcing is
+-- under two seconds.
+local MIN_CD_FOR_SOUND = 2.0
+
+-- Availability transitions land in the SAME log as the CDM alerts (/ga alertlog),
+-- so "which spell actually transitioned, and when" can be read next to "which
+-- alert actually arrived" on one timeline. Added 2026-08-24 chasing a report of
+-- one spell's ready-sound firing on ANOTHER spell's cooldown.
+local function LogAvail(spellID, old, v, quiet)
+  if not CDM.alertLogOn then return end
+  local root = _G.GloomsAurasDB
+  if type(root) ~= "table" then return end
+  root.alertLog = root.alertLog or {}
+  local L = root.alertLog
+  if #L >= 400 then return end
+  local nm = "?"
+  if spellID and not issecret(spellID) then
+    nm = tostring((C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(spellID)) or spellID)
+  end
+  L[#L + 1] = ("%8.2f  %-22s %-9s avail %s -> %s%s"):format(
+    GetTime() % 100000, nm, tostring(spellID), tostring(old), tostring(v),
+    type(quiet) == "string" and ("  (" .. quiet .. ")")
+      or (quiet and "  (quiet: reconciler)" or ""))
+end
+
+function CDM:SetAvailable(spellID, v, quiet)
+  local old = self.available[spellID]
+  self.available[spellID] = v
+  if old ~= v then LogAvail(spellID, old, v, quiet) end
+  -- Stamped on EVERY transition to false, quiet or not: this is state, not an event.
+  if v == false and old ~= false then
+    self._cdStart = self._cdStart or {}
+    self._cdStart[spellID] = GetTime()
+  end
+  if quiet or old ~= false or v ~= true then return end
+  -- ★ THE DURATION IS THE TEST — not which writer noticed (owner-reported,
+  -- 2026-08-24, second regression on this feature).
+  --
+  -- The first cut let every writer make a sound, and the polled reconciler
+  -- disagreed with the cooldown hooks around a cooldown ending, so Infernal
+  -- announced itself twice. The obvious fix — "only real events may speak" —
+  -- was WRONG, and the log proved it: Malevolence cast at 30805.80 came off
+  -- cooldown at 30866.45, exactly 60.65s later, and the ONLY witness was the
+  -- reconciler. CooldownFrame_Clear never fired at all. Silencing reconcilers
+  -- silenced a real completion.
+  --
+  -- So: anyone may report it, and the claim is judged on its own merits. A
+  -- cooldown that lasted 60s is real whoever noticed; one that "ended" 0.0s
+  -- after it started is a cast-time flicker whatever fired it.
+  local started = self._cdStart and self._cdStart[spellID]
+  if started and (GetTime() - started) < MIN_CD_FOR_SOUND then
+    LogAvail(spellID, old, v, ("flicker: on cd only %.2fs"):format(GetTime() - started))
+    return
+  end
+  -- No settle timer. It existed to collapse a double-fire that the exact-match
+  -- binding fix and the duration test now prevent at source, and it MISSED real
+  -- sounds: Infernal came up at 30929.64 and was cast 0.22s later, so the window
+  -- closed on `false` and said nothing. CDM:PlaySound's own 1s per-display
+  -- THROTTLE already absorbs same-instant duplicates.
+  self:FireReadySounds(spellID)
+end
+
+function CDM:FireReadySounds(spellID)
+  if EditModeActive() or self._emSettling then return end
+  local db = GA.db and GA.db.displays
+  if not db then return end
+  for id, cfg in pairs(db) do
+    -- Gated like a shown display: a cooldown finishing while the aura would not
+    -- be on screen (out of combat, wrong spec, group switched off) is silent.
+    if cfg.enabled ~= false and cfg.sound and soundOn(cfg) == "ready"
+       and self:DisplaySpellID(cfg) == spellID
+       and self:GroupGate(cfg) and self:VisibilityGate(cfg) then
+      if self.alertLogOn then
+        local root = _G.GloomsAurasDB
+        if type(root) == "table" then
+          root.alertLog = root.alertLog or {}
+          if #root.alertLog < 400 then
+            root.alertLog[#root.alertLog + 1] = ("%8.2f  READY-SOUND display=%s (%s) matched spellID=%s"):format(
+              GetTime() % 100000, tostring(id), tostring(cfg.label), tostring(spellID))
+          end
+        end
+      end
+      self:PlaySound(id, cfg)
+    end
+  end
+end
+
+-- ---------------------------------------------------------------------------
 -- Trigger evaluation. State per watched spell: buffActive[] (mirrored from
 -- item:IsActive) and available[] (mirrored from Blizzard's cooldown transitions).
 -- A display shows when its trigger evaluates true; with no trigger it falls back
@@ -222,6 +355,31 @@ function CDM:EvalCondition(cond)
     local a = self.available[sid]
     if a == nil and not self.isCharge[sid] then return true end
     return a == true
+  elseif state == "cd_castable" then
+    -- "Can I press this RIGHT NOW?" = cooldown ready AND the game says usable.
+    -- Neither half is sufficient alone, which is exactly why this state exists:
+    --   * cd_ready mirrors the COOLDOWN only. It cannot see resource cost, target
+    --     requirements, or the procs that waive them — so Shadowburn read "ready"
+    --     for the whole of combat while being uncastable.
+    --   * IsSpellUsable is API-NOTES' TRAP: it ignores cooldown AND charges
+    --     (true while on cd, true at 0 charges). It stays banned as an
+    --     availability signal ON ITS OWN. Here it can only ever NARROW a
+    --     cooldown result GA already trusts, so the trap's failure mode — being
+    --     over-permissive about cooldowns — cannot bite.
+    --
+    -- ★ TESTED 2026-08-24 (owner, live 12.1): Shadowburn on a dummy ABOVE 20%
+    -- health, cd_ready=true in both samples; usable=false without its proc and
+    -- usable=true with it. The proc IS visible through this call.
+    --
+    -- Every failure path falls back to the cooldown answer rather than hiding:
+    -- degrading to today's cd_ready behaviour beats an aura that silently stops.
+    local a = self.available[sid]
+    local ready = (a == nil and not self.isCharge[sid]) or (a == true)
+    if not ready then return false end
+    if not (C_Spell and C_Spell.IsSpellUsable) then return ready end
+    local ok, u = pcall(C_Spell.IsSpellUsable, sid)
+    if not ok or issecret(u) then return ready end
+    return u == true
   elseif state == "cd_oncd" then
     return self.available[sid] == false    -- unknown (nil, untracked) = NOT confirmed on-cd
   elseif state == "charges_max" then
@@ -266,6 +424,10 @@ local function HasVisibilityConstraints(v)
      or v.encounter or v.resting or v.stealthed or v.group or v.raid or v.warmode
      or v.alive or v.spellKnown then return true end
   if v.specs and next(v.specs) then return true end
+  -- `type` may legitimately be 0 (Mana); nil is the only "off". Note this also
+  -- switches the visibility poll on, which is what makes a power condition live
+  -- without registering UNIT_POWER_UPDATE — see the note in VisibilityGate.
+  if v.power and v.power.type then return true end
   return false
 end
 CDM.HasVisibilityConstraints = HasVisibilityConstraints
@@ -297,6 +459,30 @@ function CDM:VisibilityGate(cfg)
     local id = v.spellKnown
     local known = (IsSpellKnown and IsSpellKnown(id)) or (IsPlayerSpell and IsPlayerSpell(id))
     if not known then return false end
+  end
+  -- PLAYER POWER (soul shards, combo points, holy power, …). Whole units only:
+  -- UnitPower's third arg returns Destruction's shard FRAGMENTS (0-50) instead of
+  -- shards (0-5), which is a different scale and a different question — not asked
+  -- for, so not offered.
+  --
+  -- ★ Power is NOT secret. 12.1's secrecy is aura-side (UNIT_AURA payloads,
+  -- AuraData, aura instance IDs, AuraButtons); nothing in the patch notes or
+  -- API-NOTES touches UnitPower, and EllesmereUIResourceBars reads it live on
+  -- 12.1. But this repo's standing rule is to guard EVERY combat-value read
+  -- before an operator, so the issecretvalue check stays regardless.
+  --
+  -- Unevaluable → FAIL OPEN (condition ignored, aura still shows). Failing closed
+  -- would hide a shard-gated aura for the whole of combat, which is exactly when
+  -- it is wanted; a wrongly-visible aura is the far cheaper mistake.
+  local pw = v.power
+  if pw and pw.type then
+    local cur = UnitPower("player", pw.type)
+    if issecretvalue and issecretvalue(cur) then return true end
+    if type(cur) ~= "number" then return true end
+    local want, op = tonumber(pw.value) or 0, pw.op or "ge"
+    if op == "ge" then if cur < want then return false end
+    elseif op == "le" then if cur > want then return false end
+    elseif op == "eq" then if cur ~= want then return false end end
   end
   return true
 end
@@ -397,7 +583,10 @@ function CDM:SyncCooldowns()
     if self.frameKind[frame] == "cooldown" and not self.isCharge[sid] then
       local v = frame.isOnActualCooldown
       if type(v) == "boolean" and not issecret(v) then
-        self.available[sid] = not v
+        -- NOT quiet: this poll is frequently the ONLY thing that sees a cooldown
+        -- end (CooldownFrame_Clear is not reliably fired). The duration test in
+        -- SetAvailable is what separates a real completion from a flicker.
+        self:SetAvailable(sid, not v)
       end
     end
   end
@@ -775,8 +964,8 @@ function CDM:EnsureChargeShadow(spellID)
   -- Shadow A (availability): fed the REAL cooldown duration — present only at 0 charges.
   -- shown => on real cd => 0 charges => unavailable; hidden => >=1 charge castable.
   cd = mkShadowCooldown()
-  cd:HookScript("OnShow", function() CDM.available[spellID] = false; CDM:RefreshDisplays() end)
-  cd:HookScript("OnHide", function() CDM.available[spellID] = true;  CDM:RefreshDisplays() end)
+  cd:HookScript("OnShow", function() CDM:SetAvailable(spellID, false); CDM:RefreshDisplays() end)
+  cd:HookScript("OnHide", function() CDM:SetAvailable(spellID, true);  CDM:RefreshDisplays() end)
   self.chargeShadow[spellID] = cd
   -- Shadow B (fullness): fed the RECHARGE duration — present while recharging, absent AT MAX.
   -- shown => recharging => NOT at max; hidden => at max charges. Together with Shadow A this
@@ -959,7 +1148,7 @@ function CDM:SeedAvailability()
         if cdi and not issecret(cdi.startTime) and not issecret(cdi.duration) then
           local st, du = cdi.startTime, cdi.duration
           local onCd = (st and st > 0 and du and du > 0 and (st + du) > GetTime()) and true or false
-          self.available[sid] = not onCd
+          self:SetAvailable(sid, not onCd, true)   -- reconciler: post-combat reseed
         end
       end)
     end
@@ -983,14 +1172,14 @@ function CDM:HookCooldownGlobals()
         local gcd = item.isOnGCD
         if not issecret(gcd) and gcd == true then return end
       end
-      CDM.available[sid] = false
+      CDM:SetAvailable(sid, false)
       CDM:RefreshDisplays()
     end)
   end
   if type(CooldownFrame_Clear) == "function" then
     hooksecurefunc("CooldownFrame_Clear", function(cdFrame)
       local sid = CDM.cdFrameToSpell[cdFrame]
-      if sid then CDM.available[sid] = true; CDM:RefreshDisplays() end
+      if sid then CDM:SetAvailable(sid, true); CDM:RefreshDisplays() end
     end)
   end
 end
@@ -1021,6 +1210,7 @@ end
 -- It drives per-timing SOUNDS for AUTO-path displays; the key win is that OnAuraApplied
 -- fires only on a genuine (re)application, NOT on a target swap, killing the DoT re-fire.
 local ALERT_ENUM   -- Enum.CooldownViewerAlertEventType, resolved lazily (nil pre-login)
+local PANDEMIC_GUARD = 0.30   -- window on BOTH sides of a removal; see OnItemAlertEvent
 
 -- DIAGNOSTIC (`/ga alertlog`). These alert events are the ONLY secret-safe timing signal GA
 -- receives on 12.1 -- they carry a plain enum out of Blizzard's secure context -- so they are
@@ -1076,14 +1266,70 @@ local function OnItemAlertEvent(itemFrame, event)
   elseif event == ALERT_ENUM.Available     then bucket = "trigger"
   elseif event == ALERT_ENUM.OnCooldown    then bucket = "untrigger"
   else LogAlert(event, spellID, "drop:unmappedEvent"); return end
+
+  -- ⚠ Blizzard fires a SPURIOUS PandemicTime ~0.05s AFTER the aura is removed.
+  -- Measured 2026-08-24 across three Immolate cycles: removed 30002.80 ->
+  -- pandemic 30002.87; removed 30074.82 -> pandemic 30074.86. The genuine
+  -- pandemic arrives many seconds EARLIER (14.7s into a 20s DoT), so a short
+  -- window after a removal separates them cleanly. Without this, a display set
+  -- to "Pandemic window" also announces the DoT falling off — which is the
+  -- opposite of what pandemic means, and was the owner's report.
+  if bucket == "untrigger" then
+    CDM._lastRemove = CDM._lastRemove or {}
+    CDM._lastRemove[spellID] = GetTime()
+    -- Cancel a pandemic still inside its settle window: the DoT is gone, so the
+    -- alert was the death rattle, not a refresh cue.
+    if CDM._pandPending then CDM._pandPending[spellID] = nil end
+  elseif bucket == "pandemic" then
+    -- ⚠ Blizzard emits a SPURIOUS PandemicTime immediately ADJACENT to the aura
+    -- being removed, and the ORDER IS NOT STABLE — measured 2026-08-24:
+    --   run 1:  removed 30002.80 -> pandemic 30002.87   (0.07s AFTER)
+    --   run 2:  pandemic 30417.33 -> removed 30417.47   (0.14s BEFORE)
+    --           pandemic 30466.35 -> removed 30466.36   (0.01s BEFORE)
+    -- A one-sided guard only ever catches one of those, which is exactly how the
+    -- first attempt at this failed. So: check BOTH sides. The after-case is a
+    -- plain timestamp test; the before-case needs the sound DEFERRED so an
+    -- imminent removal can cancel it. The genuine pandemic arrives many seconds
+    -- clear of any removal, so it is untouched either way.
+    local t = CDM._lastRemove and CDM._lastRemove[spellID]
+    if t and (GetTime() - t) < PANDEMIC_GUARD then
+      LogAlert(event, spellID, "drop:pandemicAfterRemove")
+      return
+    end
+    CDM._pandPending = CDM._pandPending or {}
+    if CDM._pandPending[spellID] then return end   -- already waiting
+    CDM._pandPending[spellID] = true
+    LogAlert(event, spellID, "pandemic:deferred")
+    C_Timer.After(PANDEMIC_GUARD, function()
+      if not (CDM._pandPending and CDM._pandPending[spellID]) then
+        LogAlert(event, spellID, "drop:pandemicBeforeRemove")
+        return
+      end
+      CDM._pandPending[spellID] = nil
+      LogAlert(event, spellID, "bucket:pandemic")
+      CDM:FireBucketSounds("pandemic", spellID)
+    end)
+    return
+  end
   LogAlert(event, spellID, "bucket:" .. bucket)
   if EditModeActive() or CDM._emSettling then LogAlert(event, spellID, "drop:editMode"); return end
+  CDM:FireBucketSounds(bucket, spellID)
+end
+
+-- Play every display's sound whose timing matches `bucket` and whose alert spell
+-- is `spellID`. Split out so the deferred pandemic path can reuse it.
+function CDM:FireBucketSounds(bucket, spellID)
   local db = GA.db and GA.db.displays
   if not db then return end
   for id, cfg in pairs(db) do
+    -- ⚠ These gates were MISSING until 2026-08-24: an alert-driven sound played
+    -- wherever the spell fired, ignoring the display's own `combat = in` rule.
+    -- A target DoT re-applied while questing made noise from an aura that was
+    -- not, and could not be, on screen.
     if cfg.enabled ~= false and cfg.sound and soundOn(cfg) == bucket
-       and soundAuraSpell(cfg) == spellID then
-      CDM:PlaySound(id, cfg)
+       and soundAuraSpell(cfg) == spellID
+       and self:GroupGate(cfg) and self:VisibilityGate(cfg) then
+      self:PlaySound(id, cfg)
     end
   end
 end
@@ -1105,11 +1351,30 @@ function CDM:Discover()
   local viewers = AllViewers()
 
   for spellID in pairs(watch) do
+    -- ★ EXACT-MATCH PREFERENCE (owner-reported + TESTED 2026-08-24).
+    -- InfoMatchesSpell deliberately also accepts overrideSpellID and
+    -- linkedSpellIDs. Blizzard links MALEVOLENCE's cooldown entry to Summon
+    -- Infernal, so Infernal bound to Malevolence's cooldown widget and mirrored
+    -- its 60s cooldown instead of its own 90s: Infernal's ready-sound fired on
+    -- Malevolence's timer. /ga alertlog showed both spells' `avail` flipping on
+    -- the SAME timestamp, three cycles running.
+    -- A spell that HAS its own entry must bind to that one. The loose match
+    -- stays as the fallback for spells that only ever appear via an override
+    -- (a hero talent replacing a base spell) — that path is why it exists.
+    local exact = false
+    for _, viewer in ipairs(viewers) do
+      ForEachItem(viewer, function(frame)
+        if exact or not frame.GetCooldownInfo then return end
+        local ok, info = pcall(frame.GetCooldownInfo, frame)
+        if ok and info and plainEq(info.spellID, spellID) then exact = true end
+      end)
+    end
     for _, viewer in ipairs(viewers) do
       ForEachItem(viewer, function(frame)
         if not frame.GetCooldownInfo then return end
         local ok, info = pcall(frame.GetCooldownInfo, frame)
         if not ok or not InfoMatchesSpell(info, spellID) then return end
+        if exact and not plainEq(info.spellID, spellID) then return end
 
         self.frameToSpell[frame] = spellID
 
@@ -1158,7 +1423,7 @@ function CDM:Discover()
             -- ignores charges), BUT availability ("have >=1 charge") is readable via a hidden
             -- shadow Cooldown fed the GCD-stripped cooldown duration object (API-NOTES §9.3,
             -- verified on Aimed Shot). Default UNKNOWN, then let the shadow derive + seed it.
-            self.available[spellID] = nil
+            self:SetAvailable(spellID, nil, true)   -- reconciler: rebind reset
             if C_Spell and C_Spell.GetSpellCooldownDuration then
               self:EnsureChargeShadow(spellID)
               self:FeedChargeShadow(spellID, true)   -- feed + seed availability from IsShown()
@@ -1172,14 +1437,14 @@ function CDM:Discover()
               if cdi and not issecret(cdi.startTime) and not issecret(cdi.duration) then
                 local st, du = cdi.startTime, cdi.duration
                 local onCd = (st and st > 0 and du and du > 0 and (st + du) > GetTime()) and true or false
-                self.available[spellID] = not onCd
+                self:SetAvailable(spellID, not onCd, true)   -- reconciler: discovery seed
               end
             end)
             if not frame.__gaCDHooked and type(frame.OnCooldownDone) == "function" then
               frame.__gaCDHooked = true
               hooksecurefunc(frame, "OnCooldownDone", function(self2)
                 local sid = CDM.frameToSpell[self2]
-                if sid and not CDM.isCharge[sid] then CDM.available[sid] = true; CDM:RefreshDisplays() end
+                if sid and not CDM.isCharge[sid] then CDM:SetAvailable(sid, true); CDM:RefreshDisplays() end
               end)
             end
           end
@@ -1221,7 +1486,7 @@ function CDM:Discover()
       if mx and mx >= 2 then
         self.kind[spellID] = "cooldown"
         self.isCharge[spellID] = true
-        self.available[spellID] = nil
+        self:SetAvailable(spellID, nil, true)   -- reconciler: rebind reset
         if C_Spell and C_Spell.GetSpellCooldownDuration then
           self:EnsureChargeShadow(spellID)
           self:FeedChargeShadow(spellID, true)   -- feed + seed availability + fullness from IsShown()
@@ -1499,6 +1764,24 @@ function CDM:Trace()
     return ("  alerts=[%s %s]"):format(table.concat(parts, ","), pan)
   end
 
+  -- ★ DIAGNOSTIC ONLY (2026-08-24). API-NOTES records IsSpellUsable as a TRAP
+  -- because it ignores cooldown AND charges — worthless as an availability signal
+  -- ALONE, and it stays banned as one. It is printed here because it is the only
+  -- non-secret read for the things cd_ready structurally cannot see: resource
+  -- cost, target requirements, and the procs that lift them. Shadowburn is the
+  -- case that raised it — its execute rule is waived by a proc, so "cooldown is
+  -- ready" is true all combat while the spell is uncastable.
+  --
+  -- What this line exists to ESTABLISH: does it actually flip for that proc?
+  -- Until two traces say so (above 20% without the proc, then with it), pairing
+  -- it with cd_ready is SUSPECTED, and nothing gets built on it.
+  local function usableFor(sid)
+    if not (sid and C_Spell and C_Spell.IsSpellUsable) then return "" end
+    local ok, u, noRes = pcall(C_Spell.IsSpellUsable, sid)
+    if not ok then return "  |cffff5555usable=err|r" end
+    return ("  usable=%s%s"):format(fmtBool(u), (noRes == true) and " (noResource)" or "")
+  end
+
   -- A trigger node is a LEAF ({spellID, state}) or a nested GROUP ({logic, conditions}).
   -- Recurse so nested groups don't crash (the old code called GetSpellName on a group's
   -- nil spellID) and so every leaf shows its live mirror + eval + which alerts it can fire.
@@ -1512,7 +1795,7 @@ function CDM:Trace()
         indent, tostring(node.state), nameOf(sid), tostring(sid),
         fmtBool(self.buffActive[sid]), fmtBool(self.available[sid]),
         tostring(self:EvalCondition(node)), isBound(sid) and "" or " |cffff5555<not bound>|r")
-      print(line .. alertsFor(sid))
+      print(line .. usableFor(sid) .. alertsFor(sid))
     end
   end
 

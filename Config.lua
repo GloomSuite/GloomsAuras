@@ -130,11 +130,12 @@ local STRATA_MODES = {
 -- fonts lack ▼/▶ → tofu boxes). GA's own Media/triangle.png is no longer drawn.
 local CARET_DOWN = UI.CARET_DOWN   -- rotate a right-pointing source to point down (expanded)
 
-local STATE_ORDER = { "buff_active", "buff_inactive", "cd_ready", "cd_oncd", "charges_max", "charges_notmax" }
+local STATE_ORDER = { "buff_active", "buff_inactive", "cd_ready", "cd_castable", "cd_oncd", "charges_max", "charges_notmax" }
 local STATE_LABEL = {
   buff_active    = "buff is active",
   buff_inactive  = "buff is NOT active",
   cd_ready       = "cooldown is ready",
+  cd_castable    = "castable right now",
   cd_oncd        = "cooldown is NOT ready",
   charges_max    = "at max charges",
   charges_notmax = "NOT at max charges",
@@ -143,7 +144,7 @@ local STATE_LABEL = {
 -- buff states become buff (on you) / debuff (on target) / proc, from the picked entry's kind
 -- (selfAura + hasAura). Keeps the picker tags and the condition wording aligned.
 local function StateLabel(state, k)
-  if state == "cd_ready" or state == "cd_oncd"
+  if state == "cd_ready" or state == "cd_castable" or state == "cd_oncd"
      or state == "charges_max" or state == "charges_notmax" then return STATE_LABEL[state] or "?" end
   local active = (state == "buff_active")
   if k == "proc" then
@@ -159,6 +160,7 @@ end
 -- e.g. buff_active+debuff → "ACTIVE on Target" , " (Debuff)".
 local function TrigPill(state, k)
   if state == "cd_ready" then return "READY", " (Cooldown)"
+  elseif state == "cd_castable" then return "CASTABLE", " (Cooldown)"
   elseif state == "cd_oncd" then return "ON COOLDOWN", " (Cooldown)"
   elseif state == "charges_max" then return "AT MAX", " (Charges)"
   elseif state == "charges_notmax" then return "NOT AT MAX", " (Charges)" end
@@ -1534,15 +1536,19 @@ function C:TrigCycleState(ti, ci)
   local leaf = self:TrigNode(ti, ci); if not leaf or not leaf.state then return end
   -- Cycle within the leaf's own FAMILY (never let a debuff become a nonsensical "cooldown ready"):
   --  • aura     → active <-> inactive
-  --  • cooldown → ready <-> on-cd, and for a CHARGE spell also at-max <-> not-at-max charges
-  --    (the charge states are only reachable on a spell that actually uses charges).
-  local cdStates = (leaf.state == "cd_ready" or leaf.state == "cd_oncd"
+  --  • cooldown → ready -> castable -> on-cd, and for a CHARGE spell also
+  --    at-max <-> not-at-max charges (charge states are only reachable on a
+  --    spell that actually uses charges).
+  --    ★ CASTABLE is not a synonym for READY: ready mirrors the cooldown alone,
+  --    castable also requires the game to say the spell can be pressed (cost,
+  --    target requirements, and the procs that waive them). See EvalCondition.
+  local cdStates = (leaf.state == "cd_ready" or leaf.state == "cd_castable" or leaf.state == "cd_oncd"
                     or leaf.state == "charges_max" or leaf.state == "charges_notmax")
   local list
   if cdStates then
     local isCharge = GA.CDM and GA.CDM.isCharge and GA.CDM.isCharge[leaf.spellID]
-    list = isCharge and { "cd_ready", "cd_oncd", "charges_max", "charges_notmax" }
-                     or { "cd_ready", "cd_oncd" }
+    list = isCharge and { "cd_ready", "cd_castable", "cd_oncd", "charges_max", "charges_notmax" }
+                     or { "cd_ready", "cd_castable", "cd_oncd" }
   else
     list = { "buff_active", "buff_inactive" }
   end
@@ -3052,7 +3058,12 @@ function C:BuildSoundSection(ct)
 
   -- The "Play:" timing dropdown — only meaningful with a sound set, so its enabled state
   -- follows both the selection AND whether a sound is chosen.
-  local ON = { { "trigger", "When it triggers" }, { "untrigger", "When it wears off" }, { "pandemic", "Pandemic window" } }
+  -- "ready" fires ONLY on a real on-cooldown -> ready transition (CDM:SetAvailable),
+  -- never on the shown edge — so a pull no longer announces every cooldown that was
+  -- already up. It rides GA's own cooldown mirror, not a CDM alert; see the block
+  -- above CDM:SetAvailable for why the alert route is unsafe here.
+  local ON = { { "trigger", "When it triggers" }, { "ready", "When it comes off cooldown" },
+               { "untrigger", "When it wears off" }, { "pandemic", "Pandemic window" } }
   -- Blizzard's CDM only fires the alert types a spell actually offers, so a timing it never
   -- emits is a sound that can never play — silently. Unstable Affliction is the live example:
   -- it stacks, so it has no pandemic refresh window and emits no PandemicTime at all.
@@ -3454,11 +3465,89 @@ function C:BuildLoadConditionsSection(ct, o)
   sink[#sink + 1] = { refresh = function() local v = vis(); skBox:SetText(v and v.spellKnown and tostring(v.spellKnown) or ""); skRefreshName() end,
                       setEnabled = function(_, on) skBox:SetEnabled(on) end }
 
+  -- PLAYER POWER — soul shards, combo points, holy power, … Whole units only:
+  -- UnitPower's third argument returns Destruction's shard FRAGMENTS (0-50)
+  -- rather than shards (0-5); a different scale answering a different question,
+  -- and the owner asked for whole shards (2026-08-24).
+  --
+  -- No new event: a power condition makes HasVisibilityConstraints true, which
+  -- switches on the existing 0.2s visibility poll. UNIT_POWER_UPDATE would shave
+  -- that latency but fires several times a second in combat, and FINDINGS item 4
+  -- has ApplyConfig/UpdateBar already re-running far more than anyone can explain
+  -- — not the path to hang a high-frequency event on until that is understood.
+  local pwTop = skTop - 56
+  local pwHdr = newText(ct, FONT.head, 13, COLOR.purple, "LEFT"); pwHdr:SetPoint("TOPLEFT", 0, pwTop); pwHdr:SetText("PLAYER POWER")
+  local pwHint = newText(ct, FONT.body, 11, MUTE, "LEFT"); pwHint:SetPoint("LEFT", pwHdr, "RIGHT", 8, 0); pwHint:SetText("(Off = ignore power)")
+
+  -- Enum.PowerType values, verified against the client. Point-like resources
+  -- first: those are the ones anyone actually gates an aura on.
+  local POWERS = {
+    { "off", "Off" },
+    { 7,  "Soul Shards" },   { 4,  "Combo Points" },   { 9,  "Holy Power" },
+    { 12, "Chi" },           { 16, "Arcane Charges" }, { 19, "Essence" },
+    { 5,  "Runes" },         { 6,  "Runic Power" },    { 8,  "Astral Power" },
+    { 11, "Maelstrom" },     { 13, "Insanity" },       { 17, "Fury" },
+    { 18, "Pain" },          { 0,  "Mana" },           { 1,  "Rage" },
+    { 3,  "Energy" },        { 2,  "Focus" },
+  }
+  local OPS = { { "ge", "at least" }, { "le", "at most" }, { "eq", "exactly" } }
+
+  -- Forward declaration: choosing a power seeds .value, but MakeDropdown's
+  -- ReapplySelected only re-applies the DISPLAY config — it does not re-run the
+  -- sink rows — so the box below would keep showing empty over a stored 1.
+  local pwSyncBox
+
+  sink[#sink + 1] = MakeDropdown(ct, 0, pwTop - 22, COL_W, "Power:", POWERS,
+    function() local v = vis(); return (v and v.power and v.power.type) or "off" end,
+    function(x)
+      local v = visW(); if not v then return end
+      if x == "off" then
+        v.power = nil
+      else
+        v.power = v.power or {}
+        v.power.type  = x
+        v.power.op    = v.power.op or "ge"
+        v.power.value = v.power.value or 1
+      end
+      if pwSyncBox then pwSyncBox() end
+      poke()
+    end)
+
+  sink[#sink + 1] = MakeDropdown(ct, COL2_X, pwTop - 22, 120, "", OPS,
+    function() local v = vis(); return (v and v.power and v.power.op) or "ge" end,
+    -- No-op until a power is chosen: never seed a .power that the engine would
+    -- then have to ignore for want of a type.
+    function(x) local v = visW(); if v and v.power then v.power.op = x; poke() end end)
+
+  local pwBox = flatEditBox(ct, 60, 22); pwBox:SetPoint("TOPLEFT", COL2_X + 130, pwTop - 25); pwBox:SetNumeric(true)
+  local pwUnit = newText(ct, FONT.body, 12, MUTE, "LEFT"); pwUnit:SetPoint("LEFT", pwBox, "RIGHT", 8, 0)
+  local function pwRefreshUnit()
+    local v = vis()
+    if v and v.power and v.power.type then
+      for _, e in ipairs(POWERS) do
+        if e[1] == v.power.type then pwUnit:SetText("|cff888888" .. e[2]:lower() .. "|r"); return end
+      end
+    end
+    pwUnit:SetText("|cff888888choose a power first|r")
+  end
+  pwBox:SetScript("OnEnterPressed", function(self)
+    local v = visW(); if not v then return end
+    if v.power then v.power.value = tonumber(self:GetText()) or 0; poke() end
+    self:ClearFocus()
+  end)
+  pwBox:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
+  pwSyncBox = function()
+    local v = vis()
+    pwBox:SetText(v and v.power and v.power.value and tostring(v.power.value) or "")
+    pwRefreshUnit()
+  end
+  sink[#sink + 1] = { refresh = pwSyncBox, setEnabled = function(_, on) pwBox:SetEnabled(on) end }
+
   -- Master off-switch (NOT a "show when" condition — sits apart under a divider). ON =
   -- Enabled; OFF = Disabled (cfg.enabled=false → dropped from tracking + greyed in the list).
   local div = ct:CreateTexture(nil, "ARTWORK"); div:SetColorTexture(COLOR.rim.r, COLOR.rim.g, COLOR.rim.b, COLOR.rim.a)
-  div:SetPoint("TOPLEFT", 0, skTop - 56); div:SetPoint("TOPRIGHT", 0, skTop - 56); div:SetHeight(1)
-  local disLbl = newText(ct, FONT.bodyM, 13, TEXT, "LEFT"); disLbl:SetPoint("TOPLEFT", 0, skTop - 72)
+  div:SetPoint("TOPLEFT", 0, pwTop - 56); div:SetPoint("TOPRIGHT", 0, pwTop - 56); div:SetHeight(1)
+  local disLbl = newText(ct, FONT.bodyM, 13, TEXT, "LEFT"); disLbl:SetPoint("TOPLEFT", 0, pwTop - 72)
   disLbl:SetText("This " .. noun .. " in the game:")
   local disSwitch = makeSwitch(ct, "Disabled", "Enabled", function(v)
     local t = target(); if not t then return end
@@ -3469,14 +3558,14 @@ function C:BuildLoadConditionsSection(ct, o)
     RefreshList()
   end)
   -- Own row (the switch's labels extend ~166px, too wide to sit beside the label).
-  disSwitch:SetPoint("TOPLEFT", 0, skTop - 98)
+  disSwitch:SetPoint("TOPLEFT", 0, pwTop - 98)
   -- MUST provide setEnabled too — SetSelected calls r:refresh() AND r:setEnabled() on every
   -- row; a row missing either throws and aborts the rest of SetSelected (trigger + group UI).
   sink[#sink + 1] = {
     refresh = function() local t = target(); disSwitch:Set(not (t and t.enabled == false)) end,
     setEnabled = function(_, on) disSwitch:SetEnabled(on) end,
   }
-  return -(skTop - 98) + 40   -- content height, so the group pane can size itself
+  return -(pwTop - 98) + 40   -- content height, so the group pane can size itself
 end
 
 -- Phase D: the standalone window (GloomsAurasConfig — chrome, glow, drag,

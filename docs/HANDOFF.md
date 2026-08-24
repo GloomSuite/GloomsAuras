@@ -1,4 +1,49 @@
-# GloomsAuras — Session Handoff  (last updated 2026-08-12)
+# GloomsAuras — Session Handoff  (last updated 2026-08-24)
+
+> ## ▶▶▶ 2026-08-24 — TRIGGERS + SOUND TIMING. Read this before the 08-12 block.
+> **The measured record is `~/GloomsHub/docs/FINDINGS.md` §12. Read it; it is not restated here.**
+> Everything below was driven by `/ga alertlog`, run four times across two talent builds.
+>
+> ### Three features shipped
+> **`cd_castable` — a new trigger state, "castable right now."** `cd_ready AND IsSpellUsable`.
+> `cd_ready` mirrors the COOLDOWN only and is blind to resource cost, target requirements and the
+> procs that waive them — Shadowburn read "ready" for all of combat while being uncastable. Wired
+> into `STATE_ORDER`, `STATE_LABEL`, `StateLabel`, `TrigPill` and the pill's cycle list (`READY →
+> CASTABLE → ON COOLDOWN`, plus the two charge states on a charge spell).
+> ⚠ **`IsSpellUsable` is still banned as a standalone availability signal** (API-NOTES). It is only
+> ever used here to NARROW a cooldown answer GA already trusts. Do not loosen that.
+>
+> **PLAYER POWER — a new load condition.** `v.power = { type, op, value }` in `VisibilityGate`,
+> whole units only (`UnitPower`'s partial third arg would give Destruction's shard FRAGMENTS, a
+> different scale answering a different question). 17 power types in the dropdown. No new event: a
+> power condition makes `HasVisibilityConstraints` true, which switches on the existing 0.2s poll.
+> **⚠ NEVER RUN IN GAME — backlog item 7.**
+>
+> **"When it comes off cooldown" — a fourth sound timing (`sound.on = "ready"`).** Fires on a real
+> `available` false→true transition, never on the display's shown edge, so entering combat with
+> everything off cooldown is silent. Gated on Group + Visibility.
+>
+> ### The two traps this session cost most
+> **`CDM:SetAvailable` is now the ONLY writer of `available`** — nine call sites converted. It
+> judges a transition by **how long the cooldown lasted** (≥2s), NOT by which writer noticed.
+> ⚠ Two earlier attempts failed here and both are recorded in FINDINGS §12: letting every writer
+> speak double-fired, and "only real events may speak" silenced a REAL completion because
+> `CooldownFrame_Clear` is not reliably fired. **Do not re-split by source.** A settle timer was
+> also tried and REMOVED — it swallowed real sounds.
+>
+> **Discovery now prefers an EXACT `info.spellID` match.** `InfoMatchesSpell` also accepts
+> override/linked IDs, and Blizzard links Malevolence's cooldown entry to Summon Infernal — so
+> Infernal bound to Malevolence's widget and mirrored the wrong cooldown. The loose match remains
+> the fallback for spells that only appear via an override; do not remove it.
+>
+> ### Also
+> The alert path (`OnItemAlertEvent`) had **no visibility check at all** — alert-driven sounds fired
+> wherever the spell fired, ignoring the display's own `combat = in`. Now Group + Visibility gated,
+> via the extracted `CDM:FireBucketSounds`.
+> A spurious `PandemicTime` lands within ~0.15s of `OnAuraRemoved` **on either side** — guarded both
+> ways (a timestamp check after, a 0.3s deferral before). A one-sided guard was tried first and
+> caught only half.
+> `/ga alertlog` now also records `available` transitions and each ready-sound fire.
 
 > ## ▶▶▶ 2026-08-12 — DURATION BARS ARE BUILT AND OWNER-QA'd. Read this before the 08-03 block.
 > **The suite-wide record is `~/GloomsHub/docs/FINDINGS.md` §1 (the SHIPPED block) and §10. Read

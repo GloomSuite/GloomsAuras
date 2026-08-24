@@ -213,7 +213,16 @@ a platform wall, not a fixable bug.
   state out of combat via `GetSpellCooldown` (readable OOC).
 - **`C_Spell.IsSpellUsable` is a TRAP.** Readable in combat, but it **ignores cooldown AND
   charges** (returns true while on cooldown, true at 0 charges — verified in-game). NOT a valid
-  availability signal; do not use it.
+  availability signal; do not use it **on its own**.
+  - **★ QUALIFIED 2026-08-24 — it IS valid ANDed with the cooldown mirror, and it is the only
+    signal we have that sees a PROC.** What it reads is precisely what `cd_ready` cannot: resource
+    cost, target requirements, and the procs that waive them. `TESTED` on Shadowburn, dummy above
+    20% health, `cd_ready = true` in both samples — `usable = false` without its proc, `true` with
+    it. Because its failure mode is being *over*-permissive about cooldowns, ANDing can only ever
+    NARROW a cooldown answer GA already trusts. This pairing is GA's `cd_castable` trigger state.
+    **Alone it is still wrong. Do not relax that half.**
+  - ⚠ **It does NOT check whether the player KNOWS the spell** — an untalented Soul Fire returns
+    `usable = true`. See the "silent yes" entry in `~/GloomsHub/docs/FINDINGS.md` §12.
 - **Charge spells (e.g. Aimed Shot) → WALL.** "Have ≥1 charge" is SECRET in combat:
   `GetSpellCharges` AND `GetSpellCastCount` are both `SecretWhenCooldownsRestricted`
   (SpellDocumentation.lua). Every non-secret proxy (IsSpellUsable, the cooldown sweep, icon
