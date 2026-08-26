@@ -86,6 +86,227 @@ function D:ApplyGlow(displayID)
 end
 
 -- --------------------------------------------------------------------------
+-- Rotation — a FIXED angle (cfg.angle, degrees) and/or a continuous SPIN
+-- (cfg.rotate = { on, dir, speed }). Pure rendering; never reads aura data.
+--
+-- ⚠ Both go through an AnimationGroup, deliberately NOT Texture:SetRotation.
+-- SetRotation is implemented through the texture COORDINATES, so it fights the
+-- SetTexCoord(0.08, 0.92, …) border trim that every spell icon carries — which
+-- is exactly why "texture transforms (Mirror, Rotation, Texture Wrap)" sat
+-- parked in the handoff. A Rotation animation transforms the region's GEOMETRY
+-- instead and leaves texcoords untouched, so the trim, the tint, the blend mode
+-- and the desaturation all survive. The fixed angle rides the same mechanism as
+-- the spin rather than taking the tempting SetRotation shortcut, because that
+-- shortcut is the parked trap.
+--
+-- HOW ONE GROUP SERVES BOTH: a completed animation inside a still-running group
+-- holds its end state, so order 1 snaps to the fixed angle and order 2 spins on
+-- from there. With the spin off, order 2 becomes a long zero-degree hold leg and
+-- the icon simply sits at the angle. Looping is REPEAT in both cases; the
+-- re-snap at the top of each loop lands on the same angle, so it is invisible.
+--
+-- ⚠ A rotated texture is NOT clipped to its frame — WoW frames don't clip their
+-- regions — so a square icon sweeps out to ~1.41× its width at 45°. That is the
+-- correct look, not a sizing bug. Size the aura for the swept circle.
+--
+-- The label and the cooldown swipe are separate regions and stay upright.
+-- --------------------------------------------------------------------------
+local ROT_BASE_REV = 3.0     -- seconds per revolution at Speed 100%
+local ROT_HOLD     = 3600    -- the no-spin hold leg; re-snaps hourly to the same angle
+
+-- ⚠ ApplyConfig runs HOT (suite backlog item 4: ApplyStyle was seen firing dozens
+-- of times for one user action). Restarting the animation on every call would
+-- snap the icon back to 0° each time and read as a stutter, so the applied
+-- settings are cached on the frame and an unchanged push is a no-op — the same
+-- redundant-push guard the duration bars already carry.
+local function RotKey(cfg)
+  -- Nothing to turn: a bar's texture is hidden, and cfg.noArt hides it deliberately.
+  -- Rotation drives f.tex and ONLY f.tex (SetChildKey("tex")), so in either state a
+  -- running animation would be pure cost for zero pixels.
+  if not cfg or cfg.kind == "bar" or cfg.noArt then return "off" end
+  local angle = tonumber(cfg.angle) or 0
+  local r = cfg.rotate
+  local spin = (r and r.on) and ((r.dir == "ccw" and "ccw" or "cw") .. ":" .. tostring(tonumber(r.speed) or 100)) or "-"
+  if angle == 0 and spin == "-" then return "off" end
+  return angle .. "|" .. spin
+end
+
+function D:ApplyRotation(displayID)
+  local f = self.frames[displayID]; if not f then return end
+  local cfg = self:Config(displayID)
+  local key = RotKey(cfg)
+
+  -- Hidden frames never animate: an animation on a hidden region is wasted work,
+  -- and OnShow re-applies. Clearing the cached key is what makes that land.
+  if not f:IsShown() then
+    if f.rotAG then f.rotAG:Stop() end
+    f.__rotKey = nil
+    return
+  end
+  if f.__rotKey == key and (key == "off" or (f.rotAG and f.rotAG:IsPlaying())) then return end
+  f.__rotKey = key
+
+  if key == "off" then
+    if f.rotAG then f.rotAG:Stop() end   -- Stop() snaps the region back to 0°
+    return
+  end
+
+  local ag = f.rotAG
+  if not ag then
+    if not f.tex then return end
+    -- The group belongs to the FRAME and each animation is pointed at the texture
+    -- by its key (f.tex) — LibCustomGlow's own pattern, right there in Libs/, so
+    -- this is the shape the client is known to accept rather than the one that
+    -- reads nicest.
+    ag = f:CreateAnimationGroup()
+    ag:SetLooping("REPEAT")
+    ag.base = ag:CreateAnimation("Rotation")   -- order 1: the fixed angle
+    ag.base:SetOrder(1); ag.base:SetDuration(0)
+    ag.base:SetChildKey("tex"); ag.base:SetOrigin("CENTER", 0, 0)
+    ag.spin = ag:CreateAnimation("Rotation")   -- order 2: the continuous spin, or a hold
+    ag.spin:SetOrder(2)
+    ag.spin:SetChildKey("tex"); ag.spin:SetOrigin("CENTER", 0, 0)
+    f.rotAG = ag
+  end
+
+  -- WoW rotation is CCW-positive (GB's Anims carry the same note), so a positive
+  -- user-facing angle/direction — which reads as CLOCKWISE — is negated here.
+  ag:Stop()                                    -- durations/degrees are read at Play()
+  ag.base:SetDegrees(-(tonumber(cfg.angle) or 0))
+
+  local r = cfg.rotate
+  if r and r.on then
+    local pct = tonumber(r.speed) or 100
+    if pct < 10 then pct = 10 end
+    ag.spin:SetDuration(ROT_BASE_REV / (pct / 100))
+    ag.spin:SetDegrees((r.dir == "ccw") and 360 or -360)
+  else
+    ag.spin:SetDuration(ROT_HOLD)              -- park at the fixed angle
+    ag.spin:SetDegrees(0)
+  end
+  ag:Play()
+end
+
+-- --------------------------------------------------------------------------
+-- Shape (cfg.shape = a GloomsHub.SHAPES key). Clips the aura's texture to one of
+-- the suite's 21 silhouettes — the SAME catalog and the SAME art Gloom's Bars
+-- masks its action buttons with, so an aura parked over a button can wear that
+-- button's own outline instead of being a square sitting on top of it.
+--
+-- ⚠ Anchored with GloomsHub:GrowAnchor, NOT SetAllPoints. The art is 512×512 with
+-- the silhouette occupying the central HALF (a 128px transparent margin all round
+-- — GB's ART-SPEC), so the file has to be anchored to a rect twice the icon's size
+-- for the shape itself to land exactly on the icon. GrowAnchor at grow 0 is
+-- precisely that rect, and it is the same helper every shaped effect uses.
+--
+-- ⚠ AddMaskTexture SILENTLY FAILS on a texture that has never rendered (GB's
+-- API-NOTES §2, verified) — and ApplyConfig routinely runs while an aura is
+-- hidden, which is exactly that case. So OnShow re-runs this one frame later, by
+-- which point f.tex has drawn and accepts the mask. The remove-before-add keeps
+-- the attachment count at 1: the documented hard cap is 3 per texture.
+--
+-- ⚠ A mask does NOT rotate with the texture it clips. A shaped aura that also
+-- spins turns INSIDE a static silhouette — art moving behind a shaped window,
+-- which is a real effect but is NOT "a spinning rounded square".
+-- --------------------------------------------------------------------------
+function D:ApplyShape(displayID)
+  local f = self.frames[displayID]; if not (f and f.tex) then return end
+  local cfg = self:Config(displayID)
+  local hub = _G.GloomsHub
+  -- A bar display's texture is hidden, so there is nothing to clip.
+  local key = (cfg and cfg.kind ~= "bar") and cfg.shape or nil
+  local path = key and hub and hub.ShapeAsset and hub:ShapeAsset(key, "base")
+
+  if not path then
+    if f.shapeMask then
+      if f.__maskAdded then f.tex:RemoveMaskTexture(f.shapeMask); f.__maskAdded = nil end
+      f.shapeMask:Hide()
+    end
+    f.__shapeKey = nil
+    return
+  end
+
+  local mask = f.shapeMask
+  if not mask then mask = f:CreateMaskTexture(); f.shapeMask = mask end
+  -- CLAMPTOBLACKADDITIVE on both axes, and the art is WHITE: a mask reads
+  -- LUMINANCE, not alpha, and a black-rgb mask does not clip at all (API-NOTES §2).
+  mask:SetTexture(path, "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
+  mask:Show()
+  -- Anchored to the FRAME, not to f.tex: f:SetSize was just called with explicit
+  -- numbers, whereas f.tex is SetAllPoints and its size is resolved from anchors.
+  hub:GrowAnchor(mask, f, 0)
+  if f.__maskAdded then f.tex:RemoveMaskTexture(mask) end
+  f.tex:AddMaskTexture(mask)
+  f.__maskAdded = true
+  f.__shapeKey = key
+end
+
+-- --------------------------------------------------------------------------
+-- Shaped animations (cfg.effects = { anim = <id>, params = { [id] = {..} } }).
+-- The modules are GloomsHub.Effects — the SAME eight Gloom's Bars runs on its
+-- action buttons, rendering here against an aura display instead of a button.
+-- They were written host-agnostic from the start, so nothing about them had to
+-- change to serve GA.
+--
+-- ⚠ EVERY module needs a silhouette key; with no cfg.shape there is nothing to
+-- trace and they are skipped. The Effects UI says so rather than letting a switch
+-- turn on and do nothing.
+--
+-- The host AND the icon reference are both `f`, deliberately: f:SetSize was called
+-- with explicit numbers, while f.tex is SetAllPoints and resolves its size from
+-- anchors — and with cfg.noArt, f.tex is hidden and has no useful size at all.
+-- --------------------------------------------------------------------------
+-- A stable signature of "what should be running": the module, the silhouette, and
+-- every merged param value. Colour tables are flattened so a table identity change
+-- with the same three channels does not read as a change.
+local function EffectsKey(id, shapeKey, merged)
+  if not id then return "off" end
+  local keys = {}
+  for k in pairs(merged) do keys[#keys + 1] = k end
+  table.sort(keys)
+  local parts = { id, tostring(shapeKey) }
+  for _, k in ipairs(keys) do
+    local v = merged[k]
+    if type(v) == "table" then
+      parts[#parts + 1] = k .. "=" .. tostring(v[1]) .. "," .. tostring(v[2]) .. "," .. tostring(v[3])
+    else
+      parts[#parts + 1] = k .. "=" .. tostring(v)
+    end
+  end
+  return table.concat(parts, "|")
+end
+
+function D:ApplyEffects(displayID)
+  local f = self.frames[displayID]; if not f then return end
+  local E = _G.GloomsHub and _G.GloomsHub.Effects
+  if not E then return end
+  local cfg = self:Config(displayID)
+  local fx = (cfg and cfg.kind ~= "bar") and cfg.effects or nil
+  local key = cfg and cfg.shape
+  local want = (f:IsShown() and key and fx and fx.anim) or nil
+  local merged = want and E:MergeParams(want, fx.params and fx.params[want]) or nil
+  if want and not merged then want = nil end   -- unknown module id (a Hub downgrade)
+
+  -- ⚠ REDUNDANT-PUSH GUARD, and it is not an optimisation. ApplyConfig runs HOT
+  -- (suite backlog item 4: dozens of calls for a single user action), and every
+  -- Start re-primes its textures to PRIME_ALPHA and only reveals them a frame
+  -- later — so an unguarded re-push storm leaves an animation flickering or
+  -- invisible rather than merely costing time. GB never met this because its
+  -- Reconcile skips when the winning trigger is unchanged; this is GA's equivalent.
+  local sig = EffectsKey(want, key, merged or {})
+  if f.__fxKey == sig then return end
+  f.__fxKey = sig
+
+  E:Each(function(mod)
+    if want == mod.id then
+      mod:Start(f, f, key, merged)
+    else
+      mod:Stop(f)
+    end
+  end)
+end
+
+-- --------------------------------------------------------------------------
 -- Frame creation + config application
 -- --------------------------------------------------------------------------
 function D:GetOrCreate(spellID)
@@ -134,11 +355,22 @@ function D:GetOrCreate(spellID)
       if GA.Config and GA.Config.RefreshCurrent then GA.Config:RefreshCurrent() end
     end)
 
-    -- Glow follows the frame's shown state (OnShow starts it, OnHide stops it).
+    -- Glow and rotation follow the frame's shown state (OnShow starts them,
+    -- OnHide stops them) — neither costs anything while the aura is off screen.
     f.displayID = spellID   -- the frames key, so the hooks can look up cfg
-    f:SetScript("OnShow", function(self2) D:ApplyGlow(self2.displayID) end)
+    f:SetScript("OnShow", function(self2)
+      D:ApplyGlow(self2.displayID); D:ApplyRotation(self2.displayID); D:ApplyEffects(self2.displayID)
+      -- Deferred by one frame ON PURPOSE: the mask cannot attach to a texture that
+      -- has never rendered, and until this OnShow returns, f.tex never has.
+      local id = self2.displayID
+      C_Timer.After(0, function() D:ApplyShape(id) end)
+    end)
     f:SetScript("OnHide", function(self2)
       StopGlow(self2)
+      if self2.rotAG then self2.rotAG:Stop() end
+      self2.__rotKey = nil   -- so the next OnShow re-arms the spin
+      self2.__fxKey = nil               -- so the next OnShow re-arms them
+      D:ApplyEffects(self2.displayID)   -- f:IsShown() is already false here, so this stops them
       -- A bar keeps its last fill while hidden; flag it so the next feed SNAPS to the correct
       -- value (Immediate) instead of easing from the stale one — kills the target-swap catch-up.
       if self2.bar then self2.bar.__needSnap = true end
@@ -449,7 +681,13 @@ function D:ApplyConfig(spellID)
   else
     -- Icon/texture display (default). Hide any bar child a kind-switch left behind.
     if f.bar then f.bar:Hide() end
-    f.tex:Show()
+    -- cfg.noArt — the aura draws NOTHING and contributes only its effects, so a glow
+    -- can sit over a live action button without covering the button's own icon. This
+    -- is a distinct state from "no texture chosen": an empty cfg.texture means GUESS
+    -- (spell icon, then the loud magenta panel when even that fails), and that panel
+    -- is right for an aura meant to show art. It is exactly wrong for an overlay,
+    -- which is why "unset" could never be made to mean this.
+    f.tex:SetShown(not cfg.noArt)
 
     -- Texture: a custom file path / fileID if set, else the spell's own icon.
     local custom = cfg.texture
@@ -514,7 +752,10 @@ function D:ApplyConfig(spellID)
     f.label:Hide()
   end
 
-  self:ApplyGlow(spellID)   -- (re)apply the glow effect for this display's current config
+  self:ApplyShape(spellID)      -- clip the texture to its silhouette (no-op without cfg.shape)
+  self:ApplyEffects(spellID)    -- run the shaped animation, if one is picked
+  self:ApplyGlow(spellID)       -- (re)apply the glow effect for this display's current config
+  self:ApplyRotation(spellID)   -- ...and the spin (no-op unless the settings actually changed)
 end
 
 -- Create/refresh every enabled display frame (starts hidden; CDM decides shown).

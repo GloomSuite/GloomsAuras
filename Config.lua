@@ -1914,6 +1914,139 @@ local function RefreshFontList()
   end
 end
 
+-- --------------------------------------------------------------------------
+-- Shape picker: the suite's 21 silhouettes (GloomsHub.SHAPES) plus None. The
+-- SAME catalog and art Gloom's Bars shapes its buttons with, so "rounded square"
+-- means the identical outline in both tools.
+--
+-- Thumbnail geometry mirrors GB's own shape picker deliberately: the whole
+-- -base.png is sized to a padded box and fit to the shape's aspect, which draws
+-- the silhouette at half that box because the art carries a 128px transparent
+-- margin. Matching it keeps the two pickers reading as one control.
+-- --------------------------------------------------------------------------
+local SHAPE_CELL, SHAPE_GAP, SHAPE_COLS = 46, 6, 7
+local shapePickerFrame, shapePickerOnPick, shapeCurrent
+local shapeThumbs = {}
+
+local function RefreshShapeGrid()
+  for key, th in pairs(shapeThumbs) do
+    local on = (shapeCurrent or "") == key
+    -- An OUTLINE, not a filled rect. The fill this started as sat behind the cell and
+    -- read fine behind a white silhouette, but the None cell's content is TEXT — and a
+    -- solid purple block swallowed it whole (the owner, 2026-08-25).
+    if th.edge then
+      for _, side in ipairs({ "top", "bottom", "left", "right" }) do
+        if th.edge[side] then th.edge[side]:SetShown(on) end
+      end
+    end
+    -- Written out rather than an and/or chain: those collapse on a zero channel, and
+    -- a tint silently losing a component is a horrible thing to chase later.
+    if th.tex then
+      if on then th.tex:SetVertexColor(COLOR.purple.r, COLOR.purple.g, COLOR.purple.b)
+      else th.tex:SetVertexColor(0.75, 0.75, 0.75) end
+    end
+  end
+end
+
+local function BuildShapePicker()
+  local hub = _G.GloomsHub
+  -- "" is the None cell; every other key indexes GloomsHub.SHAPES.
+  local secs = { { title = "None", keys = { "" } } }
+  for _, g in ipairs((hub and hub.SHAPE_GROUPS) or {}) do secs[#secs + 1] = g end
+
+  local GX, TOP = 18, 46
+  local total = 0
+  for _, s in ipairs(secs) do
+    local n = math.max(1, math.ceil(#s.keys / SHAPE_COLS))
+    total = total + 18 + n * SHAPE_CELL + (n - 1) * SHAPE_GAP + 10
+  end
+  local W = GX * 2 + SHAPE_COLS * SHAPE_CELL + (SHAPE_COLS - 1) * SHAPE_GAP
+  local H = TOP + total + 24
+
+  local f = CreateFrame("Frame", "GloomsAurasShapePicker", UIParent)
+  f:SetSize(W, H); f:SetPoint("CENTER"); f:SetFrameStrata("FULLSCREEN_DIALOG"); f:EnableMouse(true)
+  skinPlate(f)
+  local title = newText(f, FONT.title, 18, COLOR.purple, "CENTER"); title:SetPoint("TOP", 0, -12)
+  title:SetText("Choose a shape")
+  local close = flatButton(f, 22, 20, COLOR.heroic, "X", 12)
+  close:SetPoint("TOPRIGHT", -8, -8); close:SetScript("OnClick", function() f:Hide() end)
+  f:SetMovable(true); f:SetClampedToScreen(true)
+  local tb = CreateFrame("Frame", nil, f); tb:SetPoint("TOPLEFT", 2, -2); tb:SetPoint("TOPRIGHT", -34, -2)
+  tb:SetHeight(28); tb:EnableMouse(true); tb:RegisterForDrag("LeftButton")
+  tb:SetScript("OnDragStart", function() if f:IsMovable() then f:StartMoving() end end)
+  tb:SetScript("OnDragStop", function() f:StopMovingOrSizing() end)
+
+  local function makeThumb(key)
+    local b = CreateFrame("Button", nil, f)
+    b:SetSize(SHAPE_CELL, SHAPE_CELL)
+    local bg = b:CreateTexture(nil, "BACKGROUND"); bg:SetAllPoints(); bg:SetColorTexture(1, 1, 1, 0.04)
+    b.edge = addEdges(b, COLOR.purple, 2)
+    for _, side in ipairs({ "top", "bottom", "left", "right" }) do
+      if b.edge[side] then b.edge[side]:Hide() end
+    end
+    if key == "" then
+      local none = newText(b, FONT.body, 11, MUTE, "CENTER")
+      none:SetPoint("CENTER"); none:SetText("None")
+    else
+      local info = (hub and hub.ShapeInfo and hub:ShapeInfo(key)) or { aspect = 1, orient = "square" }
+      local box = SHAPE_CELL - 12
+      local w, h = box, box
+      if info.orient == "portrait" then w = box / info.aspect
+      elseif info.orient == "landscape" then h = box / info.aspect end
+      local tex = b:CreateTexture(nil, "ARTWORK")
+      tex:SetSize(w, h); tex:SetPoint("CENTER")
+      tex:SetTexture(hub and hub.ShapeAsset and hub:ShapeAsset(key, "base"))
+      b.tex = tex
+      b:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetText((info and info.label) or key)
+        GameTooltip:Show()
+      end)
+      b:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    end
+    b:SetScript("OnClick", function()
+      shapeCurrent = key
+      if shapePickerOnPick then shapePickerOnPick(key ~= "" and key or nil) end
+      RefreshShapeGrid()
+    end)
+    return b
+  end
+
+  local y = TOP
+  for _, s in ipairs(secs) do
+    local lbl = newText(f, FONT.body, 11, MUTE, "LEFT")
+    lbl:SetPoint("TOPLEFT", GX, -y); lbl:SetText(s.title)
+    y = y + 18
+    for i, key in ipairs(s.keys) do
+      local col, rowIdx = (i - 1) % SHAPE_COLS, math.floor((i - 1) / SHAPE_COLS)
+      local th = makeThumb(key); shapeThumbs[key] = th
+      th:SetPoint("TOPLEFT", GX + col * (SHAPE_CELL + SHAPE_GAP), -(y + rowIdx * (SHAPE_CELL + SHAPE_GAP)))
+    end
+    local n = math.max(1, math.ceil(#s.keys / SHAPE_COLS))
+    y = y + n * SHAPE_CELL + (n - 1) * SHAPE_GAP + 10
+  end
+
+  local footer = newText(f, FONT.body, 11, MUTE, "CENTER")
+  footer:SetPoint("BOTTOM", 0, 8); footer:SetText("click to apply")
+  tinsert(UISpecialFrames, "GloomsAurasShapePicker")
+  f:Hide()
+  shapePickerFrame = f; RegisterSubWindow(f)
+  return f
+end
+
+local function OpenShapePicker(onPick, current)
+  shapePickerOnPick = onPick
+  shapeCurrent = current or ""
+  if not shapePickerFrame then
+    local ok, err = pcall(BuildShapePicker)
+    if not ok then GA.msg("|cffff5555shape picker failed to build|r: " .. tostring(err)); return end
+  end
+  RefreshShapeGrid()
+  CloseSubWindows(shapePickerFrame)
+  DockRight(shapePickerFrame)
+  shapePickerFrame:Show(); shapePickerFrame:Raise()
+end
+
 local function BuildFontPicker()
   local W, H = 300, 56 + FONT_ROWS * 24 + 24
   local f = CreateFrame("Frame", "GloomsAurasFontPicker", UIParent)
@@ -2172,11 +2305,67 @@ function C:BuildAppearanceSection(ct)
   end)
   rows[#rows + 1] = { refresh = function() end, setEnabled = function(_, on) choose:SetEnabled(on) end }
 
+  -- Shape — a STENCIL cut through the texture picked above; it draws nothing itself.
+  -- It sits here, immediately under Texture, because it is meaningless in isolation:
+  -- placed at the bottom of the section (where it first shipped) it read as a second,
+  -- competing way to choose art, which is exactly how the owner read it.
+  --
+  -- ⚠ Most of the catalog crops very little — measured against the icon rect,
+  -- roundsq1 removes 1.2%, roundsq2 4.7%, circle 21.4%, diamond 50.1%. A rounded
+  -- square on art that is already soft-edged is a legitimately invisible change, so
+  -- do not "fix" a report of nothing happening before checking WHICH shape and WHICH
+  -- texture; on 2026-08-25 that pairing looked like a broken mask and was not one.
+  local shLbl = newText(ct, FONT.body, 11, { r = 1, g = 1, b = 1 }, "LEFT")
+  shLbl:SetPoint("TOPLEFT", 0, -42); shLbl:SetText("Shape")
+  local shBtn = flatButton(ct, 150, 24, H, "None", 11); shBtn:SetBase(0.5)
+  shBtn:SetPoint("TOPLEFT", 70, -38)
+  setFont(shBtn.text, FONT.body, 11)
+  local shHint = newText(ct, FONT.body, 11, MUTE, "LEFT")
+  shHint:SetPoint("TOPLEFT", 230, -42); shHint:SetWidth(EDITOR_W - 234); shHint:SetJustifyH("LEFT")
+  shHint:SetText("The aura's silhouette: crops the texture above, and shapes any animation.")
+
+  -- Effects only — the aura draws NO artwork and contributes only its glow and
+  -- animation, so it can sit over a live action button and let the button's own
+  -- icon show through. Distinct from leaving Texture empty, which means "work it
+  -- out" and ends at the loud magenta panel when it cannot.
+  local naLbl = newText(ct, FONT.body, 11, { r = 1, g = 1, b = 1 }, "LEFT")
+  naLbl:SetPoint("TOPLEFT", 0, -70); naLbl:SetText("Effects only")
+  local naTog = makeToggle(ct,
+    function() local c = Cfg(); return (c and c.noArt) == true end,
+    function(v) local c = Cfg(); if c then c.noArt = v or nil; ReapplySelected() end end)
+  naTog:SetPoint("TOPLEFT", 94, -68)
+  local naHint = newText(ct, FONT.body, 11, MUTE, "LEFT")
+  naHint:SetPoint("TOPLEFT", 150, -70); naHint:SetWidth(EDITOR_W - 154); naHint:SetJustifyH("LEFT")
+  naHint:SetText("No artwork — just the glow. For overlaying a real action button.")
+  rows[#rows + 1] = {
+    refresh = function() naTog:refresh() end,
+    setEnabled = function(_, on) naTog:SetEnabled(on) end,
+  }
+  local function shapeLabel()
+    local c = Cfg(); local k = c and c.shape
+    if not k then return "None" end
+    local hub = _G.GloomsHub
+    local info = hub and hub.ShapeInfo and hub:ShapeInfo(k)
+    return (info and info.label) or k
+  end
+  shBtn:SetScript("OnClick", function()
+    local c = Cfg(); if not c then return end
+    OpenShapePicker(function(key)
+      c.shape = key
+      shBtn:SetText(shapeLabel())
+      ReapplySelected()
+    end, c.shape)
+  end)
+  rows[#rows + 1] = {
+    refresh = function() shBtn:SetText(shapeLabel()) end,
+    setEnabled = function(_, on) shBtn:SetEnabled(on) end,
+  }
+
   -- Recolor (check + swatch) + Desaturate (check).
-  rows[#rows + 1] = MakeColor(ct, 0, -48,
+  rows[#rows + 1] = MakeColor(ct, 0, -110,
     function() local c = Cfg(); return c and c.color end,
     function(v) local c = Cfg(); if c then c.color = v end end, "Recolor")
-  local desat = flatCheck(ct, "Desaturate"); desat:SetPoint("TOPLEFT", COL2_X, -48)
+  local desat = flatCheck(ct, "Desaturate"); desat:SetPoint("TOPLEFT", COL2_X, -110)
   desat:SetScript("OnClick", function()
     local c = Cfg(); if not c then return end
     desat:Set(not desat:Get()); c.desaturate = desat:Get() or nil; ReapplySelected()
@@ -2185,31 +2374,31 @@ function C:BuildAppearanceSection(ct)
                       setEnabled = function(_, on) desat:SetEnabled(on) end }
 
   -- Blend / Strata pills.
-  rows[#rows + 1] = MakeDropdown(ct, 0, -88, COL_W, "Blend Mode:", BLEND_MODES,
+  rows[#rows + 1] = MakeDropdown(ct, 0, -150, COL_W, "Blend Mode:", BLEND_MODES,
     function() local c = Cfg(); return (c and c.blend) or "BLEND" end,
     function(v) local c = Cfg(); if c then c.blend = (v ~= "BLEND") and v or nil end end)
-  rows[#rows + 1] = MakeDropdown(ct, COL2_X, -88, COL_W, "Strata:", STRATA_MODES,
+  rows[#rows + 1] = MakeDropdown(ct, COL2_X, -150, COL_W, "Strata:", STRATA_MODES,
     function() local c = Cfg(); return (c and c.strata) or "HIGH" end,
     function(v) local c = Cfg(); if c then c.strata = (v ~= "HIGH") and v or nil end end)
 
   -- Alpha.
-  rows[#rows + 1] = MakeSlider(ct, -136, "Alpha %", 0, 100, 5,
+  rows[#rows + 1] = MakeSlider(ct, -198, "Alpha %", 0, 100, 5,
     function() local c = Cfg(); return c and ((c.alpha or 1) * 100) end,
     function(v) local c = Cfg(); if c then c.alpha = v / 100 end end)
 
   -- Width / Height (aspect-linked) + a link toggle sitting between the two rows.
   local widthRow, heightRow
   local function clampDim(n) return math.max(8, math.min(8192, math.floor(n + 0.5))) end
-  widthRow = MakeSlider(ct, -189, "Width", 8, 8192, 2,
+  widthRow = MakeSlider(ct, -251, "Width", 8, 8192, 2,
     function() local c = Cfg(); return c and (c.width or c.size) end,
     function(v) local c = Cfg(); if not c then return end c.width = v; if c.lockAspect then c.height = clampDim(v / (c.aspect or 1)); if heightRow then heightRow:refresh() end end end)
   rows[#rows + 1] = widthRow
-  heightRow = MakeSlider(ct, -222, "Height", 8, 8192, 2,
+  heightRow = MakeSlider(ct, -284, "Height", 8, 8192, 2,
     function() local c = Cfg(); return c and (c.height or c.size) end,
     function(v) local c = Cfg(); if not c then return end c.height = v; if c.lockAspect then c.width = clampDim(v * (c.aspect or 1)); if widthRow then widthRow:refresh() end end end)
   rows[#rows + 1] = heightRow
 
-  local aspectBtn = CreateFrame("Button", nil, ct); aspectBtn:SetSize(16, 16); aspectBtn:SetPoint("TOPLEFT", 48, -199)
+  local aspectBtn = CreateFrame("Button", nil, ct); aspectBtn:SetSize(16, 16); aspectBtn:SetPoint("TOPLEFT", 48, -261)
   local alock = aspectBtn:CreateTexture(nil, "ARTWORK"); alock:SetAllPoints()
   local LOCK_ON, LOCK_OFF = MEDIA .. "lock_locked.png", MEDIA .. "lock_unlocked.png"
   local function alockRefresh() local c = Cfg(); alock:SetTexture((c and c.lockAspect) and LOCK_ON or LOCK_OFF); alock:SetVertexColor(1, 1, 1, 1) end
@@ -2222,12 +2411,23 @@ function C:BuildAppearanceSection(ct)
   rows[#rows + 1] = { refresh = alockRefresh, setEnabled = function(_, on) aspectBtn:SetEnabled(on); alock:SetDesaturated(not on) end }
 
   -- X / Y offset.
-  rows[#rows + 1] = MakeSlider(ct, -255, "X Offset", -2000, 2000, 5,
+  rows[#rows + 1] = MakeSlider(ct, -317, "X Offset", -2000, 2000, 5,
     function() local c = Cfg(); return c and c.point and c.point[2] end,
     function(v) local c = Cfg(); if c then c.point = { "CENTER", v, (c.point and c.point[3]) or 0 } end end)
-  rows[#rows + 1] = MakeSlider(ct, -288, "Y Offset", -2000, 2000, 5,
+  rows[#rows + 1] = MakeSlider(ct, -350, "Y Offset", -2000, 2000, 5,
     function() local c = Cfg(); return c and c.point and c.point[3] end,
     function(v) local c = Cfg(); if c then c.point = { "CENTER", (c.point and c.point[2]) or 0, v } end end)
+
+  -- Fixed rotation. Positive = CLOCKWISE, matching the Direction dropdown's default in
+  -- Effects & Motion. It shares one AnimationGroup with the spin (Displays:ApplyRotation),
+  -- so setting both is legal — the angle is where the spin starts from, which on a
+  -- spinning aura is invisible by definition. A bar display has no texture to turn, so
+  -- the engine ignores this for one — left enabled and inert rather than specially
+  -- greyed, which is how Blend Mode and Desaturate above already behave for bars.
+  rows[#rows + 1] = MakeSlider(ct, -383, "Rotation", 0, 359, 5,
+    function() local c = Cfg(); return c and c.angle end,
+    function(v) local c = Cfg(); if c then c.angle = (v ~= 0) and v or nil end end)
+
 end
 
 -- Build the editor: the icon-section accordion.
@@ -2243,13 +2443,13 @@ function C:BuildEditor(editor)
 
   -- Icon-aura sections. Appearance is inline; the rest bridge to their drawers for now.
   C:AccordionAddSection("trigger", "Aura Trigger(s)", 120, function(ct) C:BuildTriggerSection(ct) end)
-  C:AccordionAddSection("appearance", "Appearance, Position & Size", 310, function(ct) C:BuildAppearanceSection(ct) end)
+  C:AccordionAddSection("appearance", "Appearance, Position & Size", 418, function(ct) C:BuildAppearanceSection(ct) end)
   -- Bar sits next to Appearance because it IS the appearance of a bar aura. It stays in the
   -- accordion for every aura (the accordion is built once, not per selection) and gates its
   -- own controls off cfg.kind, the same way Text handles auras with nothing to label.
   C:AccordionAddSection("bar", "Bar Fill & Readouts", 428, function(ct) C:BuildBarSection(ct) end)
   C:AccordionAddSection("text", "Text", 285, function(ct) C:BuildTextSection(ct) end)
-  C:AccordionAddSection("effects", "Effects & Motion", 78, function(ct) C:BuildEffectsSection(ct) end)
+  C:AccordionAddSection("effects", "Effects & Motion", 300, function(ct) C:BuildEffectsSection(ct) end)
   C:AccordionAddSection("sounds", "Sounds", 72, function(ct) C:BuildSoundSection(ct) end)
   -- Load Conditions sizes itself: its height depends on how many SPECS the class has,
   -- which the 420 guess only happened to fit. The builder returns its real height.
@@ -3029,8 +3229,155 @@ function C:BuildTextSection(ct)
     function(v) local t = ensure(); if t then t.y = (v ~= 0) and v or nil end end)
 end
 
--- Inline EFFECTS & MOTION section (redesign). Glow only for now (Motion parked — low
--- priority). Reuses the shipped glow engine (cfg.glow + Displays ApplyGlow via ReapplySelected).
+-- --------------------------------------------------------------------------
+-- Animation settings: one popup, built from the SELECTED module's own schema
+-- (GloomsHub.Effects module `params`), so a module added in the Hub grows its
+-- controls here with no GA change at all.
+--
+-- It is a popup rather than rows in the accordion because an accordion section
+-- is a FIXED height declared at build time, while a module has anywhere from 3
+-- to 5 params. Rebuilding a popup per module sidesteps that entirely.
+--
+-- ⚠ MakeSlider is INTEGER-only (it rounds through math.floor(v + 0.5)), but most
+-- module params are fractional — speed 0.3-3.0 step 0.1, size 0.15-0.7 step 0.05.
+-- Those are shown ×100 as a percentage and divided back on the way out; params
+-- that are already whole numbers (counts) pass through untouched. Without this the
+-- slow half of every speed range would quantise away to nothing.
+-- --------------------------------------------------------------------------
+local animPopups, animPopupOnChange = {}, nil   -- [moduleID] = its built popup
+
+local function ParamScale(p)
+  if p.fmt == "int" or (p.step or 1) >= 1 then return 1 end
+  return 100
+end
+
+local function AnimParams(cfg, id)
+  if not cfg then return nil end
+  cfg.effects = cfg.effects or {}
+  cfg.effects.params = cfg.effects.params or {}
+  cfg.effects.params[id] = cfg.effects.params[id] or {}
+  return cfg.effects.params[id]
+end
+
+-- A module param's CURRENT value: the saved override, else the module's default.
+local function AnimGet(id, key)
+  local c = Cfg()
+  local saved = c and c.effects and c.effects.params and c.effects.params[id]
+  if saved and saved[key] ~= nil then return saved[key] end
+  local E = _G.GloomsHub and _G.GloomsHub.Effects
+  local mod = E and E:Get(id)
+  return mod and mod.defaults[key]
+end
+
+local function BuildAnimPopup(id)
+  local E = _G.GloomsHub and _G.GloomsHub.Effects
+  local mod = E and E:Get(id); if not mod then return nil end
+
+  -- ⚠ 390, not a tidier 320: MakeSlider lays out to math.max(360, parent width) and
+  -- would have hung 54px of edit box off the right edge of anything narrower.
+  local W = 390
+  local f = CreateFrame("Frame", "GloomsAurasAnimSettings" .. id, UIParent)
+  f:SetFrameStrata("FULLSCREEN_DIALOG"); f:EnableMouse(true)
+  skinPlate(f)
+  local title = newText(f, FONT.title, 16, COLOR.purple, "CENTER"); title:SetPoint("TOP", 0, -12)
+  title:SetText(mod.label or id)
+  local close = flatButton(f, 22, 20, COLOR.heroic, "X", 12)
+  close:SetPoint("TOPRIGHT", -8, -8); close:SetScript("OnClick", function() f:Hide() end)
+  f:SetMovable(true); f:SetClampedToScreen(true)
+  local tb = CreateFrame("Frame", nil, f); tb:SetPoint("TOPLEFT", 2, -2); tb:SetPoint("TOPRIGHT", -34, -2)
+  tb:SetHeight(26); tb:EnableMouse(true); tb:RegisterForDrag("LeftButton")
+  tb:SetScript("OnDragStart", function() if f:IsMovable() then f:StartMoving() end end)
+  tb:SetScript("OnDragStop", function() f:StopMovingOrSizing() end)
+
+  local body = CreateFrame("Frame", nil, f)
+  body:SetPoint("TOPLEFT", 14, -40); body:SetWidth(W - 28); body:SetHeight(10)
+  local prows, y = {}, 0
+
+  for _, p in ipairs(mod.params or {}) do
+    local function set(v)
+      local t = AnimParams(Cfg(), id); if t then t[p.key] = v end
+      ReapplySelected()
+      if animPopupOnChange then animPopupOnChange() end
+    end
+    if p.kind == "color" then
+      prows[#prows + 1] = MakeColor(body, 0, y - 3,
+        function() return AnimGet(id, p.key) end,
+        function(v) set(v or nil) end, p.label)
+      y = y - 34
+    elseif p.kind == "choice" then
+      local vals = {}
+      for _, ch in ipairs(p.choices or {}) do vals[#vals + 1] = { ch[1], ch[2] } end
+      prows[#prows + 1] = MakeDropdown(body, 0, y, W - 28, p.label .. ":", vals,
+        function() return AnimGet(id, p.key) end, set)
+      y = y - 36
+    else
+      -- "range" and "bispeed" both reduce to one slider. A bispeed is a SIGNED
+      -- velocity in [-1,1] — sign is direction, magnitude is speed, 0 is still —
+      -- so it spans -100..100 here and its label names the two directions.
+      local sc = (p.kind == "bispeed") and 100 or ParamScale(p)
+      local lo, hi, st
+      if p.kind == "bispeed" then lo, hi, st = -100, 100, 5
+      else lo, hi, st = math.floor((p.min or 0) * sc + 0.5), math.floor((p.max or 1) * sc + 0.5), math.max(1, math.floor((p.step or 1) * sc + 0.5)) end
+      -- ⚠ KEEP THE LABEL SHORT. MakeSlider parks its minus button at x=70 and puts the
+      -- title at x=4, so anything past ~66px runs straight under the control — which
+      -- is exactly what "Spin % (CCW / CW)" did (the owner, 2026-08-25). The direction
+      -- words go in a caption BELOW the slider, where there is a full row of width.
+      local label = p.label
+      if sc ~= 1 then label = label .. " %" end
+      prows[#prows + 1] = MakeSlider(body, y, label, lo, hi, st,
+        function() local v = AnimGet(id, p.key) or 0; return v * sc end,
+        function(v) set(v / sc) end)
+      y = y - 33
+      if p.kind == "bispeed" then
+        local cap = newText(body, FONT.body, 11, MUTE, "LEFT")
+        cap:SetPoint("TOPLEFT", 4, y + 9); cap:SetWidth(W - 40); cap:SetJustifyH("LEFT")
+        cap:SetText("−100% " .. (p.neg or "CCW") .. "  ·  0 still  ·  +100% " .. (p.pos or "CW"))
+        y = y - 16
+      end
+    end
+  end
+
+  local reset = flatButton(f, 90, 22, COLOR.heroic, "Reset", 11); reset:SetBase(0.4)
+  reset:SetPoint("BOTTOMLEFT", 14, 10)
+  reset:SetScript("OnClick", function()
+    local c = Cfg()
+    if c and c.effects and c.effects.params then c.effects.params[id] = nil end
+    ReapplySelected()
+    for _, r in ipairs(prows) do r:refresh() end
+  end)
+  local hint = newText(f, FONT.body, 11, MUTE, "RIGHT")
+  hint:SetPoint("BOTTOMRIGHT", -14, 14); hint:SetText("back to the defaults")
+
+  f:SetSize(W, 40 + (-y) + 40)
+  body:SetHeight(-y)
+  f.prows = prows
+  tinsert(UISpecialFrames, "GloomsAurasAnimSettings" .. id)
+  f:Hide(); RegisterSubWindow(f)
+  return f
+end
+
+local function OpenAnimSettings(id, onChange)
+  animPopupOnChange = onChange
+  -- One popup per module, built on first use and KEPT. Each module has its own
+  -- schema and its rows bake their param key in at creation, so they cannot be
+  -- retargeted — but tearing the frame down and rebuilding leaked a UISpecialFrames
+  -- entry and a subWindows entry on every switch. Caching costs at most eight frames.
+  local f = animPopups[id]
+  if not f then
+    local ok, res = pcall(BuildAnimPopup, id)
+    if not ok then GA.msg("|cffff5555animation settings failed to build|r: " .. tostring(res)); return end
+    if not res then return end
+    f = res; animPopups[id] = f
+  end
+  for _, r in ipairs(f.prows) do r:refresh(); r:setEnabled(true) end
+  CloseSubWindows(f)
+  DockRight(f)
+  f:Show(); f:Raise()
+end
+
+-- Inline EFFECTS & MOTION section (redesign). Reuses the shipped glow engine
+-- (cfg.glow + Displays:ApplyGlow) and the rotation engine (cfg.rotate +
+-- Displays:ApplyRotation), both driven through ReapplySelected.
 function C:BuildEffectsSection(ct)
   local GLOW = { { "none", "None" }, { "autocast", "Autocast Shine" }, { "pixel", "Pixel Glow" },
                  { "proc", "Proc Glow" }, { "button", "Action Button Glow" } }
@@ -3046,6 +3393,111 @@ function C:BuildEffectsSection(ct)
     "Custom Color")
   local hint = newText(ct, FONT.body, 11, MUTE, "LEFT"); hint:SetPoint("TOPLEFT", 0, -40); hint:SetWidth(EDITOR_W); hint:SetJustifyH("LEFT")
   hint:SetText("Glow shows while the aura is on screen. Custom Color off = the glow's own colour.")
+
+  -- ── SHAPED ANIMATION ────────────────────────────────────────────────────────
+  -- The eight GloomsHub.Effects modules — the same ones Gloom's Bars runs on its
+  -- action buttons, traced onto this aura's silhouette. Breathe / Burst Ring / Rim
+  -- Flash draw the shape's `rim` art, so they are HOLLOW and can sit over a live
+  -- action button without covering its icon; the rest are masked to the shape.
+  local ANIMS = { { "none", "None" } }
+  do
+    local E = _G.GloomsHub and _G.GloomsHub.Effects
+    if E then E:Each(function(m) ANIMS[#ANIMS + 1] = { m.id, m.label or m.id } end) end
+  end
+  local function animID() local c = Cfg(); return (c and c.effects and c.effects.anim) or "none" end
+  local setBtn
+  rows[#rows + 1] = MakeDropdown(ct, 0, -62, 220, "Animation:", ANIMS,
+    animID,
+    function(v)
+      local c = Cfg(); if not c then return end
+      c.effects = c.effects or {}
+      c.effects.anim = (v ~= "none") and v or nil
+      if setBtn then setBtn:SetEnabled(c.effects.anim ~= nil) end
+    end)
+
+  setBtn = flatButton(ct, 110, 28, COLOR.heroic, "Settings", 11); setBtn:SetBase(0.5)
+  setBtn:SetPoint("TOPLEFT", COL2_X, -62)
+  setFont(setBtn.text, FONT.body, 11)
+  setBtn:SetScript("OnClick", function()
+    local id = animID(); if id == "none" then return end
+    OpenAnimSettings(id, function() end)
+  end)
+  rows[#rows + 1] = {
+    refresh = function() end,
+    setEnabled = function(_, on) setBtn:SetEnabled(on and animID() ~= "none") end,
+  }
+
+  -- ⚠ Every module traces a silhouette, so with no Shape set there is nothing to
+  -- draw and Displays:ApplyEffects skips them. Saying so is the difference between
+  -- a control that looks broken and one that tells you what it needs.
+  local aHint = newText(ct, FONT.body, 11, MUTE, "LEFT")
+  aHint:SetPoint("TOPLEFT", 0, -96); aHint:SetWidth(EDITOR_W); aHint:SetJustifyH("LEFT")
+  aHint:SetText("Needs a Shape (in Appearance) — the animation traces that silhouette. Breathe, Burst Ring and Rim Flash are hollow, so they read as a glow around a button.")
+
+  -- ── MOTION ──────────────────────────────────────────────────────────────────
+  -- Rotation spins the aura's TEXTURE. Bar displays have no texture to spin, so the
+  -- whole block greys out for them (Displays:ApplyRotation refuses them too — the
+  -- engine is the authority, this is just so the UI doesn't lie about it).
+  local mLbl = newText(ct, FONT.head, 12, COLOR.orange, "LEFT")
+  mLbl:SetPoint("TOPLEFT", 0, -136); mLbl:SetText("MOTION")
+
+  local function rot() local c = Cfg(); return c and c.rotate end
+  local function ensureRot() local c = Cfg(); if not c then return nil end; c.rotate = c.rotate or {}; return c.rotate end
+  -- Rotation spins the aura's TEXTURE, so it is meaningless without one: a bar has
+  -- no texture, and "Effects only" hides it on purpose. Leaving these live in a
+  -- state where they cannot do anything is how the owner ended up with a Direction
+  -- and a Speed that saved fine and moved nothing (2026-08-25).
+  local function isIcon() local c = Cfg(); return c ~= nil and c.kind ~= "bar" and not c.noArt end
+  local function spinning() local r = rot(); return isIcon() and r ~= nil and r.on == true end
+
+  local rLbl = newText(ct, FONT.body, 11, { r = 1, g = 1, b = 1 }, "LEFT")
+  rLbl:SetPoint("TOPLEFT", 0, -162); rLbl:SetText("Rotate")
+  local mLbls = { mLbl, rLbl }
+  local dirRow, speedRow
+  local function syncMotion()
+    local on = spinning()
+    if dirRow then dirRow:setEnabled(on) end
+    if speedRow then speedRow:setEnabled(on) end
+  end
+  local rTog = makeToggle(ct,
+    function() local r = rot(); return isIcon() and (r and r.on) == true end,
+    function(v)
+      local r = ensureRot(); if not r then return end
+      r.on = v or nil
+      syncMotion(); ReapplySelected()
+    end)
+  rTog:SetPoint("TOPLEFT", 94, -160)
+
+  local DIR = { { "cw", "Clockwise" }, { "ccw", "Counter-clockwise" } }
+  dirRow = MakeDropdown(ct, 0, -188, 220, "Direction:", DIR,
+    function() local r = rot(); return (r and r.dir) or "cw" end,
+    function(v) local r = ensureRot(); if r then r.dir = (v ~= "cw") and v or nil end end)
+
+  -- Speed is a PERCENTAGE because MakeSlider is integer-only (it rounds through
+  -- math.floor(v + 0.5)) — a 0.1-step float speed would quantise to whole numbers
+  -- and the slow half of the range would be unreachable. 100% = 3s per revolution.
+  speedRow = MakeSlider(ct, -230, "Speed %", 10, 500, 10,
+    function() local r = rot(); return (r and r.speed) or 100 end,
+    function(v) local r = ensureRot(); if r then r.speed = (v ~= 100) and v or nil end end)
+
+  local rHint = newText(ct, FONT.body, 11, MUTE, "LEFT")
+  rHint:SetPoint("TOPLEFT", 0, -262); rHint:SetWidth(EDITOR_W); rHint:SetJustifyH("LEFT")
+  rHint:SetText("Rotates the aura's own artwork — so it needs one, and does nothing with Effects only on. To spin an ANIMATION, use its own Settings. The spinning icon sweeps past its edges; size for the circle, not the square.")
+
+  -- ONE row entry for the whole motion block: the shared refresh loop calls
+  -- refresh() then setEnabled(cfg ~= nil), so a row that greys itself inside
+  -- refresh() would just be overwritten. Composing it here is what makes
+  -- "no aura selected" and "rotation off" both stick.
+  rows[#rows + 1] = {
+    refresh = function() rTog:refresh(); dirRow:refresh(); speedRow:refresh() end,
+    setEnabled = function(_, on)
+      local usable = on and isIcon()
+      rTog:SetEnabled(usable)
+      local live = on and spinning()
+      dirRow:setEnabled(live); speedRow:setEnabled(live)
+      for _, t in ipairs(mLbls) do t:SetAlpha(usable and 1 or 0.4) end
+    end,
+  }
 end
 
 -- The Sounds section — a sound pick + Test, plus WHEN it plays: on trigger (aura

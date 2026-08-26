@@ -1,4 +1,60 @@
-# GloomsAuras — Session Handoff  (last updated 2026-08-24)
+# GloomsAuras — Session Handoff  (last updated 2026-08-25)
+
+> ## ▶▶▶ 2026-08-25 — SHAPES, SHAPED ANIMATIONS, EFFECTS-ONLY, ROTATION
+> **The measured record is `~/GloomsHub/docs/FINDINGS.md` §14, and the API is Hub CONTRACTS §7-§8.
+> Read those; they are not restated here.** GA detail only.
+>
+> ### What shipped, all owner-QA'd in game
+> **Rotation** — `cfg.angle` (a fixed 0-359°, in Appearance) and `cfg.rotate = {on, dir, speed}`
+> (a continuous spin, in Effects & Motion). Both share ONE AnimationGroup on `f.tex`: order 1 snaps
+> to the angle, order 2 spins on from there, and with the spin off order 2 becomes a long
+> zero-degree hold leg. ⚠ **This RETIRES the "deferred texture transforms" item below.**
+> **`Texture:SetRotation` was deliberately NOT used** — it works through texture COORDINATES and
+> would fight the `SetTexCoord(0.08, 0.92, …)` border trim every spell icon carries, which is
+> exactly why rotation sat parked. A Rotation *animation* transforms geometry and leaves texcoords
+> alone. The group is frame-owned with `SetChildKey("tex")` — LibCustomGlow's own pattern, checked
+> in `Libs/` rather than guessed at. Mirror and Texture Wrap are still deferred.
+>
+> **`cfg.shape`** — clips the texture to one of the Hub's 21 silhouettes, via a grouped thumbnail
+> picker whose geometry mirrors GB's so the two read as one control.
+>
+> **`cfg.noArt` ("Effects only")** — the aura draws NOTHING and contributes only its effects, so it
+> can sit over a live action button and let the button's own icon show through. ⚠ **This is a
+> distinct state from an empty `cfg.texture`**, which means "work it out" and ends at the loud
+> magenta panel. That panel is right for an aura meant to show art and wrong for an overlay, which
+> is why "unset" could never be made to mean this. **This is the feature the owner actually wanted**
+> when he asked for a glow on his Cataclysm button.
+>
+> **`cfg.effects`** — the Hub's eight animation modules, with a settings popup built from each
+> module's own `params` schema, so a module added in the Hub grows controls here with no GA change.
+>
+> ### Traps this cost real time on — do not re-learn them
+> - **`AddMaskTexture` silently fails on a never-rendered texture** (GB API-NOTES §2), and
+>   `ApplyConfig` routinely runs while an aura is hidden. `OnShow` re-runs `ApplyShape` one frame
+>   later. Without that, shapes work on visible auras and mysteriously not on hidden ones.
+> - **`ApplyConfig` runs HOT** (suite backlog item 4). Rotation and effects BOTH carry
+>   redundant-push guards. For effects that is a **correctness** fix, not an optimisation: every
+>   `Start` primes its textures to alpha 0.02 and reveals a frame later, so an unguarded re-push
+>   storm makes an animation invisible. FINDINGS §14.
+> - **`MakeSlider` is INTEGER-only** (`math.floor(v + 0.5)`), so fractional module params are shown
+>   ×100 as a percentage and divided back. It also lays out to `max(360, parent width)` and parks
+>   its minus button at **x=70** with the title at x=4 — **any label past ~66px runs under the
+>   control.** Both bit this session. Keep new labels short.
+> - **A mask does not rotate with the texture it clips** — a shaped aura that also spins turns
+>   inside a static silhouette. Real effect, but it is not "a spinning rounded square".
+> - **Rotation drives `f.tex` and only `f.tex`.** With `noArt` it is inert, so the whole MOTION
+>   block greys out. Leaving it live is how the owner got a Direction and a Speed that saved fine
+>   and moved nothing.
+>
+> ### Ruled out by the owner, 2026-08-25 — do not re-offer
+> **GA driving GB's glow on a real action button.** Offered twice as the exact fix for the Cataclysm
+> case. *"I don't really want an aura telling GB what to do — that's a level of complexity that I
+> suspect would introduce more problems than it solved."* He is content aligning by hand.
+>
+> ### Known, not fixed
+> A texture-less aura draws the magenta panel instead of its spell's icon — `ApplyConfig` reads
+> `cfg.spellID`, nil for everything built in the tab. Suite backlog item 9; the fix is the parked
+> auto-icon feature and he has not decided it.
 
 > ## ▶▶▶ 2026-08-24 — TRIGGERS + SOUND TIMING. Read this before the 08-12 block.
 > **The measured record is `~/GloomsHub/docs/FINDINGS.md` §12. Read it; it is not restated here.**
@@ -215,8 +271,11 @@ parked each item explicitly. Anything genuinely actionable lives in the Hub's ba
 - **Override display polish** — show a spell's override name+icon in the picker when
   `info.overrideSpellID ~= spellID` (e.g. "Black Arrow" not "Kill Shot"), storing the base spellID.
   Cosmetic; tracking already follows overrides. **Offered, the owner didn't decide.**
-- **Deferred texture transforms** — Mirror, Rotation, Texture Wrap (`SetRotation` interacts with
-  `SetTexCoord`).
+- **Deferred texture transforms** — ~~Rotation~~ **SHIPPED 2026-08-25** (see the block at the top:
+  an AnimationGroup Rotation, never `Texture:SetRotation`). **Mirror and Texture Wrap are still
+  deferred**, and for the same reason: both go through `SetTexCoord`, which fights the icon border
+  trim. If either is ever built, look at whether an animation or a second texture can carry it
+  instead of touching texcoords.
 - **Visibility Phase 2** — rarer load conditions (Race/Faction/Level, Zone/Instance/difficulty, M+
   affix, Equipment, Spec Role, PvP talent). Skyriding was dropped: no reliable "am I skyriding now" API.
 - **Export/import strings** for sharing — naturally follows Profiles.
