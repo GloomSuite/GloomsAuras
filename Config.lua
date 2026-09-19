@@ -2447,7 +2447,7 @@ function C:BuildEditor(editor)
   -- Bar sits next to Appearance because it IS the appearance of a bar aura. It stays in the
   -- accordion for every aura (the accordion is built once, not per selection) and gates its
   -- own controls off cfg.kind, the same way Text handles auras with nothing to label.
-  C:AccordionAddSection("bar", "Bar Fill & Readouts", 428, function(ct) C:BuildBarSection(ct) end)
+  C:AccordionAddSection("bar", "Bar Fill & Readouts", 465, function(ct) C:BuildBarSection(ct) end)
   C:AccordionAddSection("text", "Text", 285, function(ct) C:BuildTextSection(ct) end)
   C:AccordionAddSection("effects", "Effects & Motion", 300, function(ct) C:BuildEffectsSection(ct) end)
   C:AccordionAddSection("sounds", "Sounds", 72, function(ct) C:BuildSoundSection(ct) end)
@@ -3696,13 +3696,23 @@ function C:BuildBarSection(ct)
     function() local b = get(); return b and b.bg end,
     function(v) local b = ensure(); if b then b.bg = v end end, "Background"))
 
+  -- Pandemic Background — the backdrop's colour while the DoT is in its refresh window.
+  -- The BACKDROP, deliberately, not the fill: on 12.1 the fill is the duration engine's
+  -- Blizzard button and cannot be recoloured in combat, which is the only place a pandemic
+  -- window ever happens. By then the bar is mostly drained anyway, so the backdrop is what
+  -- the eye actually sees. Same signal as the "Pandemic window" sound timing, same
+  -- coverage: only spells Blizzard emits a pandemic alert for (Agony yes; UA stacks, so no).
+  add(MakeColor(ct, COL2_X, -116,
+    function() local b = get(); return b and b.pandemicBg end,
+    function(v) local b = ensure(); if b then b.pandemicBg = v end end, "Pandemic Background"))
+
   -- Row 4 — reverse fill.
   local rLbl = newText(ct, FONT.body, 11, { r = 1, g = 1, b = 1 }, "LEFT")
-  rLbl:SetPoint("TOPLEFT", 0, -116); rLbl:SetText("Reverse Fill")
+  rLbl:SetPoint("TOPLEFT", 0, -153); rLbl:SetText("Reverse Fill")
   local rTog = makeToggle(ct,
     function() local b = get(); return (b and b.reverse) == true end,
     function(v) local b = ensure(); if b then b.reverse = v or nil; repaint() end end)
-  rTog:SetPoint("TOPLEFT", 94, -114)
+  rTog:SetPoint("TOPLEFT", 94, -151)
   add({ refresh = function() rTog:refresh() end, setEnabled = function(_, on) rTog:SetEnabled(on) end })
 
   -- Rotate Texture — StatusBar:SetRotatesTexture. Without it a gradient drawn for a
@@ -3710,11 +3720,11 @@ function C:BuildBarSection(ct)
   -- textured vertical bar look wrong. Not automatic from Orientation: a plain or
   -- symmetric fill looks identical either way, so it stays the user's call.
   local roLbl = newText(ct, FONT.body, 11, { r = 1, g = 1, b = 1 }, "LEFT")
-  roLbl:SetPoint("TOPLEFT", COL2_X, -116); roLbl:SetText("Rotate Texture")
+  roLbl:SetPoint("TOPLEFT", COL2_X, -153); roLbl:SetText("Rotate Texture")
   local roTog = makeToggle(ct,
     function() local b = get(); return (b and b.rotateTexture) == true end,
     function(v) local b = ensure(); if b then b.rotateTexture = v or nil; repaint() end end)
-  roTog:SetPoint("TOPLEFT", COL2_X + 108, -114)
+  roTog:SetPoint("TOPLEFT", COL2_X + 108, -151)
   add({ refresh = function() roTog:refresh() end, setEnabled = function(_, on) roTog:SetEnabled(on) end })
 
   -- ── THE TWO READOUTS ────────────────────────────────────────────────────────
@@ -3727,32 +3737,32 @@ function C:BuildBarSection(ct)
                     { "LEFT", "Left" }, { "RIGHT", "Right" } }
 
   local cLbl = newText(ct, FONT.body, 11, { r = 1, g = 1, b = 1 }, "LEFT")
-  cLbl:SetPoint("TOPLEFT", 0, -152); cLbl:SetText("Countdown Text")
+  cLbl:SetPoint("TOPLEFT", 0, -189); cLbl:SetText("Countdown Text")
   local cTog = makeToggle(ct,
     function() local b = get(); return (b and b.showTimer) == true end,
     function(v) local b = ensure(); if b then b.showTimer = v or nil; repaint() end end)
-  cTog:SetPoint("TOPLEFT", 108, -150)
+  cTog:SetPoint("TOPLEFT", 108, -187)
   add({ refresh = function() cTog:refresh() end, setEnabled = function(_, on) cTog:SetEnabled(on) end })
 
   local sLbl = newText(ct, FONT.body, 11, { r = 1, g = 1, b = 1 }, "LEFT")
-  sLbl:SetPoint("TOPLEFT", COL2_X, -152); sLbl:SetText("Stack Count")
+  sLbl:SetPoint("TOPLEFT", COL2_X, -189); sLbl:SetText("Stack Count")
   local sTog = makeToggle(ct,
     function() local b = get(); return (b and b.showStacks) == true end,
     function(v) local b = ensure(); if b then b.showStacks = v or nil; repaint() end end)
-  sTog:SetPoint("TOPLEFT", COL2_X + 88, -150)
+  sTog:SetPoint("TOPLEFT", COL2_X + 88, -187)
   add({ refresh = function() sTog:refresh() end, setEnabled = function(_, on) sTog:SetEnabled(on) end })
 
-  add(MakeDropdown(ct, 0, -186, COL_W, "Countdown at: ", ANCHORS,
+  add(MakeDropdown(ct, 0, -223, COL_W, "Countdown at: ", ANCHORS,
     function() local b = get(); return (b and b.timerAnchor) or "CENTER" end,
     function(v) local b = ensure(); if b then b.timerAnchor = v; repaint() end end))
-  add(MakeDropdown(ct, COL2_X, -186, COL_W, "Stacks at: ", ANCHORS,
+  add(MakeDropdown(ct, COL2_X, -223, COL_W, "Stacks at: ", ANCHORS,
     function() local b = get(); return (b and b.stackAnchor) or "TOP" end,
     function(v) local b = ensure(); if b then b.stackAnchor = v; repaint() end end))
 
-  add(MakeColor(ct, 0, -225,
+  add(MakeColor(ct, 0, -262,
     function() local b = get(); return b and b.timerColor end,
     function(v) local b = ensure(); if b then b.timerColor = v end end, "Countdown Color"))
-  add(MakeColor(ct, COL2_X, -225,
+  add(MakeColor(ct, COL2_X, -262,
     function() local b = get(); return b and b.stackColor end,
     function(v) local b = ensure(); if b then b.stackColor = v end end, "Stacks Color"))
 
@@ -3760,10 +3770,10 @@ function C:BuildBarSection(ct)
   -- label starts at x=4, so anything longer runs underneath the button — which is exactly
   -- what "Countdown Size" and "Stack Count Size" did. Every other slider in this tab is
   -- short for the same reason ("Alpha %", "Width", "Stacks Max"). Keep these two short.
-  add(MakeSlider(ct, -256, "Timer Size", 8, 32, 1,
+  add(MakeSlider(ct, -293, "Timer Size", 8, 32, 1,
     function() local b = get(); return (b and b.timerSize) or 14 end,
     function(v) local b = ensure(); if b then b.timerSize = v; repaint() end end))
-  add(MakeSlider(ct, -289, "Stack Size", 8, 32, 1,
+  add(MakeSlider(ct, -326, "Stack Size", 8, 32, 1,
     function() local b = get(); return (b and b.stackSize) or 14 end,
     function(v) local b = ensure(); if b then b.stackSize = v; repaint() end end))
 
@@ -3771,7 +3781,7 @@ function C:BuildBarSection(ct)
   -- typefaces off one 22px-wide bar would look accidental rather than designed; the
   -- Text section takes the same line for an aura's label.
   local fb = flatButton(ct, 220, 28, COLOR.heroic, "", 11); fb:SetBase(0.5); fb.text:Hide()
-  fb:SetPoint("TOPLEFT", 0, -322)
+  fb:SetPoint("TOPLEFT", 0, -359)
   local fLbl = twoWeightLabel(fb, 11)
   fb:SetScript("OnClick", function()
     local b = get(); if not b then return end
@@ -3789,13 +3799,13 @@ function C:BuildBarSection(ct)
   -- and reads as a control that simply does nothing. It gets its own holder frame purely
   -- so it can be hidden as a unit (the row MakeSlider returns exposes no widgets).
   local maxHolder = CreateFrame("Frame", nil, ct)
-  maxHolder:SetPoint("TOPLEFT", 0, -360); maxHolder:SetSize(EDITOR_W, 26)
+  maxHolder:SetPoint("TOPLEFT", 0, -397); maxHolder:SetSize(EDITOR_W, 26)
   local maxRow = add(MakeSlider(maxHolder, 0, "Stacks Max", 1, 40, 1,
     function() local b = get(); return (b and b.max) or 10 end,
     function(v) local b = ensure(); if b then b.max = v; repaint() end end))
 
   local hint = newText(ct, FONT.body, 11, MUTE, "LEFT")
-  hint:SetPoint("TOPLEFT", 2, -398); hint:SetWidth(EDITOR_W - 4); hint:SetJustifyH("LEFT")
+  hint:SetPoint("TOPLEFT", 2, -435); hint:SetWidth(EDITOR_W - 4); hint:SetJustifyH("LEFT")
 
   -- One gate for the whole section: these controls only mean anything on a bar aura, and
   -- the mode decides whether Stacks Max does. Registered as a single row so the selection

@@ -73,6 +73,11 @@ CDM.auraUnit       = {} -- spellID -> "player"|"target" (from the item's non-sec
                         -- Discover). Which unit a Bar display's aura_dur source resolves on.
 CDM.cdBarShadow    = {} -- spellID -> hidden Cooldown widget: a cd_dur Bar's show/hide signal. Fed
                         -- the spell's cooldown duration object; IsShown()==on real cooldown.
+CDM.inPandemic     = {} -- display KEY -> true while its DoT is in the pandemic window. Set from the
+                        -- cleaned-up pandemic alert (see OnItemAlertEvent), cleared on the aura's
+                        -- (re)apply/remove alerts, on hide, and on Discover. Read by
+                        -- Displays:ApplyBarBackground — the bar's backdrop wears cfg.bar.pandemicBg
+                        -- while this is set. A plain boolean GA owns; nothing secret is read.
 
 local VIEWER_NAME_BY_CATEGORY = {
   [0] = "EssentialCooldownViewer", [1] = "UtilityCooldownViewer",
@@ -1131,6 +1136,9 @@ function CDM:RefreshDisplays(silent)
           self:PlaySound(sid, cfg)
         end
         GA.Displays:Hide(sid)
+        -- A DoT that ends without a removal alert (target died, target swapped) must not
+        -- leave its bar pandemic-coloured for the next cast. Hidden = not in pandemic.
+        if self.inPandemic[sid] then self:SetPandemic(sid, false) end
       end
       -- nil = unknown (secret): leave the display as-is
     end
@@ -1274,6 +1282,13 @@ local function OnItemAlertEvent(itemFrame, event)
   -- window after a removal separates them cleanly. Without this, a display set
   -- to "Pandemic window" also announces the DoT falling off — which is the
   -- opposite of what pandemic means, and was the owner's report.
+  -- The pandemic BACKDROP follows the same cleaned-up signal as the pandemic sound: it is
+  -- set below, next to the sound, only after both guards have passed — and it clears on
+  -- the aura's own (re)apply and remove alerts, so a refresh puts the bar back to normal.
+  if bucket == "trigger" or bucket == "untrigger" then
+    CDM:SetPandemicForSpell(spellID, false)
+  end
+
   if bucket == "untrigger" then
     CDM._lastRemove = CDM._lastRemove or {}
     CDM._lastRemove[spellID] = GetTime()
@@ -1308,6 +1323,13 @@ local function OnItemAlertEvent(itemFrame, event)
       CDM._pandPending[spellID] = nil
       LogAlert(event, spellID, "bucket:pandemic")
       CDM:FireBucketSounds("pandemic", spellID)
+      -- The backdrop, but not if a refresh landed while this alert was settling: the DoT
+      -- that alert described has already been replaced. (The sound path is unchanged.)
+      if CDM:CastSince(spellID, PANDEMIC_GUARD) then
+        LogAlert(event, spellID, "drop:pandemicColorRefreshed")
+      else
+        CDM:SetPandemicForSpell(spellID, true)
+      end
     end)
     return
   end
@@ -1334,6 +1356,96 @@ function CDM:FireBucketSounds(bucket, spellID)
   end
 end
 
+-- Flip one display's pandemic flag and repaint its backdrop — ONLY its backdrop. This runs
+-- in combat by design (pandemic windows happen nowhere else), so it must not go anywhere
+-- near the duration engine's button: Displays:RefreshBarBackground touches GA's own
+-- texture and nothing else.
+function CDM:SetPandemic(id, on)
+  on = on and true or nil
+  if self.inPandemic[id] == on then return end
+  self.inPandemic[id] = on
+  if GA.Displays and GA.Displays.RefreshBarBackground then
+    GA.Displays:RefreshBarBackground(id)
+  end
+end
+
+-- Every BAR display that drains for `spellID` enters/leaves the pandemic window together.
+-- Keyed on DisplaySpellID — the spell the bar actually tracks — not on the sound's
+-- soundAuraSpell mapping, so a bar whose sound is off (or on another timing) still tints.
+-- Same gates as the sound: a bar that could not be on screen does not change colour.
+function CDM:SetPandemicForSpell(spellID, on)
+  local db = GA.db and GA.db.displays
+  if not db then return end
+  for id, cfg in pairs(db) do
+    if cfg.kind == "bar" and self:DisplaySpellID(cfg) == spellID then
+      if not on then
+        self:SetPandemic(id, false)          -- a clear is always right, colour set or not
+      elseif cfg.bar and cfg.bar.pandemicBg and cfg.enabled ~= false
+         and self:GroupGate(cfg) and self:VisibilityGate(cfg) then
+        self:SetPandemic(id, true)
+      end
+    end
+  end
+end
+
+-- A DoT REFRESH ends its pandemic window, and the CDM does not reliably say so.
+-- ⚠ MEASURED 2026-09-19 (/ga alertlog, Rogue, two fights): refreshing Garrote inside its
+-- window fired NO alert in fight 1 and a Removed+Applied pair in fight 2; Envenom and
+-- Rupture refreshes fired nothing in either. `RefreshData` fires on every tick of every
+-- tracked spell, so it says nothing. The one line that landed on EVERY refresh, all three
+-- spells, both fights, was UNIT_SPELLCAST_SUCCEEDED for the spell itself — a plain event
+-- with a plain spellID, nothing secret. So "you cast it" is the clear. The cast ID is
+-- matched through CandidateSpellIDs (spell + override + linked) because a DoT's CAST id and
+-- its AURA id can differ, and the CDM item may be keyed on either.
+-- Known gap, accepted: a cast that does not LAND (dodge/miss) clears the colour while the
+-- DoT is still in its window. The next pandemic alert cannot re-fire for that instance, so
+-- the bar stays plain until the next real refresh. Cosmetic, rare, self-correcting.
+function CDM:OnPlayerCast(castID)
+  if castID == nil or issecret(castID) then return end
+  -- Timestamp first, unconditionally: CastSince needs it for the settle window even when
+  -- nothing is red yet. One entry per distinct spell cast — bounded by the spellbook.
+  self._lastCast = self._lastCast or {}
+  self._lastCast[castID] = GetTime()
+  -- Cheap exit: nothing is red, so nothing can need clearing. This runs on every cast.
+  if not next(self.inPandemic) then return end
+  local AD = GA.AuraDuration
+  local db = GA.db and GA.db.displays
+  if not db then return end
+  for id in pairs(self.inPandemic) do
+    local cfg = db[id]
+    local sid = cfg and self:DisplaySpellID(cfg)
+    if sid then
+      local hit = (sid == castID)
+      if not hit and AD and AD.CandidateSpellIDs then
+        hit = AD:CandidateSpellIDs(sid)[castID] and true or false
+      end
+      if hit then
+        LogAlert(nil, sid, "cast:clearPandemic")
+        self:SetPandemic(id, false)
+      end
+    end
+  end
+end
+
+-- Did the player cast anything that refreshes `spellID` within the last `window` seconds?
+-- Used by the deferred pandemic path so a refresh landing inside the 0.3s settle window
+-- does not get painted over by the alert that preceded it.
+function CDM:CastSince(spellID, window)
+  local lc = self._lastCast
+  if not lc then return false end
+  local now = GetTime()
+  local t = lc[spellID]
+  if t and (now - t) <= window then return true end
+  local AD = GA.AuraDuration
+  if AD and AD.CandidateSpellIDs then
+    for cid in pairs(AD:CandidateSpellIDs(spellID)) do
+      t = lc[cid]
+      if t and (now - t) <= window then return true end
+    end
+  end
+  return false
+end
+
 -- (Re)bind every configured display to its CDM item frame + hook + initial sync.
 function CDM:Discover()
   wipe(self.frameToSpell)
@@ -1343,6 +1455,7 @@ function CDM:Discover()
   wipe(self.cdFrameToItem)
   wipe(self.isCharge)
   wipe(self.auraUnit)
+  wipe(self.inPandemic)   -- a rebind starts every bar in its normal colour; the next alert re-decides
   if GA.Displays then GA.Displays:RefreshAll() end
 
   local db = GA.db and GA.db.displays
@@ -1575,12 +1688,15 @@ function CDM:Init()
   ev:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
   ev:RegisterEvent("PLAYER_REGEN_ENABLED")   -- left combat: reseed availability (readable OOC)
   ev:RegisterEvent("SPELL_UPDATE_COOLDOWN")
+  ev:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")   -- the DoT-REFRESH signal; see CDM:OnPlayerCast
   if C_CooldownViewer then
     ev:RegisterEvent("COOLDOWN_VIEWER_DATA_LOADED")
     ev:RegisterEvent("COOLDOWN_VIEWER_SPELL_OVERRIDE_UPDATED")
   end
-  ev:SetScript("OnEvent", function(_, event, arg1)
-    if event == "SPELL_UPDATE_COOLDOWN" then
+  ev:SetScript("OnEvent", function(_, event, arg1, arg2, arg3)
+    if event == "UNIT_SPELLCAST_SUCCEEDED" then
+      if arg1 == "player" then CDM:OnPlayerCast(arg3) end
+    elseif event == "SPELL_UPDATE_COOLDOWN" then
       CDM:FeedAllChargeShadows()   -- re-feed charge shadows → OnShow/OnHide track availability
       CDM:RefreshDisplays()
     elseif event == "PLAYER_REGEN_ENABLED" then

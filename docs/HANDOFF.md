@@ -1,6 +1,49 @@
-# GloomsAuras — Session Handoff  (last updated 2026-08-25)
+# GloomsAuras — Session Handoff  (last updated 2026-09-19)
 
-> ## ▶▶▶ 2026-08-25 — SHAPES, SHAPED ANIMATIONS, EFFECTS-ONLY, ROTATION
+> ## ▶▶▶ 2026-09-19 — PANDEMIC BACKGROUND on bars
+> **The measured record is `~/GloomsHub/docs/FINDINGS.md` §15 (the refresh signal) with §12 (the
+> pandemic guard it rides). Read those; not restated here.** GA detail only.
+>
+> **What shipped, owner-QA'd on a Rogue with Garrote:** `cfg.bar.pandemicBg` (nil = off) — a
+> "Pandemic Background" swatch under Background in the Bar section. While the tracked DoT is in its
+> pandemic window the bar's BACKDROP wears that colour; it reverts the instant a refresh lands and
+> is plain on a fresh cast.
+>
+> **How it is wired — four places, deliberately small:**
+> - `CDM.inPandemic[displayKey]` — a plain boolean GA owns. SET in the deferred pandemic timer in
+>   `OnItemAlertEvent`, right after `FireBucketSounds("pandemic")`, so both spurious-alert guards
+>   have already passed (never hook `PandemicTime` a second time). CLEARED on the aura's own
+>   apply/remove alerts, on hide (`RefreshDisplays`' hidden edge), on `Discover`, and — the one that
+>   actually matters — on **`UNIT_SPELLCAST_SUCCEEDED` for the spell** (`CDM:OnPlayerCast`),
+>   matched through `AuraDuration:CandidateSpellIDs`. `CDM:CastSince` keeps a refresh that lands
+>   inside the 0.3s settle window from being painted over by the alert that preceded it.
+> - `Displays:ApplyBarBackground(f, cfg, id)` — the backdrop paint split out of `ApplyBarStyle`,
+>   picks `pandemicBg` when the flag is set. `Displays:RefreshBarBackground(id)` repaints ONLY that,
+>   in combat, and must never route through `ApplyConfig` (that re-pushes the engine style, which
+>   queues to end of combat). `ApplyBarStyle` now takes the display KEY as a third argument.
+> - `Config.lua` — the swatch; every row below it in the Bar section moved down 37px and the
+>   accordion height went 428 → 465.
+>
+> ### ⚠ Why the BACKDROP and not the fill — a wall, not a preference
+> The visible fill of a duration bar is the engine's Blizzard `AuraButton` (§1 / this file's
+> "READ THIS BEFORE ANY DoT WORK"): forbidden in combat, and a pandemic window happens nowhere else.
+> A fill recolour would queue to `PLAYER_REGEN_ENABLED` — i.e. never be seen. The backdrop is GA's
+> own texture on GA's own frame, already written in combat every fight. **The owner chose it on
+> design grounds too:** by the pandemic point the bar is mostly drained, so the backdrop IS what is
+> on screen. **Do not re-offer the fill.** Whether `SetStatusBarColor` alone would throw on the
+> engine's region is `UNTESTED` and nothing depends on it.
+>
+> ### Traps
+> - **`OnAuraApplied` does NOT fire on a refresh** (four of five measured refreshes were silent). The
+>   first build keyed the clear on it and the owner saw the bar stay red. FINDINGS §15.
+> - **`RefreshData` on the item frame fires on every tick of every tracked spell.** Useless as any
+>   kind of signal; the probe was removed the same day.
+> - **A cast that does not land** (dodge/miss) clears the colour early, and the alert cannot re-fire
+>   for that instance. Accepted; cosmetic; the next real refresh fixes it.
+> - Coverage is the pandemic SOUND's: only spells Blizzard emits `PandemicTime` for (UA stacks, so
+>   never). `/ga trace` prints PANDEMIC / noPANDEMIC per bar.
+
+> ## ▶▶ 2026-08-25 — SHAPES, SHAPED ANIMATIONS, EFFECTS-ONLY, ROTATION
 > **The measured record is `~/GloomsHub/docs/FINDINGS.md` §14, and the API is Hub CONTRACTS §7-§8.
 > Read those; they are not restated here.** GA detail only.
 >

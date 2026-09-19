@@ -468,6 +468,38 @@ function D:BarTexturePath(b)
   return (LSM and LSM.Fetch and LSM:Fetch("statusbar", t, true)) or t
 end
 
+-- The backdrop behind the fill. Split out of ApplyBarStyle because it is the ONE part of a
+-- bar's look that changes MID-COMBAT: while the tracked DoT is in its pandemic window the
+-- backdrop wears cfg.bar.pandemicBg instead of cfg.bar.bg (CDM.inPandemic, set from the
+-- same cleaned-up alert that drives the pandemic sound). The FILL cannot do this on 12.1 —
+-- the drained fill belongs to the duration engine's Blizzard button, a forbidden object
+-- whenever auras are secret, so a fill recolour would queue until combat ends and never
+-- be seen. The backdrop is GA's own texture on GA's own frame, touchable at any time —
+-- and by the pandemic point the bar is mostly drained, so the backdrop IS most of what
+-- is on screen. Called with the display KEY (not cfg.spellID) because that is what
+-- CDM.inPandemic is keyed on.
+function D:ApplyBarBackground(f, cfg, id)
+  local bar = f and f.bar
+  if not (bar and bar.bg) then return end
+  local b   = (cfg and cfg.bar) or {}
+  local bgc = b.bg or { 0, 0, 0, 0.55 }
+  local pan = b.pandemicBg
+  if pan and id and GA.CDM and GA.CDM.inPandemic and GA.CDM.inPandemic[id] then
+    -- The pandemic colour has no alpha of its own (the swatch picker returns RGB), so it
+    -- borrows the normal backdrop's — the tint changes, the weight does not.
+    bgc = { pan[1] or 0, pan[2] or 0, pan[3] or 0, pan[4] or bgc[4] or 0.55 }
+  end
+  bar.bg:SetColorTexture(bgc[1] or 0, bgc[2] or 0, bgc[3] or 0, bgc[4] or 0.55)
+end
+
+-- Repaint ONLY the backdrop of one display, by key. This is what the pandemic flag flip
+-- calls: it must not go through ApplyConfig, which re-pushes the engine style and would
+-- defer the whole thing to PLAYER_REGEN_ENABLED.
+function D:RefreshBarBackground(id)
+  local f, cfg = self.frames[id], self:Config(id)
+  if f and cfg and cfg.kind == "bar" then self:ApplyBarBackground(f, cfg, id) end
+end
+
 function D:AnchorReadout(fs, parent, anchor)
   if not (fs and parent) then return end
   local a = READOUT[anchor or "CENTER"] or READOUT.CENTER
@@ -475,7 +507,7 @@ function D:AnchorReadout(fs, parent, anchor)
   fs:SetPoint(a[1], parent, a[1], a[2], a[3])
 end
 
-function D:ApplyBarStyle(f, cfg)
+function D:ApplyBarStyle(f, cfg, id)
   local bar = EnsureBar(f)
   local b = cfg.bar or {}
   -- Fill texture: an LSM statusbar name if set + resolvable, else our white fill.
@@ -502,8 +534,7 @@ function D:ApplyBarStyle(f, cfg)
   local oc = GA.COLOR and GA.COLOR.orange
   local col = b.color or (oc and { oc.r, oc.g, oc.b }) or { 1, 0.47, 0.16 }
   bar:SetStatusBarColor(col[1] or 1, col[2] or 1, col[3] or 1)
-  local bgc = b.bg or { 0, 0, 0, 0.55 }
-  bar.bg:SetColorTexture(bgc[1] or 0, bgc[2] or 0, bgc[3] or 0, bgc[4] or 0.55)
+  self:ApplyBarBackground(f, cfg, id)
   -- Initial state depends on mode: a stacks bar spans 0..max and starts empty; a duration bar
   -- spans 0..1 and starts full — both are corrected by the first CDM:UpdateBar feed.
   if b.mode == "stacks" then
@@ -669,7 +700,7 @@ function D:ApplyConfig(spellID)
     -- Bar display: a StatusBar drives the visual; hide the icon texture + cooldown swipe.
     f.tex:Hide()
     if f.cd then f.cd:Hide() end
-    self:ApplyBarStyle(f, cfg)
+    self:ApplyBarStyle(f, cfg, spellID)
     -- On 12.1 the visible fill of a duration bar belongs to the engine's button, not to
     -- f.bar — so restyling f.bar alone changes nothing the user can see. Push the same
     -- look onto the engine's region too (it no-ops unless this display is attached, and
