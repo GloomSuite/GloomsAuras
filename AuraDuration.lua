@@ -328,6 +328,11 @@ local function WireButton(button, f, cfg, sub)
     local tc = b.timerColor
     timer:SetTextColor(tc and tc[1] or 1, tc and tc[2] or 1, tc and tc[3] or 1)
   end
+  -- This button now carries the current style: tell ApplyStyle's guard so a fresh
+  -- button handed over MID-FIGHT is not deferred on every feed until regen (441
+  -- deferrals in one dummy session, 2026-09-20, after the guard first learned to
+  -- key on the button).
+  sub.paintedButton, sub.paintedSig = button, StyleSig(b)
 end
 
 -- --------------------------------------------------------------------------
@@ -366,10 +371,12 @@ function AD:Attach(displayID, f, cfg)
       c:SetAuraSlotCandidateFilters(prev.key, { includeSpellIDs = spellIDs })
       if c.UpdateAllAuras then c:UpdateAllAuras() end
       prev.spellIDs = spellIDs
-      -- ⚠ INVALIDATE THE STYLE FINGERPRINT. A re-parse can hand the slot a different button,
-      -- whose regions have never been painted — so the next ApplyStyle must not be skipped as
-      -- "unchanged". This is the line that keeps the skip-cache safe.
-      prev.styleSig = nil
+      -- The style fingerprint is NOT cleared here (it was, until 2026-09-20). UpdateBar
+      -- re-attaches on every feed — per UNIT_AURA per shown bar, 1,643 retargets in
+      -- one 30s dummy fight — so clearing it repainted the bar on every feed out of
+      -- combat and queued a deferral on every feed in combat (Hub backlog item 4).
+      -- A fresh button is still never skipped: ApplyStyle's guard compares the
+      -- painted BUTTON as well as the style, and WireButton paints it at init anyway.
       diag.retarget = diag.retarget + 1
     end
     return true
@@ -425,6 +432,7 @@ end
 -- `/ga auradur` reports styleThrew so a dead control can never look like a working one.
 -- --------------------------------------------------------------------------
 function AD:ApplyStyle(displayID, f, cfg)
+  if GA.HotCount then GA.HotCount("ApplyStyle") end
   local a = attached[displayID]
   if not (a and a.sub and f and f.bar and cfg) then
     Log("ApplyStyle %s: SKIPPED (attached=%s sub=%s frame=%s)", tostring(displayID),
@@ -432,20 +440,25 @@ function AD:ApplyStyle(displayID, f, cfg)
     return
   end
   Log("ApplyStyle %s: entering", tostring(displayID))
+  -- Nothing changed since the last push onto THIS button? Don't repaint it — and
+  -- don't DEFER it either. The combat check used to come first, so every feed in a
+  -- fight (UpdateBar runs per UNIT_AURA per shown bar — 1,165 in one 30s dummy
+  -- session, measured 2026-09-20) was logged as a deferred style change when
+  -- nothing had changed. That was Hub backlog item 4's "600 deferrals".
+  -- "Unchanged" means the same style on the SAME button: a re-parse can hand the
+  -- slot a fresh button, and that one's first paint must never be skipped (its
+  -- wiring paints it too, but this keeps the guard exact rather than trusting it).
+  local sig = StyleSig(cfg.bar or {})
+  if a.sub.paintedButton == a.sub.button and a.sub.paintedSig == sig then
+    diag.styleSkipped = diag.styleSkipped + 1
+    return
+  end
   if InCombatLockdown() or (IsEncounterInProgress and IsEncounterInProgress()) then
     styleDeferred[displayID] = { f = f, cfg = cfg }
     diag.styleDefer = diag.styleDefer + 1
     return
   end
   styleDeferred[displayID] = nil
-
-  -- Nothing changed since the last push onto THIS button? Don't repaint it.
-  local sig = StyleSig(cfg.bar or {})
-  if a.styleSig == sig then
-    diag.styleSkipped = diag.styleSkipped + 1
-    return
-  end
-  a.styleSig = sig
 
   local sub    = a.sub
   local b      = cfg.bar or {}
@@ -489,9 +502,19 @@ function AD:ApplyStyle(displayID, f, cfg)
 
   if ok then
     diag.styleApplied = diag.styleApplied + 1
+    a.sub.paintedButton, a.sub.paintedSig = a.sub.button, sig
   else
     diag.styleThrew = diag.styleThrew + 1
     Log("ApplyStyle %s THREW: %s", tostring(displayID), tostring(err))
+    -- A throw here is a control that silently does nothing; say so ONCE per display
+    -- per session whether or not debug is on (the flag does not survive a /reload,
+    -- so "turn debug on, reload, read the throw" could never work — 2026-09-20).
+    a.threwSaid = a.threwSaid or {}
+    local head = tostring(err):match("^[^\n]*")
+    if not a.threwSaid[head] then
+      a.threwSaid[head] = true
+      GA.msg(("bar style push for |cffffffff%s|r threw: %s"):format(tostring(cfg.label or displayID), head))
+    end
   end
 end
 
@@ -519,7 +542,8 @@ function AD:SetSlotActive(displayID, on)
   if not (c and c.SetAuraSlotCandidateFilters) then return end
   c:SetAuraSlotCandidateFilters(a.key, { includeSpellIDs = on and a.spellIDs or { [0] = true } })
   if c.UpdateAllAuras then c:UpdateAllAuras() end
-  a.styleSig = nil   -- re-showing can hand us a fresh button; never skip its first paint
+  -- (Re-showing can hand us a fresh button; ApplyStyle's guard keys on the button, so
+  -- its first paint is never skipped without clearing the fingerprint here.)
   Log("SetSlotActive %s → %s", tostring(displayID), tostring(on))
 end
 

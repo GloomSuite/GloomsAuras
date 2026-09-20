@@ -528,6 +528,48 @@ local function SlashHandler(input)
     if GA.CDM and GA.CDM.Trace then GA.CDM:Trace() else msg("CDM engine not ready yet.") end
   elseif cmd == "alerts" then
     if GA.CDM and GA.CDM.ReportAlerts then GA.CDM:ReportAlerts() else msg("CDM engine not ready yet.") end
+  elseif cmd == "known" then
+    -- Backlog item 6 trace: for every display, what the "known" calls say next to
+    -- what the CDM bound. Read-only. The question it answers: does a base spell a
+    -- hero talent has REPLACED still report as known, or only its override?
+    local db = GA.db and GA.db.displays or {}
+    local CDM = GA.CDM
+    local function y(v) if v == nil then return "nil" end return v and "yes" or "no" end
+    msg("known-spell trace (display · spell · known · playerSpell · knownOrOverride · override · bound · avail):")
+    local rows = {}
+    for id, cfg in pairs(db) do
+      local sid = CDM and CDM.DisplaySpellID and CDM:DisplaySpellID(cfg)
+      if sid then
+        local nm = C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(sid) or "?"
+        local known = IsSpellKnown and IsSpellKnown(sid)
+        local ps = IsPlayerSpell and IsPlayerSpell(sid)
+        local koo = IsSpellKnownOrOverridesKnown and IsSpellKnownOrOverridesKnown(sid)
+        local ov = C_Spell and C_Spell.GetOverrideSpell and C_Spell.GetOverrideSpell(sid)
+        local ovs = (ov and ov ~= sid) and (tostring(ov) .. " " .. (C_Spell.GetSpellName(ov) or "?")) or "-"
+        local bound = false
+        for _, fs in pairs(CDM and CDM.frameToSpell or {}) do if fs == sid then bound = true; break end end
+        rows[#rows + 1] = ("  %s · %d %s · known=%s · player=%s · knownOrOv=%s · override=%s · bound=%s · avail=%s")
+          :format(tostring(cfg.label or id), sid, nm, y(known), y(ps), y(koo), ovs, y(bound), tostring(CDM and CDM.available[sid]))
+      else
+        rows[#rows + 1] = ("  %s · (no spell in its first trigger)"):format(tostring(cfg.label or id))
+      end
+    end
+    table.sort(rows)
+    for _, r in ipairs(rows) do print(r) end
+  elseif cmd == "hot" then
+    -- The ApplyConfig / ApplyStyle call tally (Displays.lua GA.HotCount). Opt-in.
+    local sub = (rest or ""):lower()
+    if sub == "on" then GA.hot = {}; msg("hot counters ON — /ga hot to read, /ga hot off to stop")
+    elseif sub == "off" then GA.hot = nil; msg("hot counters OFF")
+    elseif not GA.hot then msg("hot counters are off — /ga hot on to start")
+    else
+      local rows, total = {}, 0
+      for k, n in pairs(GA.hot) do rows[#rows + 1] = { k, n }; total = total + n end
+      table.sort(rows, function(a, b) return a[2] > b[2] end)
+      msg(("hot: %d calls since last reset"):format(total))
+      for _, r in ipairs(rows) do print(("  %5d  %s"):format(r[2], r[1])) end
+      GA.hot = {}
+    end
   elseif cmd == "auradur" then
     if GA.AuraDuration then GA.AuraDuration:Report(rest) else msg("duration engine not loaded.") end
   elseif cmd == "stacks" then

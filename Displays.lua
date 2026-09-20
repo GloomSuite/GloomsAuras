@@ -680,7 +680,20 @@ function D:UpdateBar(spellID)
   end)
 end
 
+-- Instrument (Hub backlog item 4, measured 2026-09-20): who calls ApplyConfig /
+-- ApplyStyle, how often. OFF unless `/ga hot on`; `/ga hot` prints the tally and
+-- resets it; `/ga hot off` stops it. debugstack per call is not free, so it never
+-- runs in normal play. Diagnostic only — no behaviour.
+function GA.HotCount(what)
+  local h = GA.hot; if not h then return end
+  local who = (debugstack(3, 1, 0) or ""):match("[^\n]*") or "?"
+  who = who:gsub("^Interface/AddOns/", ""):gsub("^%[string \"", ""):gsub("%]:", ":"):gsub(": in function.*$", "")
+  local key = what .. " <- " .. who
+  h[key] = (h[key] or 0) + 1
+end
+
 function D:ApplyConfig(spellID)
+  GA.HotCount("ApplyConfig")
   local f = self.frames[spellID]
   local cfg = self:Config(spellID)
   if not f or not cfg then return end
@@ -727,7 +740,13 @@ function D:ApplyConfig(spellID)
       f.tex:SetTexture(custom)
       f.tex:SetTexCoord(0, 1, 0, 1)
     else
-      local icon = C_Spell and C_Spell.GetSpellTexture and C_Spell.GetSpellTexture(cfg.spellID or spellID)
+      -- The display's spell as the engine resolves it (its first trigger, for an aura
+      -- built in the tab — cfg.spellID is nil there, and `spellID` is the display KEY,
+      -- "d18", so this lookup always failed and every texture-less aura drew magenta).
+      -- The owner ruled 2026-09-20: a texture-less aura shows its spell's icon; an
+      -- explicit texture pick always wins (the branch above).
+      local sid = (GA.CDM and GA.CDM.DisplaySpellID and GA.CDM:DisplaySpellID(cfg)) or cfg.spellID or spellID
+      local icon = C_Spell and C_Spell.GetSpellTexture and C_Spell.GetSpellTexture(sid)
       if icon then
         f.tex:SetTexture(icon)
         f.tex:SetTexCoord(0.08, 0.92, 0.08, 0.92)  -- trim the default icon border

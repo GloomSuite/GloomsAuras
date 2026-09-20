@@ -431,14 +431,17 @@ local function MakeText(parent, yOff, label, get, set, w)
   title:SetPoint("TOPLEFT", 16, yOff); title:SetText(label)
 
   local edit = flatEditBox(parent, w or 330, 20); edit:SetPoint("TOPLEFT", 22, yOff - 18)
-  edit:SetScript("OnEnterPressed", function(self)
-    local t = self:GetText(); if t == "" then t = nil end
-    set(t); ReapplySelected(); self:ClearFocus()
-  end)
-  edit:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
-
   local row = {}
   function row:refresh() local v = get(); edit:SetText(v ~= nil and tostring(v) or ""); edit:SetCursorPosition(0) end
+  -- Commits on Enter and on losing focus (click away, close the window); it was
+  -- Enter-only, and a typed path that was never "locked in" looked saved.
+  local function commit(self)
+    local t = self:GetText(); if t == "" then t = nil end
+    if t ~= get() then set(t); ReapplySelected() end
+  end
+  edit:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
+  edit:HookScript("OnEditFocusLost", commit)
+  edit:SetScript("OnEscapePressed", function(self) row:refresh(); self:ClearFocus() end)
   function row:setEnabled(on) edit:SetEnabled(on) end
   return row
 end
@@ -679,6 +682,41 @@ end
 -- --------------------------------------------------------------------------
 -- Left pane: the list of created displays.
 -- --------------------------------------------------------------------------
+-- Hub backlog item 6: the text for the list's "!" mark, or nil when the aura is fine.
+-- A cooldown-state leaf (ready / castable / on cooldown / charges) whose spell the CDM
+-- has not bound answers "ready" by default (FINDINGS §12, the silent yes). Quiet when
+-- the aura's visibility already carries a Spell / Talent Known or Specialization rule.
+function C:SilentYesText(cfg)
+  local v = cfg.visibility
+  if v and (v.spellKnown or (v.specs and next(v.specs))) then return nil end
+  local CDM = GA.CDM
+  if not (CDM and CDM.frameToSpell and cfg.trigger) then return nil end
+  local unbound
+  local function walk(node)
+    if type(node) ~= "table" or unbound then return end
+    if node.conditions then for _, c in ipairs(node.conditions) do walk(c) end; return end
+    local st = node.state
+    if node.spellID and (st == "cd_ready" or st == "cd_castable" or st == "cd_oncd"
+                         or st == "charges_max" or st == "charges_notmax") then
+      for _, fs in pairs(CDM.frameToSpell) do if fs == node.spellID then return end end
+      -- "Castable" is ready AND IsSpellUsable, and the usable half is a real answer:
+      -- false for a spell this spec doesn't have (Shadowburn on Affliction, 2026-09-20),
+      -- so the silent yes never gets through there. Only mark it while usable says yes.
+      if st == "cd_castable" then
+        local ok, usable = pcall(function() return C_Spell and C_Spell.IsSpellUsable and C_Spell.IsSpellUsable(node.spellID) end)
+        if not (ok and usable == true) then return end
+      end
+      unbound = node.spellID
+    end
+  end
+  walk(cfg.trigger)
+  if not unbound then return nil end
+  local nm = (C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(unbound)) or ("spell " .. tostring(unbound))
+  return ("%s isn't in your Cooldown Manager right now (not talented, or not placed in it), so its cooldown "
+    .. "trigger reads as READY all the time and this aura will show at every pull. "
+    .. "To hide it when you don't have the spell, add a Spell / Talent Known or Specialization condition under Load Conditions."):format(nm)
+end
+
 local function RefreshList()
   listData = BuildLeftPaneEntries()
   local n = #listData
@@ -703,8 +741,13 @@ local function RefreshList()
       row.icon:Show()
       -- Show what the aura LOOKS like: its own texture first (appearance-first model),
       -- else its tracked spell's icon (legacy auras with no custom texture), else a fallback.
-      local icon = (cfg and cfg.texture)
-        or (cfg and cfg.spellID and C_Spell and C_Spell.GetSpellTexture and C_Spell.GetSpellTexture(cfg.spellID))
+      -- The spell resolves through DisplaySpellID (first trigger for a tab-built aura,
+      -- where cfg.spellID is nil) — the same rule as the on-screen fallback (item 9).
+      local tsid = cfg and GA.CDM and GA.CDM.DisplaySpellID and GA.CDM:DisplaySpellID(cfg)
+      local tex = cfg and cfg.texture
+      if tex == "" then tex = nil end
+      local icon = tex
+        or (tsid and C_Spell and C_Spell.GetSpellTexture and C_Spell.GetSpellTexture(tsid))
         or 134400
       row.icon:SetTexture(icon)
       if row.eye then
@@ -722,7 +765,9 @@ local function RefreshList()
         row.eye.icon:SetTexture(MEDIA .. (on and "unhidden.png" or "hidden.png"))
         row.eye.icon:SetVertexColor(tint.r, tint.g, tint.b)
       end
-      row.name:ClearAllPoints(); row.name:SetPoint("LEFT", 40, 0); row.name:SetPoint("RIGHT", -24, 0)
+      local warnText = cfg and C:SilentYesText(cfg)
+      if row.warn then row.warnText = warnText; row.warn:SetShown(warnText ~= nil) end
+      row.name:ClearAllPoints(); row.name:SetPoint("LEFT", 40, 0); row.name:SetPoint("RIGHT", warnText and -42 or -24, 0)
       row.name:SetText((cfg and cfg.label) or ("Spell " .. tostring(sid)))
       local dim = cfg and cfg.enabled == false   -- disabled in-game (Visibility → Disabled) greys the row
       row.name:SetTextColor(dim and 0.5 or TEXT.r, dim and 0.5 or TEXT.g, dim and 0.5 or TEXT.b)
@@ -733,6 +778,7 @@ local function RefreshList()
       row.kind, row.gid = "group", e.gid
       row.icon:Hide()
       if row.eye then row.eye:Hide() end
+      if row.warn then row.warn:Hide() end
       if row.arrow then row.arrow:Show(); row.arrow:SetRotation((g and g.collapsed) and 0 or CARET_DOWN) end
       if row.caretBtn then row.caretBtn:Show() end
       row.name:ClearAllPoints(); row.name:SetPoint("LEFT", 26, 0); row.name:SetPoint("RIGHT", -26, 0)
@@ -1790,6 +1836,11 @@ function C:BuildProfileBlock(rail, X, W, y)
     names  = function() return GA:ProfileNames() end,
     active = function() return GA:ActiveProfileName() or "?" end,
     switch = function(v) if v ~= GA:ActiveProfileName() then GA:SwitchProfile(v) end end,
+    users  = function(name)
+      local o = {}
+      for char, p in pairs((GA.global and GA.global.profileKeys) or {}) do if p == name then o[#o + 1] = char end end
+      return o
+    end,
     create = function(name)
       local ok, why = GA:CreateProfile(name)
       if ok then return true end
@@ -3919,11 +3970,17 @@ function C:BuildLoadConditionsSection(ct, o)
       skName:SetText("|cff888888enter a spell ID (talents count)|r")
     end
   end
-  skBox:SetScript("OnEnterPressed", function(self)
+  -- Commits on Enter and on losing focus, like the power box below.
+  local function skCommit(self)
     local v = visW(); if not v then return end
-    v.spellKnown = tonumber(self:GetText()); skRefreshName(); self:ClearFocus(); poke()
+    local id = tonumber(self:GetText())
+    if id ~= v.spellKnown then v.spellKnown = id; skRefreshName(); poke() end
+  end
+  skBox:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
+  skBox:HookScript("OnEditFocusLost", skCommit)
+  skBox:SetScript("OnEscapePressed", function(self)
+    local v = vis(); self:SetText(v and v.spellKnown and tostring(v.spellKnown) or ""); self:ClearFocus()
   end)
-  skBox:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
   sink[#sink + 1] = { refresh = function() local v = vis(); skBox:SetText(v and v.spellKnown and tostring(v.spellKnown) or ""); skRefreshName() end,
                       setEnabled = function(_, on) skBox:SetEnabled(on) end }
 
@@ -3992,12 +4049,22 @@ function C:BuildLoadConditionsSection(ct, o)
     end
     pwUnit:SetText("|cff888888choose a power first|r")
   end
-  pwBox:SetScript("OnEnterPressed", function(self)
+  -- Commits on Enter AND on losing focus. It used to commit on Enter only, so
+  -- typing 5 and clicking elsewhere left the seeded 1 stored behind a box that
+  -- read 5 — item 7's "shows at any combo points" (the owner, 2026-09-20).
+  local function pwCommit(self)
     local v = visW(); if not v then return end
     if v.power then v.power.value = tonumber(self:GetText()) or 0; poke() end
-    self:ClearFocus()
-  end)
+  end
+  pwBox:SetScript("OnEnterPressed", function(self) pwCommit(self); self:ClearFocus() end)
+  pwBox:HookScript("OnEditFocusLost", pwCommit)
   pwBox:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
+  -- Up / Down (Shift ×10) apply live (Hub MINOR 10).
+  pwBox.stepper = function(self, delta)
+    local v = vis(); if not (v and v.power) then return end
+    v.power.value = math.max(0, (tonumber(self:GetText()) or v.power.value or 0) + delta)
+    self:SetText(tostring(v.power.value)); poke()
+  end
   pwSyncBox = function()
     local v = vis()
     pwBox:SetText(v and v.power and v.power.value and tostring(v.power.value) or "")
@@ -4117,6 +4184,17 @@ local function BuildTab(c)
       RefreshList()
     end)
     eye:Hide(); row.eye = eye
+    -- The SILENT-YES mark (Hub backlog item 6, 2026-09-20): an orange "!" on an aura
+    -- whose cooldown trigger points at a spell the Cooldown Manager has NOT bound —
+    -- there "ready" is always true and the aura shows at every pull (Soul Fire, untalented).
+    -- Informational only: nothing is hidden or changed. Quiet when the aura already
+    -- carries a Spell / Talent Known or Specialization condition, which handle it.
+    local warn = CreateFrame("Button", nil, row)
+    warn:SetSize(16, 18); warn:SetPoint("RIGHT", eye, "LEFT", -2, 0)
+    warn.text = newText(warn, FONT.head, 13, COLOR.orange, "CENTER"); warn.text:SetPoint("CENTER"); warn.text:SetText("!")
+    UI.attachTip(warn, "Not in your Cooldown Manager",
+      function() return row.warnText or "" end)
+    warn:Hide(); row.warn = warn
     -- Double-click an aura row = rename it (the gesture people try first; the
     -- Rename button below is the discoverable one). OnClick still fires first,
     -- so the row is selected before the dialog opens.

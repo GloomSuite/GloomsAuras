@@ -1,4 +1,43 @@
-# GloomsAuras — Session Handoff  (last updated 2026-09-19)
+# GloomsAuras — Session Handoff  (last updated 2026-09-20)
+
+> ## ▶▶▶ 2026-09-20 — the clearing session: `ApplyConfig` heat FIXED, five backlog items closed
+> **The measured records are `~/GloomsHub/docs/FINDINGS.md` §1 (the heat), §12 (the silent-yes
+> trace) and §14 (the icon fallback). Read those; not restated here.** GA detail only.
+>
+> **`ApplyStyle`'s guard changed shape (`AuraDuration.lua`).** It keys on the painted BUTTON + style
+> fingerprint, both stored on the SLOT (`sub.paintedButton` / `sub.paintedSig`) and written by
+> `WireButton` at init AND by `ApplyStyle` on a successful paint. The fingerprint check now runs
+> BEFORE the combat deferral. `Attach`'s retarget path and `SetSlotActive` **no longer clear
+> anything** — the old `styleSig = nil` lines were the heat (1,165 repaints / deferrals per 30 s
+> fight). ⚠ A fresh button is still never skipped: its identity differs. A style throw now says
+> so in chat once per display per session — the debug flag does not survive `/reload`, so
+> "turn on debug, reload, read the throw" could never work.
+>
+> **Instruments, both OFF by default:** `/ga hot on` → `/ga hot` → `/ga hot off` (caller-keyed
+> counts of `ApplyConfig` / `ApplyStyle`; `debugstack` per call is not free) · `/ga known` (every
+> display's spell next to the three known-calls, its override, and whether the CDM bound it —
+> read-only).
+>
+> **The silent-yes mark (`Config.lua`, `C:SilentYesText`):** an orange `!` beside the eye on an
+> aura row whose cooldown-state trigger points at a spell the CDM has NOT bound and which carries
+> no Spell-Known / Specialization rule; for `cd_castable` only while `IsSpellUsable` says yes.
+> Informational only. The engine known-check is DISPROVED (FINDINGS §12) — do not build it.
+>
+> **Boxes that commit on focus-lost now (they were Enter-only):** PLAYER POWER's value (item 7's
+> "shows at any combo points"), SPELL / TALENT KNOWN's ID, `MakeText`'s texture path. Escape
+> restores the stored value first. The power box also steps live on Up / Down (Hub MINOR 10
+> `stepper`). `SKIN_NEEDS` stays 6 — the field is ignored by an older lib.
+>
+> **Icons:** a texture-less display shows its spell's icon (`DisplaySpellID`, the owner's ruling);
+> the list rows resolve the same way (their `?` had the same cause). `CDM:Debug` resolves through
+> `DisplaySpellID` too — item 8. That is FOUR `cfg.spellID` sites fixed; treat any new one as suspect.
+>
+> **Profile delete gate:** the rail's profile block passes `users(name)` from `GA.global.profileKeys`
+> (Hub CONTRACTS §4).
+>
+> **Closed on owner evidence, no code:** Corruption / UA bars (item 1 — "using it for weeks"),
+> the PLAYER POWER condition on a display and on a group (item 7, Rogue combo points), live raids
+> for weeks (item 2). Item 3 (`/ga probe` leak) stays deprioritised and unfixed.
 
 > ## ▶▶▶ 2026-09-19 — PANDEMIC BACKGROUND on bars
 > **The measured record is `~/GloomsHub/docs/FINDINGS.md` §15 (the refresh signal) with §12 (the

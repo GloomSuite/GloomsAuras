@@ -1810,7 +1810,11 @@ function CDM:Debug()
 
   local db = (GA.db and GA.db.displays) or {}
   for _id, cfg in pairs(db) do
-    local sid = cfg.spellID
+    -- The display's spell as the engine resolves it: cfg.spellID is nil for
+    -- every display built in the Auras tab, whose spell lives in its first
+    -- trigger. Keying off cfg.spellID alone reported NOT FOUND for all of them
+    -- while /ga trace resolved them fine (2026-08-24).
+    local sid = self:DisplaySpellID(cfg)
     local frame
     for f, fs in pairs(self.frameToSpell) do
       if fs == sid then frame = f; break end
