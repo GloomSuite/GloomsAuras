@@ -1,4 +1,12 @@
-# GloomsAuras — Session Handoff  (last updated 2026-09-20)
+# GloomsAuras — Session Handoff  (last updated 2026-09-21)
+
+> ## ▶ 2026-09-21 — the Suite window went light (Hub BACKLOG 16, stage 1); GA's tab is untouched
+> **The whole Suite UI is being rebuilt from the owner's Figma mocks; GA's seven panels are
+> stage 4.** Until then the Auras tab draws through the Hub's TRANSITION THEME (dark text tokens,
+> light plates — Hub CONTRACTS §1). The one GA edit: **19 hard-coded white labels / edit-box
+> texts in `Config.lua` became the `TEXT` token** (they were invisible on the light plate). No
+> behaviour changed. **Do not restyle or tidy the tab on its own** — it is rebuilt from its mocks
+> in its stage.
 
 > ## ▶▶▶ 2026-09-20 — the clearing session: `ApplyConfig` heat FIXED, five backlog items closed
 > **The measured records are `~/GloomsHub/docs/FINDINGS.md` §1 (the heat), §12 (the silent-yes

@@ -182,7 +182,7 @@ end
 -- swap=true puts the Semibold part first (used by the trigger state pills:
 -- "ACTIVE on Target" bold + " (Debuff)" regular).
 local function twoWeightLabel(parent, size, cc, swap)
-  cc = cc or { r = 1, g = 1, b = 1 }
+  cc = cc or TEXT   -- the transition (2026-09-21): the plate is light now
   local pre = newText(parent, swap and FONT.label or FONT.body,  size, cc, "LEFT")
   local val = newText(parent, swap and FONT.body  or FONT.label, size, cc, "LEFT")
   local h = { pre = pre, val = val }
@@ -401,7 +401,7 @@ local function MakeSlider(parent, yOff, label, minV, maxV, step, get, set)
 
   local edit = CreateFrame("EditBox", nil, parent)
   edit:SetSize(54, 20); edit:SetPoint("TOPLEFT", editX, yOff); edit:SetAutoFocus(false)
-  setFont(edit, FONT.body, 11); edit:SetTextColor(1, 1, 1); edit:SetJustifyH("CENTER"); edit:SetTextInsets(2, 2, 0, 0)
+  setFont(edit, FONT.body, 11); edit:SetTextColor(TEXT.r, TEXT.g, TEXT.b); edit:SetJustifyH("CENTER"); edit:SetTextInsets(2, 2, 0, 0)
   local ebg = edit:CreateTexture(nil, "BACKGROUND"); ebg:SetAllPoints(); ebg:SetColorTexture(H.r, H.g, H.b, 0.08)
 
   local applying = false
@@ -1714,7 +1714,7 @@ function C:BuildTriggerEditor()
     local add = CreateFrame("Button", nil, row); add:SetSize(120, 18); add:SetPoint("LEFT", 46, 0); row.add = add
     row.addText = newText(add, FONT.bodyM, 12, COLOR.purple, "LEFT"); row.addText:SetPoint("LEFT", 0, 0); row.addText:SetText("+ Add to group")
     add:SetFontString(row.addText)
-    add:SetScript("OnEnter", function() row.addText:SetTextColor(1, 1, 1) end)
+    add:SetScript("OnEnter", function() row.addText:SetTextColor(TEXT.r, TEXT.g, TEXT.b) end)
     add:SetScript("OnLeave", function() row.addText:SetTextColor(COLOR.purple.r, COLOR.purple.g, COLOR.purple.b) end)
     add:SetScript("OnClick", function() local ti = row.ti; OpenPicker(function(item) C:TrigAddLeaf(item, ti) end) end)
     row:Hide()
@@ -2333,7 +2333,7 @@ function C:BuildAppearanceSection(ct)
   -- takes the pane's width less the pill — texture paths are long, and this is the
   -- control that most wanted the room the wider pane freed up.
   local tfield = CreateFrame("EditBox", nil, ct); tfield:SetSize(EDITOR_W - 90, 28); tfield:SetPoint("TOPLEFT", 0, 0)
-  tfield:SetAutoFocus(false); setFont(tfield, FONT.body, 11); tfield:SetTextColor(1, 1, 1); tfield:SetTextInsets(10, 10, 0, 0)
+  tfield:SetAutoFocus(false); setFont(tfield, FONT.body, 11); tfield:SetTextColor(TEXT.r, TEXT.g, TEXT.b); tfield:SetTextInsets(10, 10, 0, 0)
   local tbg = tfield:CreateTexture(nil, "BACKGROUND"); tbg:SetAllPoints(); tbg:SetColorTexture(H.r, H.g, H.b, 0.08)
   local tph = newText(tfield, FONT.body, 11, TEXT, "LEFT"); tph:SetPoint("LEFT", 10, 0); tph:SetAlpha(0.3)
   tph:SetText("Leave blank to adopt the first trigger's icon")
@@ -2366,7 +2366,7 @@ function C:BuildAppearanceSection(ct)
   -- square on art that is already soft-edged is a legitimately invisible change, so
   -- do not "fix" a report of nothing happening before checking WHICH shape and WHICH
   -- texture; on 2026-08-25 that pairing looked like a broken mask and was not one.
-  local shLbl = newText(ct, FONT.body, 11, { r = 1, g = 1, b = 1 }, "LEFT")
+  local shLbl = newText(ct, FONT.body, 11, TEXT, "LEFT")
   shLbl:SetPoint("TOPLEFT", 0, -42); shLbl:SetText("Shape")
   local shBtn = flatButton(ct, 150, 24, H, "None", 11); shBtn:SetBase(0.5)
   shBtn:SetPoint("TOPLEFT", 70, -38)
@@ -2379,7 +2379,7 @@ function C:BuildAppearanceSection(ct)
   -- animation, so it can sit over a live action button and let the button's own
   -- icon show through. Distinct from leaving Texture empty, which means "work it
   -- out" and ends at the loud magenta panel when it cannot.
-  local naLbl = newText(ct, FONT.body, 11, { r = 1, g = 1, b = 1 }, "LEFT")
+  local naLbl = newText(ct, FONT.body, 11, TEXT, "LEFT")
   naLbl:SetPoint("TOPLEFT", 0, -70); naLbl:SetText("Effects only")
   local naTog = makeToggle(ct,
     function() local c = Cfg(); return (c and c.noArt) == true end,
@@ -2927,7 +2927,7 @@ function C:MakeTrigJoin(parent)
   local chip = CreateFrame("Frame", nil, parent); chip:SetSize(TRIG_CHIP_W, TRIG_CHIP_H)
   chip:SetFrameLevel((parent:GetFrameLevel() or 1) + 6)   -- sits ON the line it labels
   local cbg = chip:CreateTexture(nil, "ARTWORK"); cbg:SetAllPoints(); cbg:SetColorTexture(O.r, O.g, O.b, 1)
-  chip.text = newText(chip, FONT.label, 11, { r = 1, g = 1, b = 1 }, "CENTER"); chip.text:SetPoint("CENTER")
+  chip.text = newText(chip, FONT.label, 11, TEXT, "CENTER"); chip.text:SetPoint("CENTER")
   j.chip = chip
   return j
 end
@@ -2973,7 +2973,7 @@ local function TrigLink(parent, text, onClick)
   local b = CreateFrame("Button", nil, parent)
   local fs = newText(b, FONT.body, 11, O, "LEFT"); fs:SetPoint("LEFT"); fs:SetText(text)
   b:SetSize(math.max(10, fs:GetStringWidth() + 2), 16)
-  b:SetScript("OnEnter", function() fs:SetTextColor(1, 1, 1) end)
+  b:SetScript("OnEnter", function() fs:SetTextColor(TEXT.r, TEXT.g, TEXT.b) end)
   b:SetScript("OnLeave", function() fs:SetTextColor(O.r, O.g, O.b) end)
   b:SetScript("OnClick", onClick)
   return b
@@ -2986,7 +2986,7 @@ function C:MakeTrigGroupBox(parent)
   -- The group's NAME is white; the two links under it stay orange (the owner's mock).
   -- White reads as a title, orange as "this is clickable" — so the label stops
   -- competing with its own actions for the same colour.
-  g.label = newText(g, FONT.label, 12, { r = 1, g = 1, b = 1 }, "RIGHT"); g.label:SetPoint("TOPRIGHT", -14, -12)
+  g.label = newText(g, FONT.label, 12, TEXT, "RIGHT"); g.label:SetPoint("TOPRIGHT", -14, -12)
 
   -- Add Trigger | Delete Group. Delete CONFIRMS — it discards every condition in the
   -- group, and CONTRACTS §4 puts destructive actions behind the shared modal.
@@ -3001,7 +3001,7 @@ function C:MakeTrigGroupBox(parent)
   g.addLink = TrigLink(g, "Add Trigger", function() C:TrigAddToExistingGroup(g._ti) end)
   g.addLink:SetPoint("RIGHT", sep, "LEFT", -6, 0)
 
-  local ml = newText(g, FONT.label, 11, { r = 1, g = 1, b = 1 }, "LEFT"); ml:SetPoint("TOPLEFT", 14, -16); ml:SetText("Match:")
+  local ml = newText(g, FONT.label, 11, TEXT, "LEFT"); ml:SetPoint("TOPLEFT", 14, -16); ml:SetText("Match:")
   g.mpills = {}
   -- Deliberately SMALL (the owner, 2026-07-25): the top-level Match buttons are
   -- 113×28, and a second near-identical trio right under them read as clutter. These
@@ -3012,7 +3012,7 @@ function C:MakeTrigGroupBox(parent)
     local mp = CreateFrame("Button", nil, g); mp:SetSize(w, 20); mp:SetPoint("TOPLEFT", mx, -14); mx = mx + w + 6
     mp.fill = mp:CreateTexture(nil, "BACKGROUND"); mp.fill:SetAllPoints(); mp.fill:SetColorTexture(O.r, O.g, O.b, 0.8)
     mp.edges = addEdges(mp, { r = O.r, g = O.g, b = O.b, a = 1 }, 1)
-    local ll = newText(mp, FONT.label, 11, { r = 1, g = 1, b = 1 }, "CENTER"); ll:SetPoint("CENTER"); ll:SetText(lg[2])
+    local ll = newText(mp, FONT.label, 11, TEXT, "CENTER"); ll:SetPoint("CENTER"); ll:SetText(lg[2])
     mp._logic = logic
     mp:SetScript("OnClick", function()
       local grp = C:TrigNode(g._ti); if not grp then return end
@@ -3220,7 +3220,7 @@ function C:BuildTextSection(ct)
 
   -- Content field (heroic-8%, placeholder = the aura's name).
   local cf = CreateFrame("EditBox", nil, ct); cf:SetSize(EDITOR_W, 28); cf:SetPoint("TOPLEFT", 0, 0)
-  cf:SetAutoFocus(false); setFont(cf, FONT.body, 13); cf:SetTextColor(1, 1, 1); cf:SetTextInsets(10, 10, 0, 0)
+  cf:SetAutoFocus(false); setFont(cf, FONT.body, 13); cf:SetTextColor(TEXT.r, TEXT.g, TEXT.b); cf:SetTextInsets(10, 10, 0, 0)
   local cbg = cf:CreateTexture(nil, "BACKGROUND"); cbg:SetAllPoints(); cbg:SetColorTexture(H.r, H.g, H.b, 0.08)
   local cph = newText(cf, FONT.body, 13, TEXT, "LEFT"); cph:SetPoint("LEFT", 10, 0); cph:SetAlpha(0.3); cph:SetText("Text (blank = the aura's name)")
   local function cUpd() cph:SetShown((cf:GetText() or "") == "") end
@@ -3231,14 +3231,14 @@ function C:BuildTextSection(ct)
                       setEnabled = function(_, on) cf:SetEnabled(on) end }
 
   -- Show Text + Show Charge Count toggles (one row).
-  local sLbl = newText(ct, FONT.body, 11, { r = 1, g = 1, b = 1 }, "LEFT"); sLbl:SetPoint("TOPLEFT", 0, -50); sLbl:SetText("Show Text Above")
+  local sLbl = newText(ct, FONT.body, 11, TEXT, "LEFT"); sLbl:SetPoint("TOPLEFT", 0, -50); sLbl:SetText("Show Text Above")
   local sTog = makeToggle(ct,
     function() local c = Cfg(); if not c then return false end; local t = c.text; if t then return t.show ~= false end; return c.showLabel ~= false end,
     function(v) local t = ensure(); if t then t.show = v; ReapplySelected() end end)
   sTog:SetPoint("TOPLEFT", 94, -48)
   rows[#rows + 1] = { refresh = function() sTog:refresh() end, setEnabled = function() end }
 
-  local cLbl = newText(ct, FONT.body, 11, { r = 1, g = 1, b = 1 }, "LEFT"); cLbl:SetPoint("TOPLEFT", COL2_X, -50); cLbl:SetText("Show Charge Count")
+  local cLbl = newText(ct, FONT.body, 11, TEXT, "LEFT"); cLbl:SetPoint("TOPLEFT", COL2_X, -50); cLbl:SetText("Show Charge Count")
   local cTog = makeToggle(ct,
     function() local t = txt(); return t and t.showCount == true end,
     function(v) local t = ensure(); if t then t.showCount = v or nil; if v then t.show = true; sTog:refresh() end; ReapplySelected() end end)
@@ -3501,7 +3501,7 @@ function C:BuildEffectsSection(ct)
   local function isIcon() local c = Cfg(); return c ~= nil and c.kind ~= "bar" and not c.noArt end
   local function spinning() local r = rot(); return isIcon() and r ~= nil and r.on == true end
 
-  local rLbl = newText(ct, FONT.body, 11, { r = 1, g = 1, b = 1 }, "LEFT")
+  local rLbl = newText(ct, FONT.body, 11, TEXT, "LEFT")
   rLbl:SetPoint("TOPLEFT", 0, -162); rLbl:SetText("Rotate")
   local mLbls = { mLbl, rLbl }
   local dirRow, speedRow
@@ -3758,7 +3758,7 @@ function C:BuildBarSection(ct)
     function(v) local b = ensure(); if b then b.pandemicBg = v end end, "Pandemic Background"))
 
   -- Row 4 — reverse fill.
-  local rLbl = newText(ct, FONT.body, 11, { r = 1, g = 1, b = 1 }, "LEFT")
+  local rLbl = newText(ct, FONT.body, 11, TEXT, "LEFT")
   rLbl:SetPoint("TOPLEFT", 0, -153); rLbl:SetText("Reverse Fill")
   local rTog = makeToggle(ct,
     function() local b = get(); return (b and b.reverse) == true end,
@@ -3770,7 +3770,7 @@ function C:BuildBarSection(ct)
   -- horizontal bar stays horizontal when the bar is stood on end, which is what makes a
   -- textured vertical bar look wrong. Not automatic from Orientation: a plain or
   -- symmetric fill looks identical either way, so it stays the user's call.
-  local roLbl = newText(ct, FONT.body, 11, { r = 1, g = 1, b = 1 }, "LEFT")
+  local roLbl = newText(ct, FONT.body, 11, TEXT, "LEFT")
   roLbl:SetPoint("TOPLEFT", COL2_X, -153); roLbl:SetText("Rotate Texture")
   local roTog = makeToggle(ct,
     function() local b = get(); return (b and b.rotateTexture) == true end,
@@ -3787,7 +3787,7 @@ function C:BuildBarSection(ct)
   local ANCHORS = { { "CENTER", "Center" }, { "TOP", "Top" }, { "BOTTOM", "Bottom" },
                     { "LEFT", "Left" }, { "RIGHT", "Right" } }
 
-  local cLbl = newText(ct, FONT.body, 11, { r = 1, g = 1, b = 1 }, "LEFT")
+  local cLbl = newText(ct, FONT.body, 11, TEXT, "LEFT")
   cLbl:SetPoint("TOPLEFT", 0, -189); cLbl:SetText("Countdown Text")
   local cTog = makeToggle(ct,
     function() local b = get(); return (b and b.showTimer) == true end,
@@ -3795,7 +3795,7 @@ function C:BuildBarSection(ct)
   cTog:SetPoint("TOPLEFT", 108, -187)
   add({ refresh = function() cTog:refresh() end, setEnabled = function(_, on) cTog:SetEnabled(on) end })
 
-  local sLbl = newText(ct, FONT.body, 11, { r = 1, g = 1, b = 1 }, "LEFT")
+  local sLbl = newText(ct, FONT.body, 11, TEXT, "LEFT")
   sLbl:SetPoint("TOPLEFT", COL2_X, -189); sLbl:SetText("Stack Count")
   local sTog = makeToggle(ct,
     function() local b = get(); return (b and b.showStacks) == true end,
