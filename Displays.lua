@@ -769,6 +769,11 @@ function D:ApplyConfig(spellID)
 
   -- Frame strata (how the aura layers against other UI).
   f:SetFrameStrata((cfg.strata and cfg.strata ~= "" and cfg.strata) or "HIGH")
+  -- …and the level within it (the Appearance page's LEVEL, 2026-09-23). nil = the
+  -- frame's own natural level, remembered the first time through so that clearing
+  -- the setting puts it back rather than leaving the last number in place.
+  f._baseLevel = f._baseLevel or f:GetFrameLevel()
+  f:SetFrameLevel(cfg.level or f._baseLevel)
 
   -- On-screen text overlay. cfg.text = { show, str, font, size, color, outline, anchor, x, y }.
   -- Backward-compat: no cfg.text ⇒ legacy behavior (show the aura's name via cfg.showLabel).

@@ -1,4 +1,49 @@
-# GloomsAuras — Session Handoff  (last updated 2026-09-21)
+# GloomsAuras — Session Handoff  (last updated 2026-09-23)
+
+> ## ▶▶▶ 2026-09-23 — THE AURAS TAB IS REBUILT: six pages, the SECOND design (`Pages.lua`)
+> **Suite-wide facts live in the Hub: BACKLOG 16 (status, what is un-mocked, the decisions),
+> CONTRACTS §2 (the paged shell) and §4 "THE DARK KIT". Not restated here.** GA detail only.
+> **Status: built and verified OUTSIDE the game (`~/GloomsHub/tools/harness`) — the owner has NOT
+> reviewed it in game yet.** Expect his fixes first.
+>
+> **The shape of it.** `Pages.lua` (new, after `Config.lua` in the TOC) registers the tab as a PAGED
+> tool (`pages` + `accent = jade` + `showPage` + the profile api for the sidebar) and DRAWS: the
+> aura list, the selected aura's header, and six pages at the mocks' coordinates (window x − 250).
+> **Every setting still goes through `Config.lua`'s logic**, exported as ONE table, `C.X` (DB, Cfg,
+> SetSelected, RefreshList, the trigger tree via `C:Trig…`, the pickers, profiles, `rows`…) —
+> Config.lua's main chunk is near the 200-locals cap, so it stays one table.
+> - `Config.lua` NO LONGER registers the tab. Its previous editor (`BuildTab`, the accordion, every
+>   `Build*Section`, the old list) is **unmounted but kept** until the owner approves — the record of
+>   how each control behaves. `RefreshList` now ends in `C:OnListRefresh()`.
+> - `Pages.lua` REPLACES these `C` methods (the old editor's callers find them): `AccordionLayout /
+>   SetHeight / Open / Toggle` (no-ops), `TrigInlineRender`, `ShowGroupPane`, `RefreshGroupPane`,
+>   `UpdateEmptyState`, `SyncRailButtons`, `RefreshGroupButton`, `OnListRefresh`.
+> - Controls join the shared `rows` (refresh + setEnabled, driven by `SetSelected`); `P.sync()` re-runs
+>   them after a change another control's enabled state depends on (dim, never hide).
+> - It gates itself on LibGloomSkin **13** (prints "update Gloom's Hub" and does not register below).
+>
+> **What changed in behaviour** (the owner's rulings, 2026-09-23 — BACKLOG 16 has them):
+> - **Trigger groups by DRAG** — a condition row drags into a group box or back onto the page;
+>   `P.dissolveGroup` (a group's X) puts its conditions back at the top level. Shift+click grouping,
+>   the AND/OR brackets and chips are gone. Each group shows its own Match pills.
+> - **Load Conditions** are checkboxes over the SAME storage: combat/target pairs map to
+>   `"in"/"out"/nil` and `"has"/"none"/nil`, specs to a set-or-nil; the last of a pair / of the specs
+>   can't be unticked. Nothing saved changes meaning.
+> - **Animation settings are INLINE** (the popup is unused): a block per module, built once from its
+>   `params` schema and cached (`EF.blocks`); a colour param sits beside the type (unticked = the
+>   module's own colour).
+> - **Level** — new `cfg.level` (Displays.lua; `_baseLevel` remembered so clearing restores it).
+> - Placed without a mock (listed in BACKLOG 16 for his review): Hide Blizzard's CDM at the list's
+>   foot, the width/height lock by SIZE, Stacks Max only in Stack Count mode, right-click clears a
+>   bar texture, the group pane, rename = click the header name, move group = click "Group:".
+> - The eye is `Media/eye.png` for both states (tinted); the silent-yes mark is `Media/warn.png`.
+>
+> ⚠ **Traps met building it:** `LibStub and LibStub(x, true)` drops the minor (Hub LESSONS);
+> a page frame must be SIZED to its content (`pg:SetHeight`) or `IsMouseOver` — the drop target
+> for a dragged condition — only covers its top 10px; a pillField's placeholder must also hide on a
+> CODE `SetText`. The pickers (texture/sound/font/shape/spell), dialogs and colour picker still wear
+> the first design — no mocks yet.
+
 
 > ## ▶ 2026-09-21 — the Suite window went light (Hub BACKLOG 16, stage 1); GA's tab is untouched
 > **The whole Suite UI is being rebuilt from the owner's Figma mocks; GA's seven panels are

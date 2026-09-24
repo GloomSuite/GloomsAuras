@@ -806,6 +806,9 @@ local function RefreshList()
       row:Show()
     end
   end
+  -- The second redesign's list (Pages.lua) redraws from the same data; every
+  -- path that refreshes the old list reaches it through here.
+  if C.OnListRefresh then C:OnListRefresh() end
 end
 
 -- --------------------------------------------------------------------------
@@ -4310,13 +4313,26 @@ end
 -- through GloomsHub:ToggleWindow("auras"). Stale GA.global.panelPos data is
 -- harmless leftover.
 
--- Mount the Auras tab (CONTRACTS §2). Registration is cheap and immediate;
--- BuildTab runs ONCE, lazily, the first time the tab is shown. No `refresh`
--- handler — the container's OnShow hook (above) already re-syncs on every
--- focus, exactly like the old window's OnShow did.
-GloomsHub:RegisterTab{
-  id    = "auras",
-  title = "AURAS",
-  order = 10,
-  build = BuildTab,
+-- ★ 2026-09-23 — THE SECOND REDESIGN. The Auras tab is now drawn by Pages.lua
+-- (six pages in the Suite window's sidebar, from the owner's "GloomSuite UI 2"
+-- mocks), which also registers the tab. Everything ABOVE — BuildTab, the
+-- accordion, the section builders — is the previous editor, no longer mounted;
+-- it stays until the new one is owner-approved, as the record of how each
+-- control behaves. The data logic here (the trigger tree, the pickers, profiles,
+-- selection) is what Pages.lua runs on: these are the locals it needs.
+-- ⚠ Config.lua's main chunk is near Lua's 200-locals cap — this is ONE table.
+C.X = {
+  rows = rows,
+  DB = DB, Cfg = Cfg, DisplayList = DisplayList, DeepCopy = DeepCopy, NewDisplayID = NewDisplayID,
+  Groups = Groups, GroupList = GroupList, CreateGroup = CreateGroup, DeleteGroup = DeleteGroup,
+  MoveGroup = MoveGroup, AurasInGroup = AurasInGroup, Entries = BuildLeftPaneEntries,
+  RefreshList = RefreshList, SetSelected = SetSelected, ReapplySelected = ReapplySelected,
+  Selected = function() return selectedID end,
+  SetContainer = function(c) container = c end,
+  CloseSubWindows = CloseSubWindows,
+  OpenPicker = OpenPicker, OpenTexturePicker = OpenTexturePicker, OpenShapePicker = OpenShapePicker,
+  OpenSoundPicker = OpenSoundPicker, OpenFontPicker = OpenFontPicker, fontNameFor = fontNameFor,
+  OpenNameDialog = OpenNameDialog, PlayerSpecs = PlayerSpecs,
+  TrigPill = TrigPill, AnimGet = AnimGet, AnimParams = AnimParams, ParamScale = ParamScale,
+  BLEND_MODES = BLEND_MODES, STRATA_MODES = STRATA_MODES, TE_ANCHOR = TE_ANCHOR, TE_OUTLINE = TE_OUTLINE,
 }

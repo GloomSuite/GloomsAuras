@@ -91,12 +91,16 @@ common-patterns, widget-framework, toc-structure, + a `secret-aware-addon` templ
 
 ## Files
 - `GloomsAuras.toc` — manifest (Interface 120100). Load order: `Libs\*` → Core → Displays →
-  CDM → `Media\TextureManifest.lua` → Config.
+  CDM → `Media\TextureManifest.lua` → Config → Pages.
 - `Core.lua` — namespace `GA`, SavedVariables + profiles, design tokens, `/ga` slash router.
 - `CDM.lua` — the Cooldown Manager mirror engine (`GA.CDM`): state tracking, grouped trigger
   eval, visibility/group gates, discovery, hooks.
 - `Displays.lua` — `GA.Displays`: the on-screen frames (texture/bar/text/glow, drag, preview).
-- `Config.lua` — `GA.Config`: the AURAS tab (rail + editor pane) and everything in it.
+- `Config.lua` — `GA.Config`: the editor's LOGIC (selection, the trigger tree, pickers, profiles),
+  exported to `Pages.lua` as `C.X`; its previous editor UI is unmounted (kept until the new one is
+  approved — see docs/HANDOFF.md).
+- `Pages.lua` — the AURAS tab since 2026-09-23: the aura list, the header and six pages from the
+  second design's mocks; registers the tab as a paged tool.
 - `Media/TextureManifest.lua` — auto-generated `GA.TextureShapes` (254 aura shapes).
 - `Media/`, `Libs/` — bundled art/fonts, and the embedded libs (`Libs/` is gitignored).
 

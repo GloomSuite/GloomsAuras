@@ -28,3 +28,4 @@ AuraDuration.lua
 CDM.lua
 Media\TextureManifest.lua
 Config.lua
+Pages.lua
