@@ -1,6 +1,30 @@
-# GloomsAuras — Session Handoff  (last updated 2026-09-23)
+# GloomsAuras — Session Handoff  (last updated 2026-09-26)
 
-> ## ▶▶▶ 2026-09-23 — THE AURAS TAB IS REBUILT: six pages, the SECOND design (`Pages.lua`)
+> ## ▶▶▶ 2026-09-25/26 — THE AURAS TAB IS REBUILT AGAIN: the GLASS design (`Pages.lua`, rewritten)
+> **Suite-wide facts live in the Hub: BACKLOG 16 (status, decisions, what is un-mocked), CONTRACTS
+> §2 (the glass shell) and §4 "THE GLASS KIT", FINDINGS §22 (sharpness). Not restated here.**
+> **Status: built, harness-verified (0 errors), SEEN in game by the owner; page-by-page review open.**
+>
+> - `Pages.lua` draws at the mocks' WINDOW coordinates (the container is the whole window now — no
+>   more "x − 250"). Each page registers `bg = GLASS .. "<page>"`; the tiles are `Media/glass/<page>-a|b|c|d.png`
+>   (made by `~/GloomsHub/tools/gen-glass-art.py bg` from the owner's exports — never edit them by hand).
+> - **Groups are no longer "selected".** A plain click folds; RIGHT-CLICK → Rename · Enable/Disable ·
+>   Load Conditions… (a pop-up, `P.groupLoad`, built by the same `P.buildLoad` as the Load page, over
+>   the page panel) · Delete Group; DRAG a group header to reorder (writes `groups[id].order`).
+>   `C:SelectGroup` now opens that pop-up; `P.show` clears `C.groupSel`. The old group PANE is gone.
+> - The trigger state is a DROPDOWN: `Config.lua` gained `C:TrigStates(ti, ci)` (the same family
+>   rule `TrigCycleState` walks) and `C:TrigSetState(ti, ci, state)`.
+> - `STRATA_MODES` gained **BACKGROUND** (the mock shows it). Width/Height are linked by the
+>   BRACKET (same `cfg.lockAspect`/`cfg.aspect` as the old padlock).
+> - **Max Stacks** sits in the Stack Text column and DIMS unless Bar Type = Stack Count (it used to
+>   hide). A control's label dims with it (`ctrl._label`).
+> - Hide Blizzard CDM is an OFF/ON switch at 30,711 (still `C._hideCDM` with `:Set()`).
+>
+> *(The 2026-09-23 block below describes the SECOND design's Pages.lua — superseded; kept for its
+> reasoning about `C.X` and the unmounted old editor, which still holds.)*
+
+
+> ## ▶▶ 2026-09-23 — (SUPERSEDED 2026-09-25) the SECOND design's six pages (`Pages.lua`)
 > **Suite-wide facts live in the Hub: BACKLOG 16 (status, what is un-mocked, the decisions),
 > CONTRACTS §2 (the paged shell) and §4 "THE DARK KIT". Not restated here.** GA detail only.
 > **Status: built and verified OUTSIDE the game (`~/GloomsHub/tools/harness`) — the owner has NOT

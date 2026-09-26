@@ -118,6 +118,7 @@ local BLEND_MODES = {
   { "BLEND", "Normal" }, { "ADD", "Add (glow)" }, { "MOD", "Modulate" },
 }
 local STRATA_MODES = {
+  { "BACKGROUND", "Background" },   -- ★ 2026-09-25: the glass mock offers it (its placeholder value)
   { "LOW", "Low" }, { "MEDIUM", "Medium" }, { "HIGH", "High" },
   { "DIALOG", "Dialog" }, { "TOOLTIP", "Tooltip" },
 }
@@ -1581,6 +1582,26 @@ function C:TrigRemove(ti, ci)
   end
   self:TrigRebind()
 end
+-- ★ 2026-09-25 (the glass pages): the state is a DROPDOWN now, not a click-to-
+-- cycle pill (the owner's mock draws it with a caret). These two are its list
+-- and its setter; the list is the SAME family rule TrigCycleState walks.
+function C:TrigStates(ti, ci)
+  local leaf = self:TrigNode(ti, ci); if not leaf or not leaf.state then return {} end
+  local s = leaf.state
+  if s == "cd_ready" or s == "cd_castable" or s == "cd_oncd" or s == "charges_max" or s == "charges_notmax" then
+    local isCharge = GA.CDM and GA.CDM.isCharge and GA.CDM.isCharge[leaf.spellID]
+    return isCharge and { "cd_ready", "cd_castable", "cd_oncd", "charges_max", "charges_notmax" }
+                     or { "cd_ready", "cd_castable", "cd_oncd" }
+  end
+  return { "buff_active", "buff_inactive" }
+end
+function C:TrigSetState(ti, ci, state)
+  local leaf = self:TrigNode(ti, ci); if not leaf or not leaf.state or leaf.state == state then return end
+  leaf.state = state
+  if GA.CDM then GA.CDM:RefreshDisplays() end
+  self:TrigRender()
+end
+
 function C:TrigCycleState(ti, ci)
   local leaf = self:TrigNode(ti, ci); if not leaf or not leaf.state then return end
   -- Cycle within the leaf's own FAMILY (never let a debuff become a nonsensical "cooldown ready"):
