@@ -1,4 +1,27 @@
-# GloomsAuras — Session Handoff  (last updated 2026-09-26)
+# GloomsAuras — Session Handoff  (last updated 2026-09-27)
+
+> ## ▶▶▶ 2026-09-27 — THE AURAS TAB IS NOW TWO WINDOWS (`Pages.lua`, rewritten again)
+> **Suite-wide facts live in the Hub: BACKLOG 16, CONTRACTS §2 (the two-window block) and §4 ("THE
+> TWO-WINDOW KIT"), FINDINGS §22. Not restated here.** Status: built, harness-verified, owner testing.
+>
+> - `RegisterTab{ windows = true, selector, tab, sections, globals, onBuilt/onOpen/onClose }`. Each
+>   section is its own 360-wide frame at the mock's coordinates INSIDE the section (two columns 0/190).
+> - The **selector** is the old Aura Groups list (same rows, menus, drag), sized from the WINDOW
+>   (`P.listHost`) — the list re-renders on resize. New Aura / New Group at its foot.
+> - The **tab** (one per window — settings + each pop-out; `P.syncHeader` refreshes them all): icon +
+>   name; click = rename, right-click = `P.auraContext` (Rename · Duplicate · Move to Group · Delete).
+>   Duplicate/Delete/Move moved here from the old header (`P.duplicateSelected`, `P.deleteSelected`,
+>   `P.groupMenu`).
+> - **Triggers**' Add a Trigger / Create Trigger Group are its section FOOTER (pinned to the window's
+>   foot). `P.renderTriggers` sets the section's height and calls `GloomsHub:RefreshWindows("auras")`.
+> - **Effects** grows/shrinks with the animation's params (two to a row); **Max Stacks** is a FIELD now.
+> - A group's Load Conditions is `P.groupLoadWindow()` — a `UI.gWindow` of its own (joins the focus
+>   stacking via `GloomsHub:SuiteManage`).
+> - **Hide Blizzard CDM** moved to Global Settings (`globals`); `C._hideCDM:Set()` → RefreshWindows.
+> - `X.SetContainer(settingsWindow)` (onBuilt): pickers dock to the settings window's right edge.
+>
+> *(The 2026-09-25/26 glass block below is superseded.)*
+
 
 > ## ▶▶▶ 2026-09-25/26 — THE AURAS TAB IS REBUILT AGAIN: the GLASS design (`Pages.lua`, rewritten)
 > **Suite-wide facts live in the Hub: BACKLOG 16 (status, decisions, what is un-mocked), CONTRACTS
