@@ -7,14 +7,14 @@
 -- SETTINGS window (400 wide) with its TAB, the pop-outs, the headers, the
 -- scrolling, the resize bars and Global Settings. This file draws:
 --   the selector's list — the groups and their auras, New Aura / New Group;
---   the tab — the aura being edited (click its name to rename it; right-click
+--   the tab — the aura being edited (click its name to switch auras; right-click
 --     for Rename · Duplicate · Move to Group · Delete);
 --   the six SECTIONS — Aura Triggers · Appearance, Position & Size · Bar Fill &
 --     Readouts · Text · Effects, Motion & Sound · Aura Load Conditions.
 -- ★ A section is its own 360-wide frame and every number in it is the mock's
 -- own coordinate inside the section (the owner: "I put things where they are
 -- for a reason"): a labelled control is 33 tall (label, 4, the 16-tall
--- control), rows 43 apart, blocks 30 apart, two columns of 170 at 0 and 190.
+-- control), rows 41 apart, blocks 30 apart, two columns of 170 at 0 and 190.
 --
 -- It is DRAWING only. Every setting still goes through Config.lua's logic —
 -- the trigger tree, the pickers, selection, profiles — exported as C.X. The old
@@ -30,8 +30,8 @@ local X = C and C.X
 local Skin, skinMinor
 if LibStub then Skin, skinMinor = LibStub("LibGloomSkin-1.0", true) end
 if not (X and Skin) then return end
-if (skinMinor or 0) < 16 then
-  print("|cffff5555Gloom's Auras|r: the Auras windows need Gloom's Hub with LibGloomSkin 16 or newer — update Gloom's Hub.")
+if (skinMinor or 0) < 17 then
+  print("|cffff5555Gloom's Auras|r: the Auras windows need Gloom's Hub with LibGloomSkin 17 or newer — update Gloom's Hub.")
   return
 end
 
@@ -92,14 +92,15 @@ end
 
 -- ---------------------------------------------------------------------------
 -- The mocks' labelled controls, placed at (x, y) inside a section: the label
--- (Sansation 12) at y, the control 17 under it (the label's 13 + 4). `w` is the
+-- (Sansation 10) at y, the control 15 under it (the label's box, 11, + the
+-- mocks' 4 gap; it was 17 = 13 + 4 while labels were 12). `w` is the
 -- column: 170 (two columns, at 0 and 190), 107/106/107 (three, at 0 / 127 / 253),
 -- 360 (full width).
 -- ---------------------------------------------------------------------------
 local C1, C2 = 0, 190                 -- the two columns
 local T1, T2, T3 = 0, 127, 253        -- the three
 local function Label(parent, x, y, text, size, c)
-  local l = UI.gLabel(parent, text, size or 12, c); l:SetPoint("TOPLEFT", x, -y)
+  local l = UI.gLabel(parent, text, size, c); l:SetPoint("TOPLEFT", x, -y)
   return l
 end
 
@@ -117,21 +118,40 @@ local function Drop(parent, x, y, w, label, values, get, set)
     end,
     function()
       local out = {}
-      for _, v in ipairs(list()) do out[#out + 1] = { value = v[1], label = v[2], disabled = v[3] } end
+      for _, v in ipairs(list()) do out[#out + 1] = { value = v[1], label = v[2], disabled = v[3], font = v.font } end
       return out
     end,
     get, function(v) set(v) end)
-  d:SetPoint("TOPLEFT", x, -(y + (label and 17 or 0)))
+  d:SetPoint("TOPLEFT", x, -(y + (label and 15 or 0)))
   d._label = lbl
   return d
 end
 
--- A dropdown that opens one of GA's own pickers (texture, shape, font, sound).
+-- The FONT dropdown: the kit's list, as Bars' (the owner, 2026-09-27: "it
+-- should basically look like the dropdown menu"). Values are font paths, ""
+-- for Default; a path the list no longer has shows as "Custom". Each name is
+-- drawn in its own font (the owner, 2026-09-27: "fonts show as previews").
+local function FontDrop(parent, x, y, w, get, set)
+  local function values()
+    local cur, o, found = get(), {}, false
+    for _, it in ipairs(X.fontData()) do
+      o[#o + 1] = { it.path and tostring(it.path) or "", it.name, font = it.path }
+      if cur and it.path and tostring(it.path) == tostring(cur) then found = true end
+    end
+    if cur and not found then o[#o + 1] = { tostring(cur), "Custom" } end
+    return o
+  end
+  return Drop(parent, x, y, w, "Font", values,
+    function() local cur = get(); return cur and tostring(cur) or "" end,
+    function(v) set((v ~= "") and v or nil) end)
+end
+
+-- A dropdown that opens one of GA's own pickers (texture, shape, sound).
 -- getLabel returning nil reads "Choose".
 local function PickerDrop(parent, x, y, w, label, getLabel, onClick)
   local lbl = label and Label(parent, x, y, label)
   local d = UI.gDrop(parent, w, getLabel, nil, nil, nil, { onClick = onClick })
-  d:SetPoint("TOPLEFT", x, -(y + (label and 17 or 0)))
+  d:SetPoint("TOPLEFT", x, -(y + (label and 15 or 0)))
   d._label = lbl
   return d
 end
@@ -147,7 +167,7 @@ local OFFON = { { false, "Off" }, { true, "On" } }
 local function Switch(parent, x, y, w, label, choices, get, set)
   local lbl = label and Label(parent, x, y, label)
   local s = UI.gSwitch(parent, choices, get, set, { w = w })
-  s:SetPoint("TOPLEFT", x, -(y + (label and 17 or 0)))
+  s:SetPoint("TOPLEFT", x, -(y + (label and 15 or 0)))
   s._label = lbl
   return s
 end
@@ -157,7 +177,7 @@ local function Color(parent, x, y, w, label, opts)
   opts.title = opts.title or label
   opts.w = w
   local c = UI.gColor(parent, opts)
-  c:SetPoint("TOPLEFT", x, -(y + (label and 17 or 0)))
+  c:SetPoint("TOPLEFT", x, -(y + (label and 15 or 0)))
   c._label = lbl
   -- A color control dims its own label too when it is not in the shared rows.
   local se = c.setEnabled
@@ -464,6 +484,23 @@ function P.groupMenu(anchor)
     end
   end, { cursor = true, minW = 160 })
 end
+-- The tab name's LEFT-click: every aura in the selector's order (groups first,
+-- folded or not, then Ungrouped), a divider where a group starts, the one being
+-- edited marked. Picking one selects it, exactly as clicking it in the list.
+function P.auraSwitch(anchor)
+  local db = DB(); if not db then return end
+  local opts = {}
+  local function add(ids)
+    for i, id in ipairs(ids) do
+      local cfg = db[id]
+      opts[#opts + 1] = { value = id, label = (cfg and cfg.label) or ("Spell " .. tostring(id)), divider = (i == 1 and #opts > 0) }
+    end
+  end
+  for _, gid in ipairs(X.GroupList()) do add(X.AurasInGroup(gid)) end
+  add(X.AurasInGroup(nil))
+  if #opts == 0 then return end
+  UI.gList(anchor, opts, Sel(), function(id) X.SetSelected(id) end, { minW = 200 })
+end
 function P.auraContext(anchor)
   if not Cfg() then return end
   UI.gList(anchor, {
@@ -603,8 +640,9 @@ end
 
 -- ===========================================================================
 -- THE TAB (the mock's Frame 519/295): the aura's icon (16) at 20,6 and, 10 on,
--- its name in Sansation 12 lilac. Click the name to rename it; right-click it
--- for the aura's menu. One tab per window (the settings window's and each
+-- its name in Sansation 12 lilac. Click the name for the list of auras (switch
+-- to another — the owner, 2026-09-27: "not rename the current one"); right-click
+-- it for the aura's menu. One tab per window (the settings window's and each
 -- pop-out's), all kept in step.
 -- ===========================================================================
 local tabs = {}
@@ -622,9 +660,9 @@ local function BuildTab(tab)
   hit:RegisterForClicks("LeftButtonUp", "RightButtonUp")
   hit:SetScript("OnClick", function(self, button)
     if not Cfg() then return end
-    if button == "RightButton" then P.auraContext(self) else C:RenameSelected() end
+    if button == "RightButton" then P.auraContext(self) else P.auraSwitch(self) end
   end)
-  UI.attachTip(hit, "The aura you're editing", "Click to rename it. Right-click to duplicate it, move it to another group or delete it.")
+  UI.attachTip(hit, "The aura you're editing", "Click to switch to another aura. Right-click to rename, duplicate, move or delete this one.")
   function t:refresh()
     local cfg = Cfg()
     if cfg then
@@ -880,17 +918,17 @@ local function BuildTriggersFooter(parent)
 end
 
 -- ===========================================================================
--- SECTION · APPEARANCE, POSITION & SIZE (the mock's Frame 530, 331 tall)
+-- SECTION · APPEARANCE, POSITION & SIZE (the mock's Frame 530, 317 tall)
 -- ===========================================================================
 local function BuildAppearance(parent)
-  local f = Section(parent, 331)
+  local f = Section(parent, 317)
 
   -- Icon/Art: the texture — a file path or an icon ID — typed, or chosen. Blank
   -- means "the first trigger's icon". (A number typed here is stored as a
   -- number, which is what an ID is.)
   Label(f, C1, 0, "Icon/Art")
   local choose = UI.gButton(f, "Choose", { h = 16 })
-  choose:SetPoint("TOPLEFT", C1 + 170 - choose:GetWidth(), -17)
+  choose:SetPoint("TOPLEFT", C1 + 170 - choose:GetWidth(), -15)
   local tf = UI.gField(f, 170 - 4 - choose:GetWidth(), {
     placeholder = "Blank = the first trigger's icon",
     commit = function(txt)
@@ -901,7 +939,7 @@ local function BuildAppearance(parent)
     end,
     revert = function(self) self:refresh() end,
   })
-  tf:SetPoint("TOPLEFT", C1, -17)
+  tf:SetPoint("TOPLEFT", C1, -15)
   function tf:refresh() local c = Cfg(); local v = c and c.texture; self:SetText(v ~= nil and tostring(v) or ""); self:SetCursorPosition(0) end
   add(tf)
   choose:SetScript("OnClick", function()
@@ -925,36 +963,36 @@ local function BuildAppearance(parent)
       X.OpenShapePicker(function(key) c.shape = key; Reapply(); P.sync() end, c.shape)
     end))
 
-  add(Dial(f, C1, 43, 170, { label = "Opacity", min = 0, max = 100, step = 1, unit = "%", dragPx = 500,
+  add(Dial(f, C1, 41, 170, { label = "Opacity", min = 0, max = 100, step = 1, unit = "%", dragPx = 500,
     get = function() local c = Cfg(); return c and math.floor(((c.alpha or 1) * 100) + 0.5) end,
     set = function(v) local c = Cfg(); if c then c.alpha = v / 100; Reapply() end end }))
-  add(Drop(f, C2, 43, 170, "Blend Mode", X.BLEND_MODES,
+  add(Drop(f, C2, 41, 170, "Blend Mode", X.BLEND_MODES,
     function() local c = Cfg(); return (c and c.blend) or "BLEND" end,
     function(v) local c = Cfg(); if c then c.blend = (v ~= "BLEND") and v or nil; Reapply() end end))
 
-  add(Color(f, T1, 86, 107, "Recolor:", { title = "Recolor",
+  add(Color(f, T1, 82, 107, "Recolor:", { title = "Recolor",
     get = function() local c = Cfg(); return c and c.color end,
     set = function(v) local c = Cfg(); if c then c.color = v; Reapply() end end }))
-  add(Switch(f, T2, 86, 106, "Desaturate", OFFON,
+  add(Switch(f, T2, 82, 106, "Desaturate", OFFON,
     function() local c = Cfg(); return (c and c.desaturate) and true or false end,
     function(on) local c = Cfg(); if c then c.desaturate = on or nil; Reapply() end end))
   -- Effects only: no artwork, just the glow and the animation — for laying over
   -- a real action button. Distinct from a blank texture, which means "work it out".
-  local eo = add(Switch(f, T3, 86, 107, "Effects Only", OFFON,
+  local eo = add(Switch(f, T3, 82, 107, "Effects Only", OFFON,
     function() local c = Cfg(); return (c and c.noArt) and true or false end,
     function(on) local c = Cfg(); if c then c.noArt = on or nil; Reapply(); P.sync() end end))
   UI.attachTip(eo, "Effects only", "The aura draws no artwork — just its glow and animation. For laying over a real action button.")
 
   -- POSITION (the left column)
-  add(Dial(f, C1, 149, 170, { label = "Horizontal Offset", min = -2000, max = 2000, step = 1, unit = "px", dragPx = 1600,
+  add(Dial(f, C1, 143, 170, { label = "Horizontal Offset", min = -2000, max = 2000, step = 1, unit = "px", dragPx = 1600,
     get = function() local c = Cfg(); return c and c.point and c.point[2] or 0 end,
     set = function(v) local c = Cfg(); if c then c.point = { "CENTER", v, (c.point and c.point[3]) or 0 }; Reapply() end end }))
-  add(Dial(f, C1, 192, 170, { label = "Vertical Offset", min = -2000, max = 2000, step = 1, unit = "px", dragPx = 1600,
+  add(Dial(f, C1, 184, 170, { label = "Vertical Offset", min = -2000, max = 2000, step = 1, unit = "px", dragPx = 1600,
     get = function() local c = Cfg(); return c and c.point and c.point[3] or 0 end,
     set = function(v) local c = Cfg(); if c then c.point = { "CENTER", (c.point and c.point[2]) or 0, v }; Reapply() end end }))
   -- Fixed rotation, positive = clockwise; it shares one AnimationGroup with the
   -- spin (Effects section), so the angle is where a spin starts from.
-  add(Dial(f, C1, 235, 170, { label = "Rotation", min = 0, max = 359, step = 1, unit = "°", dragPx = 720,
+  add(Dial(f, C1, 225, 170, { label = "Rotation", min = 0, max = 359, step = 1, unit = "°", dragPx = 720,
     get = function() local c = Cfg(); return (c and c.angle) or 0 end,
     set = function(v) local c = Cfg(); if c then c.angle = (v ~= 0) and v or nil; Reapply() end end }))
 
@@ -963,7 +1001,7 @@ local function BuildAppearance(parent)
   -- when linked in these mocks; click it to switch).
   local wDial, hDial
   local function clampDim(n) return math.max(8, math.min(8192, math.floor(n + 0.5))) end
-  wDial = add(Dial(f, C2, 149, 156, { label = "Width", min = 8, max = 8192, step = 1, unit = "px", dragPx = 4000,
+  wDial = add(Dial(f, C2, 143, 156, { label = "Width", min = 8, max = 8192, step = 1, unit = "px", dragPx = 4000,
     get = function() local c = Cfg(); return c and (c.width or c.size) or 64 end,
     set = function(v)
       local c = Cfg(); if not c then return end
@@ -971,7 +1009,7 @@ local function BuildAppearance(parent)
       if c.lockAspect then c.height = clampDim(v / (c.aspect or 1)); if hDial then hDial:refresh() end end
       Reapply()
     end }))
-  hDial = add(Dial(f, C2, 192, 156, { label = "Height", min = 8, max = 8192, step = 1, unit = "px", dragPx = 4000,
+  hDial = add(Dial(f, C2, 184, 156, { label = "Height", min = 8, max = 8192, step = 1, unit = "px", dragPx = 4000,
     get = function() local c = Cfg(); return c and (c.height or c.size) or 64 end,
     set = function(v)
       local c = Cfg(); if not c then return end
@@ -979,12 +1017,13 @@ local function BuildAppearance(parent)
       if c.lockAspect then c.width = clampDim(v * (c.aspect or 1)); if wDial then wDial:refresh() end end
       Reapply()
     end }))
-  -- The bracket: the mock's Frame 509, 10 wide × 74 at x 349, its arms level
-  -- with the middles of the Width and Height boxes (20.5 and 72.5 down).
-  local link = CreateFrame("Button", nil, f); link:SetSize(11, 74)
-  link:SetPoint("TOPLEFT", 349, -149)
+  -- The bracket: the mock's Frame 509, 10 wide at x 349, its arms level with
+  -- the middles of the Width and Height boxes (18.5 and 66.5 down; 20.5 and
+  -- 72.5 while labels were 12).
+  local link = CreateFrame("Button", nil, f); link:SetSize(11, 70)
+  link:SetPoint("TOPLEFT", 349, -143)
   local function seg(x, y, w, h) local t = link:CreateTexture(nil, "ARTWORK"); t:SetPoint("TOPLEFT", x, -y); t:SetSize(w, h); return t end
-  local segs = { seg(0, 20, 10, 1), seg(9.5, 20, 1, 53), seg(0, 72, 10, 1) }
+  local segs = { seg(0, 18, 10, 1), seg(9.5, 18, 1, 49), seg(0, 66, 10, 1) }
   function link:refresh()
     local c = Cfg(); local on = c and c.lockAspect
     for _, t in ipairs(segs) do
@@ -1000,11 +1039,11 @@ local function BuildAppearance(parent)
   UI.attachTip(link, "Link width and height", "While linked, changing the width changes the height with it, and the other way round. Click to switch.")
   add(link)
 
-  add(Drop(f, C1, 298, 170, "Strata", X.STRATA_MODES,
+  add(Drop(f, C1, 286, 170, "Strata", X.STRATA_MODES,
     function() local c = Cfg(); return (c and c.strata) or "HIGH" end,
     function(v) local c = Cfg(); if c then c.strata = (v ~= "HIGH") and v or nil; Reapply() end end))
   -- LEVEL (2026-09-23; Displays.lua applies it): 0 = Auto, the frame's own level.
-  add(Dial(f, C2, 298, 170, { label = "Level", min = 0, max = 500, step = 1, dragPx = 1000,
+  add(Dial(f, C2, 286, 170, { label = "Level", min = 0, max = 500, step = 1, dragPx = 1000,
     fmt = function(v) v = math.floor(v + 0.5); return v == 0 and "Auto" or tostring(v) end,
     get = function() local c = Cfg(); return (c and c.level) or 0 end,
     set = function(v) local c = Cfg(); if c then c.level = (v > 0) and v or nil; Reapply() end end }))
@@ -1012,7 +1051,7 @@ local function BuildAppearance(parent)
 end
 
 -- ===========================================================================
--- SECTION · BAR FILL & READOUTS (the mock's Frame 533, 437 tall)
+-- SECTION · BAR FILL & READOUTS (the mock's Frame 533, 419 tall)
 -- ===========================================================================
 -- Everything here only means something on a BAR aura; on any other it all dims.
 -- ⚠ On 12.1 the fill of a duration bar is drawn by the ENGINE's own Blizzard
@@ -1020,7 +1059,7 @@ end
 -- engine's style push, which is only legal out of combat: an edit made in
 -- combat lands when combat ends.
 local function BuildBar(parent)
-  local f = Section(parent, 437)
+  local f = Section(parent, 419)
   local function get() local c = Cfg(); return c and c.bar end            -- reads never seed
   local function ensure() local c = Cfg(); if not c then return nil end; c.bar = c.bar or {}; return c.bar end
   local function repaint()
@@ -1062,7 +1101,7 @@ local function BuildBar(parent)
     return p:match("([^\\/]+)%.%w+$") or p:match("([^\\/]+)$") or p
   end
   local tex
-  tex = add(PickerDrop(f, C1, 43, 170, "Bar Texture",
+  tex = add(PickerDrop(f, C1, 41, 170, "Bar Texture",
     function() local b = get(); return texName(b and b.texture) end,
     function(self, button)
       if button == "RightButton" then
@@ -1079,19 +1118,19 @@ local function BuildBar(parent)
   UI.attachTip(tex, "Bar texture", "Click to choose a fill texture. Right-click to go back to a plain color fill.")
   -- Rotate Texture: without it a gradient drawn for a horizontal bar stays
   -- horizontal when the bar is stood on end.
-  add(Switch(f, C2, 43, 170, "Rotate Texture", OFFON,
+  add(Switch(f, C2, 41, 170, "Rotate Texture", OFFON,
     function() local b = get(); return (b and b.rotateTexture) == true end,
     function(on) local b = ensure(); if b then b.rotateTexture = on or nil; repaint() end end), isBar)
 
   local DIRS = { { "drain", "Drains Down" }, { "fill", "Fills Up" } }
-  add(Drop(f, C1, 86, 170, "Bar Fill Direction", DIRS,
+  add(Drop(f, C1, 82, 170, "Bar Fill Direction", DIRS,
     function() local b = get(); return (b and b.fill == "fill") and "fill" or "drain" end,
     function(v) local b = ensure(); if b then b.fill = (v == "fill") and "fill" or nil; repaint() end end), isBar)
-  add(Switch(f, C2, 86, 170, "Reverse Fill", OFFON,
+  add(Switch(f, C2, 82, 170, "Reverse Fill", OFFON,
     function() local b = get(); return (b and b.reverse) == true end,
     function(on) local b = ensure(); if b then b.reverse = on or nil; repaint() end end), isBar)
   local function colorAt(x, w, label, key)
-    add(Color(f, x, 129, w, label, {
+    add(Color(f, x, 123, w, label, {
       get = function() local b = get(); return b and b[key] end,
       set = function(v) local b = ensure(); if b then b[key] = v; repaint() end end }), isBar)
   end
@@ -1104,20 +1143,17 @@ local function BuildBar(parent)
 
   -- THE READOUTS — one font for both: two typefaces on one 22px bar would read
   -- as an accident.
-  add(PickerDrop(f, 0, 192, 238, "Font",
-    function() local b = get(); return X.fontNameFor(b and b.font) end,
-    function()
-      local b = ensure(); if not b then return end
-      X.OpenFontPicker(function(path) local b2 = ensure(); if b2 then b2.font = path; repaint(); P.sync() end end, b.font)
-    end), isBar)
+  add(FontDrop(f, 0, 184, 238,
+    function() local b = get(); return b and b.font end,
+    function(path) local b2 = ensure(); if b2 then b2.font = path; repaint(); P.sync() end end), isBar)
   -- MAX STACKS — how many stacks make a FULL bar (with Max 6, three stacks is
   -- half a bar). The game does not tell an addon an aura's maximum, so it is set
   -- here. It only means something in Stack Count mode: dimmed otherwise.
-  local mxl = Label(f, 258, 192, "Max Stacks")
+  local mxl = Label(f, 258, 184, "Max Stacks")
   local mx = UI.gField(f, 102, { numeric = true,
     commit = function(s) local b = ensure(); local n = tonumber(s); if b and n then b.max = math.max(1, math.min(40, n)); repaint() end; P.sync() end,
     revert = function(self) self:refresh() end })
-  mx:SetPoint("TOPLEFT", 258, -209)
+  mx:SetPoint("TOPLEFT", 258, -199)
   function mx:refresh() local b = get(); self:SetText(tostring((b and b.max) or 10)) end
   mx._label = mxl
   add(mx, function() return isBar() and mode() == "stacks" end)
@@ -1130,27 +1166,28 @@ local function BuildBar(parent)
     add(Color(f, C2, y, 170, "Text Color", { title = label .. " Color",
       get = function() local b = get(); return b and b[colorKey] end,
       set = function(v) local b = ensure(); if b then b[colorKey] = v; repaint() end end }), gate)
-    add(Dial(f, C1, y + 43, 170, { label = label .. " Size", min = 8, max = 32, step = 1, unit = "px", dragPx = 300,
+    add(Dial(f, C1, y + 41, 170, { label = label .. " Size", min = 8, max = 32, step = 1, unit = "px", dragPx = 300,
       get = function() local b = get(); return (b and b[sizeKey]) or 14 end,
       set = function(v) local b = ensure(); if b then b[sizeKey] = v; repaint() end end }), gate)
-    add(Drop(f, C2, y + 43, 170, label .. " Position", ANCHORS,
+    add(Drop(f, C2, y + 41, 170, label .. " Position", ANCHORS,
       function() local b = get(); return (b and b[anchorKey]) or anchorDefault end,
       function(v) local b = ensure(); if b then b[anchorKey] = v; repaint() end end), gate)
   end
   -- Stacks default to TOP and the countdown to CENTER, so switched on together
   -- they never print on top of each other.
-  readout(255, "Stack Text", "showStacks", "stackColor", "stackSize", "stackAnchor", "TOP", stacksOn)
-  readout(361, "Countdown Text", "showTimer", "timerColor", "timerSize", "timerAnchor", "CENTER", timerOn)
+  readout(245, "Stack Text", "showStacks", "stackColor", "stackSize", "stackAnchor", "TOP", stacksOn)
+  readout(347, "Countdown Text", "showTimer", "timerColor", "timerSize", "timerAnchor", "CENTER", timerOn)
   return f
 end
 
 -- ===========================================================================
--- SECTION · TEXT (the mock's Frame 536, 245 tall)
+-- SECTION · TEXT (the mock's Frame 536; 235 tall by the 10-label spacing — that
+-- frame in the mock kept the 12-label rows)
 -- ===========================================================================
 -- The words an aura draws on screen (cfg.text) — NOT its name in the list.
 -- Reads never create cfg.text; writes do.
 local function BuildText(parent)
-  local f = Section(parent, 245)
+  local f = Section(parent, 235)
   local function txt() local c = Cfg(); return c and c.text end
   local function ensure() local c = Cfg(); if not c then return nil end
     if not c.text then c.text = { show = (c.showLabel ~= false) } end; return c.text end
@@ -1166,56 +1203,58 @@ local function BuildText(parent)
   local df = UI.gField(f, 238, { placeholder = "The aura's name",
     commit = function(s) local t = ensure(); if t then t.str = (s ~= "" and s) or nil; Reapply() end end,
     revert = function(self) self:refresh() end })
-  df:SetPoint("TOPLEFT", 122, -17)
+  df:SetPoint("TOPLEFT", 122, -15)
   df._label = dfl
   function df:refresh()
     local t, c = txt(), Cfg()
     self:SetText((t and t.str) or ""); self:SetCursorPosition(0)
     if self.placeholder then self.placeholder:SetText((c and c.label) or "The aura's name") end
   end
-  add(df, showing)
+  -- Show Charge Count REPLACES these words, so while it is on they dim (the owner,
+  -- 2026-09-27: with both on, the text "wasn't there" and nothing said why).
+  local function countOn() local t = txt(); return (t and t.showCount) == true end
+  add(df, function() return showing() and not countOn() end)
 
-  add(Dial(f, C1, 63, 170, { label = "Font Size", min = 6, max = 300, step = 1, unit = "px", dragPx = 900,
+  add(Dial(f, C1, 61, 170, { label = "Font Size", min = 6, max = 300, step = 1, unit = "px", dragPx = 900,
     get = function() local t = txt(); return (t and t.size) or 14 end,
     set = function(v) local t = ensure(); if t then t.size = v; Reapply() end end }), showing)
-  add(Dial(f, C2, 63, 170, { label = "Horizontal Offset", min = -400, max = 400, step = 1, unit = "px", dragPx = 800,
+  add(Dial(f, C2, 61, 170, { label = "Horizontal Offset", min = -400, max = 400, step = 1, unit = "px", dragPx = 800,
     get = function() local t = txt(); return (t and t.x) or 0 end,
     set = function(v) local t = ensure(); if t then t.x = (v ~= 0) and v or nil; Reapply() end end }), showing)
-  add(Drop(f, C1, 106, 170, "Anchor", X.TE_ANCHOR,
+  add(Drop(f, C1, 102, 170, "Anchor", X.TE_ANCHOR,
     function() local t = txt(); return (t and t.anchor) or "BOTTOM" end,
     function(v) local t = ensure(); if t then t.anchor = (v ~= "BOTTOM") and v or nil; Reapply() end end), showing)
-  add(Dial(f, C2, 106, 170, { label = "Vertical Offset", min = -400, max = 400, step = 1, unit = "px", dragPx = 800,
+  add(Dial(f, C2, 102, 170, { label = "Vertical Offset", min = -400, max = 400, step = 1, unit = "px", dragPx = 800,
     get = function() local t = txt(); return (t and t.y) or 0 end,
     set = function(v) local t = ensure(); if t then t.y = (v ~= 0) and v or nil; Reapply() end end }), showing)
 
-  add(PickerDrop(f, C1, 169, 170, "Font",
-    function() local t = txt(); return X.fontNameFor(t and t.font) end,
-    function()
-      local t = txt()
-      X.OpenFontPicker(function(path) local t2 = ensure(); if t2 then t2.font = path; Reapply(); P.sync() end end, t and t.font)
-    end), showing)
-  add(Color(f, C2, 169, 170, "Text Color", {
+  add(FontDrop(f, C1, 163, 170,
+    function() local t = txt(); return t and t.font end,
+    function(path) local t2 = ensure(); if t2 then t2.font = path; Reapply(); P.sync() end end), showing)
+  add(Color(f, C2, 163, 170, "Text Color", {
     get = function() local t = txt(); return t and t.color end,
     set = function(v) local t = ensure(); if t then t.color = v; Reapply() end end }), showing)
-  add(Drop(f, C1, 212, 170, "Outline Type", X.TE_OUTLINE,
+  add(Drop(f, C1, 204, 170, "Outline Type", X.TE_OUTLINE,
     function() local t = txt(); return (t and t.outline) or "OUTLINE" end,
     function(v) local t = ensure(); if t then t.outline = (v ~= "OUTLINE") and v or nil; Reapply() end end), showing)
   -- The live charge count, in place of the text — which is why turning it on
   -- also turns the text on.
-  add(Switch(f, C2, 212, 170, "Show Charge Count", OFFON,
+  local cc = add(Switch(f, C2, 204, 170, "Show Charge Count", OFFON,
     function() local t = txt(); return (t and t.showCount) == true end,
     function(v) local t = ensure(); if t then t.showCount = v or nil; if v then t.show = true end; Reapply(); P.sync() end end))
+  UI.attachTip(cc, "Show charge count", "Shows the spell's charges in place of the Displayed Text. A spell without charges shows nothing.")
   return f
 end
 
 -- ===========================================================================
--- SECTION · EFFECTS, MOTION & SOUND (the mock's Frame 540, 351 tall)
+-- SECTION · EFFECTS, MOTION & SOUND (the mock's Frame 540; 337 tall with two
+-- animation rows by the 10-label spacing — that frame in the mock kept the 12-label rows)
 -- ===========================================================================
 local EF = { blocks = {} }
 P.EF = EF
 
 local function BuildEffects(parent)
-  local f = Section(parent, 351)
+  local f = Section(parent, 337)
   EF.sec = f
   local E = _G.GloomsHub and _G.GloomsHub.Effects
 
@@ -1241,7 +1280,7 @@ local function BuildEffects(parent)
 
   -- The rest of the section is ONE frame that moves down as the animation's
   -- settings take rows.
-  local rest = CreateFrame("Frame", nil, f); rest:SetSize(360, 202)
+  local rest = CreateFrame("Frame", nil, f); rest:SetSize(360, 194)
   EF.rest = rest
 
   local function block(id)
@@ -1251,7 +1290,7 @@ local function BuildEffects(parent)
     b.rows = {}
     local slot = 0            -- 0,1 = row 1's columns …; the color takes the slot beside the type
     local colorPlaced = false
-    local function place() local x = (slot % 2 == 0) and C1 or C2; local y = 43 + math.floor(slot / 2) * 43; slot = slot + 1; return x, y end
+    local function place() local x = (slot % 2 == 0) and C1 or C2; local y = 41 + math.floor(slot / 2) * 41; slot = slot + 1; return x, y end
     for _, p in ipairs(mod.params or {}) do
       local function set(v) local t = X.AnimParams(Cfg(), id); if t then t[p.key] = v end; Reapply() end
       local function get() return X.AnimGet(id, p.key) end
@@ -1300,7 +1339,7 @@ local function BuildEffects(parent)
       local d = Color(b, C2, 0, 170, "Animation Color", { get = function() return nil end, set = function() end })
       d:setEnabled(false); b.fixedOff = d
     end
-    b.extra = (slot > 0) and (math.ceil(slot / 2) * 43) or 0
+    b.extra = (slot > 0) and (math.ceil(slot / 2) * 41) or 0
     b:Hide()
     EF.blocks[id] = b
     return b
@@ -1331,20 +1370,20 @@ local function BuildEffects(parent)
   local function ensureRot() local c = Cfg(); if not c then return nil end; c.rotate = c.rotate or {}; return c.rotate end
   local function isIcon() local c = Cfg(); return c ~= nil and c.kind ~= "bar" and not c.noArt end
   local function spinning() local r = rot(); return isIcon() and r ~= nil and r.on == true end
-  add(Switch(rest, C1, 63, 170, "Rotation", OFFON,
+  add(Switch(rest, C1, 61, 170, "Rotation", OFFON,
     function() local r = rot(); return isIcon() and (r and r.on) == true end,
     function(v) local r = ensureRot(); if r then r.on = v or nil; Reapply(); P.sync() end end), isIcon)
   -- A percentage: 100% = one turn every 3 seconds.
-  add(Dial(rest, C2, 63, 170, { label = "Rotation Speed", min = 10, max = 500, step = 10, unit = "%", dragPx = 500,
+  add(Dial(rest, C2, 61, 170, { label = "Rotation Speed", min = 10, max = 500, step = 10, unit = "%", dragPx = 500,
     get = function() local r = rot(); return (r and r.speed) or 100 end,
     set = function(v) local r = ensureRot(); if r then r.speed = (v ~= 100) and v or nil; Reapply() end end }), spinning)
-  add(Drop(rest, C1, 106, 170, "Rotation Direction", { { "cw", "Clockwise" }, { "ccw", "Counter-Clockwise" } },
+  add(Drop(rest, C1, 102, 170, "Rotation Direction", { { "cw", "Clockwise" }, { "ccw", "Counter-Clockwise" } },
     function() local r = rot(); return (r and r.dir) or "cw" end,
     function(v) local r = ensureRot(); if r then r.dir = (v ~= "cw") and v or nil; Reapply() end end), spinning)
 
   -- SOUNDS
   local function soundLabel() local c = Cfg(); return (c and c.sound and c.sound.name) or "None" end
-  add(PickerDrop(rest, C1, 169, 127, "Sound Effect", soundLabel, function()
+  add(PickerDrop(rest, C1, 163, 127, "Sound Effect", soundLabel, function()
     local c = Cfg(); if not c then return end
     X.OpenSoundPicker(function(item)
       if item.file then c.sound = c.sound or {}; c.sound.file = item.file; c.sound.name = item.name; c.sound.channel = "Master"
@@ -1353,7 +1392,7 @@ local function BuildEffects(parent)
     end, c.sound and c.sound.file)
   end))
   local play = UI.gButton(rest, "Play", { w = 39, h = 16 })
-  play:SetPoint("TOPLEFT", 131, -186)
+  play:SetPoint("TOPLEFT", 131, -178)
   play:SetScript("OnClick", function()
     local c = Cfg(); if c and c.sound and c.sound.file then pcall(PlaySoundFile, c.sound.file, c.sound.channel or "Master") end
   end)
@@ -1373,12 +1412,12 @@ local function BuildEffects(parent)
   end
   local ON = { { "trigger", "When it triggers" }, { "ready", "When it comes off cooldown" },
                { "untrigger", "When it wears off" }, { "pandemic", "Pandemic window" } }
-  add(Drop(rest, C2, 169, 170, "Sound Trigger",
+  add(Drop(rest, C2, 163, 170, "Sound Trigger",
     function() local out = {}; for _, v in ipairs(ON) do out[#out + 1] = { v[1], v[2], alertOff(v[1]) } end; return out end,
     function() local c = Cfg(); return (c and c.sound and c.sound.on) or "trigger" end,
     function(v) local c = Cfg(); if c and c.sound then c.sound.on = v; P.sync() end end), hasSound)
   -- A timing already SET to something impossible has to be said out loud.
-  local warn = UI.gLabel(rest, "", 10, CORAL); warn:SetPoint("TOPLEFT", C2, -206); warn:SetWidth(170)
+  local warn = UI.gLabel(rest, "", 10, CORAL); warn:SetPoint("TOPLEFT", C2, -198); warn:SetWidth(170)
   warn:SetJustifyH("LEFT"); warn:SetWordWrap(true)
   EF.warn = warn
   rows[#rows + 1] = {
@@ -1403,8 +1442,8 @@ local function BuildEffects(parent)
       extra = b.extra
     end
     -- the Glow block starts 30 under the animation's last row
-    rest:ClearAllPoints(); rest:SetPoint("TOPLEFT", 0, -(43 + extra + 20 - 0))
-    local h = 43 + extra + 20 + 202
+    rest:ClearAllPoints(); rest:SetPoint("TOPLEFT", 0, -(41 + extra + 20))
+    local h = 41 + extra + 20 + 194
     if math.abs((f:GetHeight() or 0) - h) > 0.5 then f:SetHeight(h); Relayout() end
     local c = Cfg()
     need:SetText((b and c and not c.shape) and "Needs a Shape" or "")
@@ -1465,9 +1504,9 @@ function P.buildLoad(p, o)
       Poke(); X.RefreshList()
     end))
 
-  -- A checkbox row (the mock's Frame 366): 18 tall, 20 apart from y 53, the box
-  -- 2 down, its label (Sansation 10) 10 right of it.
-  local function at(b, x, i, y0) b:SetPoint("TOPLEFT", x, -((y0 or 53) + 2 + 20 * i)) end
+  -- A checkbox row (the mock's Frame 366): 18 tall, 20 apart from y 51 (53 while
+  -- labels were 12), the box 2 down, its label (Sansation 10) 10 right of it.
+  local function at(b, x, i, y0) b:SetPoint("TOPLEFT", x, -((y0 or 51) + 2 + 20 * i)) end
   local function check(label, get, set) return UI.gCheck(p, label, get, set, 10) end
   -- a pair: `key` holds v1 (only the first), v2 (only the second) or nil (both)
   local function pair(x, i, label1, label2, key, v1, v2)
@@ -1502,7 +1541,7 @@ function P.buildLoad(p, o)
   single(R, 5, "In War Mode", "warmode")
   single(R, 6, "Alive", "alive")
 
-  -- The class's specs (the mock's Frame 372): 18 apart from y 231.
+  -- The class's specs (the mock's Frame 372): 18 apart from y 229.
   local specs = X.PlayerSpecs()
   local sboxes = {}
   local function specOn(id) local v = vis(); return (not (v and v.specs)) or (v.specs[id] and true or false) end
@@ -1519,16 +1558,16 @@ function P.buildLoad(p, o)
       Poke()
       for _, o2 in ipairs(sboxes) do o2:refresh() end
     end))
-    b:SetPoint("TOPLEFT", L, -(233 + 18 * (i - 1)))
+    b:SetPoint("TOPLEFT", L, -(231 + 18 * (i - 1)))
     sboxes[#sboxes + 1] = b
   end
   local specH = math.max(3, #specs) * 18
 
   -- SPELL / TALENT KNOWN — a spell ID; talents count. Commits on Enter and on
   -- losing focus (item 7's lesson: Enter-only left a stale value behind).
-  local y0 = 231 + specH + 20
+  local y0 = 229 + specH + 20
   Label(p, 0, y0, "Spell/Talent Known")
-  local help = UI.gLabel(p, "", 10); help:SetPoint("TOPLEFT", 0, -(y0 + 37)); help:SetAlpha(0.4)
+  local help = UI.gLabel(p, "", 10); help:SetPoint("TOPLEFT", 0, -(y0 + 35)); help:SetAlpha(0.4)
   local function helpText()
     local v = vis(); local id = v and v.spellKnown
     if id then
@@ -1545,13 +1584,13 @@ function P.buildLoad(p, o)
       if id ~= w.spellKnown then w.spellKnown = id; helpText(); Poke() end
     end,
     revert = function(self) self:refresh() end })
-  sk:SetPoint("TOPLEFT", 0, -(y0 + 17))
+  sk:SetPoint("TOPLEFT", 0, -(y0 + 15))
   function sk:refresh() local v = vis(); self:SetText(v and v.spellKnown and tostring(v.spellKnown) or ""); helpText() end
   put(sk)
 
   -- PLAYER POWER — whole units (UnitPower's fragments are a different scale and
   -- a different question). The type seeds the rule; Off removes it.
-  local y1 = y0 + 58
+  local y1 = y0 + 56
   local pwVal
   put(Drop(p, 0, y1, 149, "Player Power", POWERS,
     function() local v = vis(); return (v and v.power and v.power.type) or "off" end,
@@ -1566,17 +1605,17 @@ function P.buildLoad(p, o)
       P.sync(); if C._grows then for _, r in ipairs(C._grows) do r:refresh(); r:setEnabled(true) end end
     end))
   local function hasPower() local v = vis(); return v and v.power and v.power.type ~= nil end
-  put(Drop(p, 159, y1 + 17, 130, nil, OPS,
+  put(Drop(p, 159, y1 + 15, 130, nil, OPS,
     function() local v = vis(); return (v and v.power and v.power.op) or "ge" end,
     function(x) local v = visW(); if v and v.power then v.power.op = x; Poke() end end), hasPower)
   pwVal = UI.gField(p, 60, { numeric = true, justify = "CENTER",
     commit = function(s) local v = visW(); if v and v.power then v.power.value = tonumber(s) or 0; Poke() end end,
     revert = function(self) self:refresh() end })
-  pwVal:SetPoint("TOPLEFT", 300, -(y1 + 17))
+  pwVal:SetPoint("TOPLEFT", 300, -(y1 + 15))
   pwVal:SetTextInsets(0, 0)
   function pwVal:refresh() local v = vis(); self:SetText(v and v.power and v.power.value and tostring(v.power.value) or "") end
   put(pwVal, hasPower)
-  return y1 + 33
+  return y1 + 31
 end
 
 local function BuildLoad(parent)

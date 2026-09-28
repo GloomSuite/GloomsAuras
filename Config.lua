@@ -4352,7 +4352,7 @@ C.X = {
   SetContainer = function(c) container = c end,
   CloseSubWindows = CloseSubWindows,
   OpenPicker = OpenPicker, OpenTexturePicker = OpenTexturePicker, OpenShapePicker = OpenShapePicker,
-  OpenSoundPicker = OpenSoundPicker, OpenFontPicker = OpenFontPicker, fontNameFor = fontNameFor,
+  OpenSoundPicker = OpenSoundPicker, OpenFontPicker = OpenFontPicker, fontNameFor = fontNameFor, fontData = BuildFontData,
   OpenNameDialog = OpenNameDialog, PlayerSpecs = PlayerSpecs,
   TrigPill = TrigPill, AnimGet = AnimGet, AnimParams = AnimParams, ParamScale = ParamScale,
   BLEND_MODES = BLEND_MODES, STRATA_MODES = STRATA_MODES, TE_ANCHOR = TE_ANCHOR, TE_OUTLINE = TE_OUTLINE,

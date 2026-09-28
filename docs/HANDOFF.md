@@ -9,7 +9,13 @@
 > - The **selector** is the old Aura Groups list (same rows, menus, drag), sized from the WINDOW
 >   (`P.listHost`) — the list re-renders on resize. New Aura / New Group at its foot.
 > - The **tab** (one per window — settings + each pop-out; `P.syncHeader` refreshes them all): icon +
->   name; click = rename, right-click = `P.auraContext` (Rename · Duplicate · Move to Group · Delete).
+>   name; click = the LIST of auras to switch to (`P.auraSwitch` — the owner, 2026-09-27: "not rename
+>   the current one"), right-click = `P.auraContext` (Rename · Duplicate · Move to Group · Delete).
+> - 2026-09-27, the owner's first in-game round: the Font controls are the kit's list (`FontDrop`,
+>   each name in its own face — `X.fontData`); Displayed Text DIMS while Show Charge Count is on (the
+>   count replaces it); an aura's on-screen text draws on its own frame (`f.textTop`, display level
+>   +10) because it sat UNDER a bar aura's bar; colors offer "Use Class Color" (`Core.lua` stamps them
+>   at login — CONTRACTS §4). `Pages.lua` needs LibGloomSkin 17.
 >   Duplicate/Delete/Move moved here from the old header (`P.duplicateSelected`, `P.deleteSelected`,
 >   `P.groupMenu`).
 > - **Triggers**' Add a Trigger / Create Trigger Group are its section FOOTER (pinned to the window's

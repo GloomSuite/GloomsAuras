@@ -622,6 +622,9 @@ boot:SetScript("OnEvent", function(_, event, arg1)
   if event == "ADDON_LOADED" and arg1 == ADDON_NAME then
     InitGlobal()
   elseif event == "PLAYER_LOGIN" then
+    -- Colors set to "Use Class Color" take THIS character's class, in every
+    -- profile, before anything applies them (the Hub's kit, LibGloomSkin).
+    if GloomsHub and GloomsHub.UI and GloomsHub.UI.StampClassColors then GloomsHub.UI.StampClassColors(GloomsAurasDB) end
     SetupActiveProfile()   -- migrate schema 1→2 + point GA.db at the active profile, before anything reads it
     PreloadFonts()   -- warm bundled fonts before any panel is built (avoids blank labels)
     if GA.CDM and GA.CDM.Init then GA.CDM:Init() end

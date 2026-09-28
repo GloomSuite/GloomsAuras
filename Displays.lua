@@ -323,7 +323,15 @@ function D:GetOrCreate(spellID)
     tex:SetAllPoints()
     f.tex = tex
 
-    local label = f:CreateFontString(nil, "OVERLAY")
+    -- The on-screen text gets a frame of its OWN above everything the aura draws.
+    -- A FontString on `f` sat UNDER a bar aura's bar (a child frame) and the
+    -- engine's fill button over it (bar level +1) — seen by the owner 2026-09-27,
+    -- "fdsa … is UNDER the bar". Same fix as the bar's value text (EnsureBar).
+    -- Its level is re-set in ApplyConfig, after the aura's own Level.
+    local textTop = CreateFrame("Frame", nil, f)
+    textTop:SetAllPoints(f)
+    f.textTop = textTop
+    local label = textTop:CreateFontString(nil, "OVERLAY")
     f.label = label   -- font/size/outline/color/anchor all set in ApplyConfig (cfg.text)
 
     -- Native cooldown swipe (used for cooldown-type displays). The game draws
@@ -774,6 +782,8 @@ function D:ApplyConfig(spellID)
   -- the setting puts it back rather than leaving the last number in place.
   f._baseLevel = f._baseLevel or f:GetFrameLevel()
   f:SetFrameLevel(cfg.level or f._baseLevel)
+  -- the text's frame above the bar (+1), the engine's fill (+2) and its holder (+2)
+  if f.textTop then f.textTop:SetFrameStrata(f:GetFrameStrata()); f.textTop:SetFrameLevel(f:GetFrameLevel() + 10) end
 
   -- On-screen text overlay. cfg.text = { show, str, font, size, color, outline, anchor, x, y }.
   -- Backward-compat: no cfg.text ⇒ legacy behavior (show the aura's name via cfg.showLabel).
