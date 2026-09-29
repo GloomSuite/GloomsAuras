@@ -761,7 +761,7 @@ local function RefreshList()
         -- tint exactly, the way the shared caret does. Don't re-bake a colour into
         -- these two files: SetVertexColor multiplies, so coloured art can only ever
         -- darken (the purple originals tinted orange came out #873F15, a muddy brown).
-        local on = (sid == selectedID) or (cfg and cfg.preview)
+        local on = GA.Displays and GA.Displays:EyeOn(sid)
         local tint = on and COLOR.orange or COLOR.purple
         row.eye.icon:SetTexture(MEDIA .. (on and "unhidden.png" or "hidden.png"))
         row.eye.icon:SetVertexColor(tint.r, tint.g, tint.b)
@@ -2211,10 +2211,14 @@ function C:CreateAura(uiType)
       bar = { mode = "aura_dur" },
     }
   else
+    -- ICON and TEXTURE auras (made distinct 2026-09-27, the owner): an icon aura
+    -- starts with NO art of its own — it shows its first trigger's spell icon,
+    -- the red question mark until it has one (Displays.lua); a texture aura
+    -- starts on the white sphere, a neutral placeholder for art to be chosen.
     db[id] = {
       uiType = uiType, label = (uiType == "texture") and "New Texture Aura" or "New Icon Aura",
       enabled = true, width = 64, height = 64, point = { "CENTER", 0, 120 }, alpha = 1,
-      showLabel = false, texture = MEDIA .. "Textures\\Circle_Smooth",   -- neutral placeholder
+      showLabel = false, texture = (uiType == "texture") and (MEDIA .. "Textures\\Circle_Smooth") or nil,
     }
   end
   if GA.CDM then GA.CDM:Discover() end

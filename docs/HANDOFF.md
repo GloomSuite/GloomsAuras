@@ -1,4 +1,28 @@
-# GloomsAuras — Session Handoff  (last updated 2026-09-27)
+# GloomsAuras — Session Handoff  (last updated 2026-09-29)
+
+> ## ▶▶▶ 2026-09-27 (late) — TYPES, THE EYE, DIMMING, TYPE SWITCHING
+> - **Icon / Texture / Bar are real types** (`P.AuraType`: `kind == "bar"`, else `uiType == "texture"`,
+>   else Icon — an aura from before `uiType` was saved counts as Icon). An Icon is CREATED with no
+>   `texture` (its first trigger's spell icon; the red question mark `134400` until then — Displays.lua's
+>   fallback, magenta only for a Texture aura); a Texture on the white sphere. The tab shows the type.
+>   The owner REJECTED merging Icon and Texture.
+> - **Right-click → Duplicate As… / Change Type…** — `P.convert(id, cfg, to)`: every type's fields are
+>   kept (switching back restores the look); the size is remembered per side (`cfg.barSize` /
+>   `cfg.artSize`, defaults 220 × 24 / 64 × 64); leaving a bar Detaches the duration engine; a copy lands
+>   just right of the original.
+> - **The eye** — `D:EyeOn(id)` / `D:ToggleEye(id)` in Displays.lua: `cfg.preview` is the saved eye while
+>   NOT selected; the selected aura shows regardless (`D.selShow`, fresh on each new selection) and its
+>   eye toggles only that.
+> - **Dimming by type (the audit — every control traced to its read site):** a bar dims the art
+>   settings (Icon/Art, Shape, Blend, Recolor, Desaturate, Rotation, Effects Only) and Animation; Effects
+>   Only dims the art ones; Countdown needs Bar Type Aura Duration; Stack Text dims on Cooldown; Fill
+>   Direction on Stack Count; Font unless a readout shows; Pandemic Color unless the spell sends the
+>   pandemic alert. **Bar Fill & Readouts is LOCKED shut** on a non-bar (the Hub's section `locked`).
+>   A section now syncs its dimming when BUILT and when shown (`Synced` + `onShow` — it used to wait
+>   for the next aura switch). Stack Text Position's unset default now reads Center in Stack Count mode.
+> - **A tooltip on every setting** (`tip(ctrl, title, body)`; the kit waits 1 s).
+> - Leftovers: Hub BACKLOG 20 (a Bar Type mismatch note; Opacity vs the engine's drain fill, unproven).
+
 
 > ## ▶▶▶ 2026-09-27 — THE AURAS TAB IS NOW TWO WINDOWS (`Pages.lua`, rewritten again)
 > **Suite-wide facts live in the Hub: BACKLOG 16, CONTRACTS §2 (the two-window block) and §4 ("THE

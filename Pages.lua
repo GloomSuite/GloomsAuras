@@ -76,6 +76,24 @@ local function add(ctrl, gate)
   return ctrl
 end
 
+-- A hover tip on any control (the kit routes it into switches, dials and colors,
+-- and waits a second before showing — the owner, 2026-09-27: tips on every
+-- setting, saying what it does and where it applies, never in the way).
+local function tip(ctrl, title, body) UI.attachTip(ctrl, title, body); return ctrl end
+
+-- The aura's TYPE (the owner, 2026-09-27): Bar, or Icon / Texture — made real
+-- that day. `uiType` is saved at creation; an aura from before it was saved
+-- counts as an Icon aura. What differs: an Icon aura starts with no art of its
+-- own (its trigger's icon, the red question mark until it has one); a Texture
+-- aura starts with the white sphere and warns in magenta with no art at all.
+local TYPE_LABEL = { icon = "Icon Aura", texture = "Texture Aura", bar = "Bar Aura" }
+local function AuraType(cfg)
+  if not cfg then return nil end
+  if cfg.kind == "bar" then return "bar" end
+  return (cfg.uiType == "texture") and "texture" or "icon"
+end
+P.AuraType = AuraType
+
 -- The aura's icon: its own texture first, else its tracked spell's, else the
 -- question mark — the same rule as the on-screen fallback (Hub backlog item 9).
 local function AuraIcon(cfg)
@@ -230,18 +248,16 @@ local function listRow(i)
   local wt = r.warn:CreateTexture(nil, "ARTWORK"); wt:SetAllPoints()
   wt:SetTexture(UI.G_WARN); wt:SetTexCoord(0, 12 / 16, 0, 12 / 16); UI.tint(wt, CORAL)
   UI.attachTip(r.warn, "Not in your Cooldown Manager", function() return r.warnText or "" end)
-  -- The eye: on screen = lime, hidden = white at 40%. The selected aura counts as on screen.
+  -- The eye: on screen = lime, hidden = white at 40%. Selecting an aura shows it; its eye on the selected aura is for now only, and it returns to its saved eye when another is selected.
   r.eye = CreateFrame("Button", nil, r); r.eye:SetSize(14, 14); r.eye:SetPoint("RIGHT", 0, 0)
   r.eye.t = r.eye:CreateTexture(nil, "ARTWORK"); r.eye.t:SetSize(14, 8.5); r.eye.t:SetPoint("CENTER", 0, 0)
   r.eye.t:SetTexture(UI.G_EYE); r.eye.t:SetTexCoord(0, 56 / 64, 0, 34 / 64)
   r.eye:SetScript("OnClick", function()
     if r.kind ~= "aura" then return end
-    local cfg = DB() and DB()[r.id]; if not cfg then return end
-    cfg.preview = (not cfg.preview) or nil
-    if GA.Displays then GA.Displays:RefreshForced() end
+    if GA.Displays then GA.Displays:ToggleEye(r.id) end
     X.RefreshList()
   end)
-  UI.attachTip(r.eye, "Show on screen", "Shows this aura on screen while the panel is open, so you can place it. It does not change whether the aura runs in play.")
+  UI.attachTip(r.eye, "Show on screen", "Shows this aura on screen while the panel is open, so you can place it. The aura you select shows while it's selected — click its eye to hide it for now; once you select another, it goes back to its own eye. It does not change whether the aura runs in play.")
   r:SetScript("OnEnter", function(self)
     if (self.kind == "aura" and self.id ~= Sel()) or self.kind == "add" then
       self.hl:SetColorTexture(VIOLET.r, VIOLET.g, VIOLET.b, 0.15); self.hl:Show()
@@ -365,7 +381,7 @@ function P.renderList()
         if w > maxW then w = maxW; r.name:SetWidth(maxW) end
         if warnText then r.warn:ClearAllPoints(); r.warn:SetPoint("LEFT", 18 + w + 4, 0); r.warn:Show() end
         r.eye:Show()
-        local on = isSel or (cfg and cfg.preview)
+        local on = GA.Displays and GA.Displays:EyeOn(e.id)
         if on then UI.tint(r.eye.t, LIME) else r.eye.t:SetVertexColor(1, 1, 1, 0.4) end
       elseif e.kind == "add" then
         UI.setFont(r.name, FONT.saB, 10)
@@ -454,6 +470,87 @@ function P.duplicateSelected()
   if GA.CDM then GA.CDM:Discover() end
   X.SetSelected(nid)
 end
+-- ---------------------------------------------------------------------------
+-- CHANGING TYPE (the owner, 2026-09-27: "copy the Rupture bar, but have the
+-- copy be an icon … positioned near it"). Duplicate As… makes a copy in the new
+-- type beside the original; Change Type… converts the aura itself. Both run
+-- through P.convert. What it does, and why:
+--   · every type's settings live in their own fields (the bar's in cfg.bar, the
+--     art's in texture / shape / blend …), so nothing is deleted — switching
+--     back brings the old look back; the other type's settings just sit unused
+--     (and dim);
+--   · the SIZE is remembered per side (cfg.barSize / cfg.artSize): a 220 × 24
+--     bar would be a squashed strip as an icon, so each side gets its own last
+--     size, or its default the first time (a 220 × 24 bar, a 64 × 64 icon);
+--   · leaving a BAR hands the duration engine its slot back (as Bar Type does);
+--   · an ICON shows its first trigger's spell icon — the white-sphere
+--     placeholder of a texture is dropped on the way in; a TEXTURE with no art
+--     gets the sphere;
+--   · a bar measures its FIRST trigger's spell: a trigger of the wrong kind for
+--     the Bar Type gives a bar that never moves (the tooltip on Bar Type says so).
+-- Styling a bar is pushed to the game out of combat only, so a change made in
+-- combat finishes drawing when combat ends — as every bar edit does.
+-- ---------------------------------------------------------------------------
+local SPHERE = (GA.MEDIA or "") .. "Textures\\Circle_Smooth"
+function P.convert(id, cfg, to)
+  local from = AuraType(cfg)
+  if not cfg or from == to then return end
+  local w, h = cfg.width or cfg.size or 64, cfg.height or cfg.size or 64
+  if from == "bar" then
+    cfg.barSize = { w, h }
+    if GA.AuraDuration and id then GA.AuraDuration:Detach(id) end
+    cfg.kind = nil
+    local s2 = cfg.artSize or { 64, 64 }
+    cfg.width, cfg.height = s2[1], s2[2]
+  elseif to == "bar" then
+    cfg.artSize = { w, h }
+    cfg.kind = "bar"
+    cfg.bar = cfg.bar or { mode = "aura_dur" }
+    local s2 = cfg.barSize or ((cfg.bar.orientation == "VERTICAL") and { 24, 220 } or { 220, 24 })
+    cfg.width, cfg.height = s2[1], s2[2]
+  end
+  cfg.uiType = to
+  if to == "icon" and cfg.texture == SPHERE then cfg.texture = nil end
+  if to == "texture" and (cfg.texture == nil or cfg.texture == "") then cfg.texture = SPHERE end
+  if cfg.lockAspect then cfg.aspect = (cfg.height > 0) and (cfg.width / cfg.height) or 1 end
+end
+
+local TYPES = { { "icon", "Icon" }, { "texture", "Texture" }, { "bar", "Bar" } }
+local function typeMenu(anchor, onPick)
+  local cur = AuraType(Cfg())
+  local list = {}
+  for _, t in ipairs(TYPES) do list[#list + 1] = { value = t[1], label = t[2] .. " Aura", disabled = (t[1] == cur) } end
+  UI.gList(anchor, list, nil, function(v) if TYPE_LABEL[v] then onPick(v) end end, { cursor = true, minW = 120 })
+end
+
+-- A copy in another type, just to the right of the original.
+function P.duplicateAs(anchor)
+  typeMenu(anchor, function(to)
+    local id = Sel(); local src = id and DB() and DB()[id]; if not src then return end
+    local copy = X.DeepCopy(src)
+    copy.label = (copy.label or "Aura") .. " (" .. TYPE_LABEL[to] .. ")"
+    local ow = src.width or src.size or 64
+    P.convert(nil, copy, to)
+    local p = src.point or { "CENTER", 0, 0 }
+    copy.point = { "CENTER", (p[2] or 0) + ow / 2 + 8 + (copy.width or 64) / 2, p[3] or 0 }
+    local nid = X.NewDisplayID(); DB()[nid] = copy
+    if GA.CDM then GA.CDM:Discover() end
+    X.SetSelected(nid)
+  end)
+end
+
+-- The aura itself, in another type.
+function P.changeType(anchor)
+  typeMenu(anchor, function(to)
+    local id, cfg = Sel(), Cfg(); if not (id and cfg) then return end
+    P.convert(id, cfg, to)
+    if GA.CDM then GA.CDM:Discover() end
+    Reapply()
+    X.SetSelected(id)
+    P.sync(); P.syncHeader(); X.RefreshList(); Relayout()
+  end)
+end
+
 -- Deleting CONFIRMS (CONTRACTS §4).
 function P.deleteSelected()
   local id, cfg = Sel(), Cfg(); if not (id and cfg) then return end
@@ -506,11 +603,15 @@ function P.auraContext(anchor)
   UI.gList(anchor, {
     { value = "rename", label = "Rename" },
     { value = "dup", label = "Duplicate Aura" },
+    { value = "dupas", label = "Duplicate As…" },
+    { value = "type", label = "Change Type…" },
     { value = "group", label = "Move to Group…" },
     { value = "delete", label = "Delete Aura", danger = true, divider = true },
   }, nil, function(v)
     if v == "rename" then C:RenameSelected()
     elseif v == "dup" then P.duplicateSelected()
+    elseif v == "dupas" then P.duplicateAs(anchor)
+    elseif v == "type" then P.changeType(anchor)
     elseif v == "group" then P.groupMenu(anchor)
     elseif v == "delete" then P.deleteSelected() end
   end, { cursor = true, minW = 150 })
@@ -655,7 +756,10 @@ local function BuildTab(tab)
   local icon = tab:CreateTexture(nil, "ARTWORK"); icon:SetSize(16, 16); icon:SetPoint("TOPLEFT", 20, -6)
   icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
   local name = UI.newText(tab, FONT.sa, 12, LILAC, "LEFT"); name:SetWordWrap(false)
-  name:SetPoint("TOPLEFT", 46, -8); name:SetWidth(270)
+  name:SetPoint("TOPLEFT", 46, -8); name:SetWidth(230)
+  -- the aura's type, right-aligned (the owner, 2026-09-27)
+  local kind = UI.newText(tab, FONT.sa, 10, COLOR.paper, "RIGHT"); kind:SetPoint("TOPRIGHT", -20, -9)
+  kind:SetAlpha(0.6)
   local hit = CreateFrame("Button", nil, tab); hit:SetHeight(16); hit:SetPoint("TOPLEFT", 46, -6)
   hit:RegisterForClicks("LeftButtonUp", "RightButtonUp")
   hit:SetScript("OnClick", function(self, button)
@@ -668,10 +772,12 @@ local function BuildTab(tab)
     if cfg then
       icon:SetTexture(AuraIcon(cfg)); icon:Show()
       name:SetText(cfg.label or "Aura"); name:SetAlpha(1)
+      kind:SetText(TYPE_LABEL[AuraType(cfg)] or "")
     else
       icon:Hide(); name:SetText("No aura yet — click New Aura"); name:SetAlpha(0.6)
+      kind:SetText("")
     end
-    hit:SetWidth(math.max(10, math.min(270, name:GetStringWidth())))
+    hit:SetWidth(math.max(10, math.min(230, name:GetStringWidth())))
   end
   tabs[#tabs + 1] = t
   return t
@@ -721,7 +827,7 @@ local function StateDrop(parent, r)
     for _, st in ipairs(C:TrigStates(r._ti, r._ci)) do list[#list + 1] = { value = st, label = StateText(st, node and node.k) } end
     UI.gList(self, list, node and node.state, function(v) C:TrigSetState(r._ti, r._ci, v) end)
   end)
-  UI.attachTip(d, "Condition", "What this condition checks for.")
+  UI.attachTip(d, "Condition", "What this condition checks for — the choices depend on the spell (a buff, a debuff, a cooldown…). Drag a condition by its row to move it into or out of a group.")
   return d
 end
 
@@ -762,6 +868,9 @@ local function MatchButtons(parent, onPick)
   for i, lg in ipairs(LOGICS) do
     local b = UI.gButton(parent, "Match " .. lg[2])
     b._logic = lg[1]
+    tip(b, "Match " .. lg[2]:lower(), ({ AND = "The aura shows while EVERY condition below is true.",
+      OR = "The aura shows while ANY one of the conditions below is true.",
+      NONE = "The aura shows while NONE of the conditions below is true." })[lg[1]])
     b:SetScript("OnClick", function() onPick(lg[1]) end)
     out[i] = b
     if prev then b:SetPoint("LEFT", prev, "RIGHT", 10, 0) end
@@ -908,6 +1017,7 @@ local function BuildTriggersFooter(parent)
   TR.addT = UI.gButton(f, "Add a Trigger")
   TR.addT:SetPoint("TOPLEFT", 0, 0)
   TR.addT:SetScript("OnClick", function() X.OpenPicker(function(item) C:TrigAddLeaf(item, nil) end) end)
+  tip(TR.addT, "Add a trigger", "Adds a condition on a spell from your Cooldown Manager. For a bar, the FIRST trigger's spell is what the bar measures.")
   TR.addG = UI.gButton(f, "Create Trigger Group")
   TR.addG:SetPoint("TOPRIGHT", 0, 0)
   TR.addG:SetScript("OnClick", function() C:TrigAddGroup() end)
@@ -922,11 +1032,17 @@ end
 -- ===========================================================================
 local function BuildAppearance(parent)
   local f = Section(parent, 317)
+  -- What applies (the audit, 2026-09-27 — Displays.lua's two branches): a BAR
+  -- draws none of the artwork settings; EFFECTS ONLY hides the artwork, so
+  -- nothing drawn on it matters either. Those dim; they never hide.
+  local function notBar() local c = Cfg(); return c ~= nil and c.kind ~= "bar" end
+  local function hasArt() local c = Cfg(); return c ~= nil and c.kind ~= "bar" and not c.noArt end
+  local function artVisible() local c = Cfg(); return c ~= nil and not (c.kind ~= "bar" and c.noArt) end
 
   -- Icon/Art: the texture — a file path or an icon ID — typed, or chosen. Blank
   -- means "the first trigger's icon". (A number typed here is stored as a
   -- number, which is what an ID is.)
-  Label(f, C1, 0, "Icon/Art")
+  local artL = Label(f, C1, 0, "Icon/Art")
   local choose = UI.gButton(f, "Choose", { h = 16 })
   choose:SetPoint("TOPLEFT", C1 + 170 - choose:GetWidth(), -15)
   local tf = UI.gField(f, 170 - 4 - choose:GetWidth(), {
@@ -940,18 +1056,26 @@ local function BuildAppearance(parent)
     revert = function(self) self:refresh() end,
   })
   tf:SetPoint("TOPLEFT", C1, -15)
-  function tf:refresh() local c = Cfg(); local v = c and c.texture; self:SetText(v ~= nil and tostring(v) or ""); self:SetCursorPosition(0) end
-  add(tf)
+  function tf:refresh()
+    local c = Cfg(); local v = c and c.texture; self:SetText(v ~= nil and tostring(v) or ""); self:SetCursorPosition(0)
+    if self.placeholder then
+      self.placeholder:SetText((AuraType(c) == "texture") and "Choose the art to show" or "Blank = the first trigger's icon")
+    end
+  end
+  tf._label = artL
+  add(tf, hasArt)
+  tip(tf, "Icon/Art", "The picture the aura shows: a texture path or an icon ID, typed here or picked with Choose. Icon auras can leave it blank to show the first trigger's spell icon. Not used by bars, or with Effects Only on.")
   choose:SetScript("OnClick", function()
     local c = Cfg(); if not c then return end
     X.OpenTexturePicker(function(tex) c.texture = tex; Reapply(); P.sync(); X.RefreshList(); P.syncHeader() end, c.texture)
   end)
-  add(choose)
+  add(choose, hasArt)
+  tip(choose, "Choose art", "Browse textures and icons for this aura.")
 
   -- Shape: a STENCIL cut through that texture — it draws nothing itself, and it
   -- is what an animation traces. (Most shapes crop very little off an icon; see
   -- FINDINGS §14 before calling one broken.)
-  add(PickerDrop(f, C2, 0, 170, "Shape/Silhouette",
+  add(tip(PickerDrop(f, C2, 0, 170, "Shape/Silhouette",
     function()
       local c = Cfg(); local k = c and c.shape
       if not k then return nil end
@@ -961,40 +1085,48 @@ local function BuildAppearance(parent)
     function()
       local c = Cfg(); if not c then return end
       X.OpenShapePicker(function(key) c.shape = key; Reapply(); P.sync() end, c.shape)
-    end))
+    end), "Shape/Silhouette", "Cuts the art to a shape, and gives the animations (Effects section) an outline to trace. Not used by bars."), notBar)
 
-  add(Dial(f, C1, 41, 170, { label = "Opacity", min = 0, max = 100, step = 1, unit = "%", dragPx = 500,
+
+  add(tip(Dial(f, C1, 41, 170, { label = "Opacity", min = 0, max = 100, step = 1, unit = "%", dragPx = 500,
     get = function() local c = Cfg(); return c and math.floor(((c.alpha or 1) * 100) + 0.5) end,
-    set = function(v) local c = Cfg(); if c then c.alpha = v / 100; Reapply() end end }))
-  add(Drop(f, C2, 41, 170, "Blend Mode", X.BLEND_MODES,
+    set = function(v) local c = Cfg(); if c then c.alpha = v / 100; Reapply() end end }),
+    "Opacity", "How see-through the aura is. It fades the art (or the bar), not the text or the glow. Not used with Effects Only on."), artVisible)
+  add(tip(Drop(f, C2, 41, 170, "Blend Mode", X.BLEND_MODES,
     function() local c = Cfg(); return (c and c.blend) or "BLEND" end,
-    function(v) local c = Cfg(); if c then c.blend = (v ~= "BLEND") and v or nil; Reapply() end end))
+    function(v) local c = Cfg(); if c then c.blend = (v ~= "BLEND") and v or nil; Reapply() end end),
+    "Blend mode", "How the art mixes with what's behind it: Normal draws it as it is; Add brightens (glows and light); Modulate darkens. Not used by bars, or with Effects Only on."), hasArt)
 
-  add(Color(f, T1, 82, 107, "Recolor:", { title = "Recolor",
+  add(tip(Color(f, T1, 82, 107, "Recolor:", { title = "Recolor",
     get = function() local c = Cfg(); return c and c.color end,
-    set = function(v) local c = Cfg(); if c then c.color = v; Reapply() end end }))
-  add(Switch(f, T2, 82, 106, "Desaturate", OFFON,
+    set = function(v) local c = Cfg(); if c then c.color = v; Reapply() end end }),
+    "Recolor", "Tints the art this color. Leave it empty to keep the art's own colors. Not used by bars, or with Effects Only on."), hasArt)
+  add(tip(Switch(f, T2, 82, 106, "Desaturate", OFFON,
     function() local c = Cfg(); return (c and c.desaturate) and true or false end,
-    function(on) local c = Cfg(); if c then c.desaturate = on or nil; Reapply() end end))
+    function(on) local c = Cfg(); if c then c.desaturate = on or nil; Reapply() end end),
+    "Desaturate", "Turns the art gray — handy under a Recolor, or to show something is unavailable. Not used by bars, or with Effects Only on."), hasArt)
   -- Effects only: no artwork, just the glow and the animation — for laying over
   -- a real action button. Distinct from a blank texture, which means "work it out".
   local eo = add(Switch(f, T3, 82, 107, "Effects Only", OFFON,
     function() local c = Cfg(); return (c and c.noArt) and true or false end,
-    function(on) local c = Cfg(); if c then c.noArt = on or nil; Reapply(); P.sync() end end))
-  UI.attachTip(eo, "Effects only", "The aura draws no artwork — just its glow and animation. For laying over a real action button.")
+    function(on) local c = Cfg(); if c then c.noArt = on or nil; Reapply(); P.sync() end end), notBar)
+  UI.attachTip(eo, "Effects only", "The aura draws no artwork — just its glow and animation. For laying over a real action button. Not used by bars.")
 
   -- POSITION (the left column)
-  add(Dial(f, C1, 143, 170, { label = "Horizontal Offset", min = -2000, max = 2000, step = 1, unit = "px", dragPx = 1600,
+  add(tip(Dial(f, C1, 143, 170, { label = "Horizontal Offset", min = -2000, max = 2000, step = 1, unit = "px", dragPx = 1600,
     get = function() local c = Cfg(); return c and c.point and c.point[2] or 0 end,
-    set = function(v) local c = Cfg(); if c then c.point = { "CENTER", v, (c.point and c.point[3]) or 0 }; Reapply() end end }))
-  add(Dial(f, C1, 184, 170, { label = "Vertical Offset", min = -2000, max = 2000, step = 1, unit = "px", dragPx = 1600,
+    set = function(v) local c = Cfg(); if c then c.point = { "CENTER", v, (c.point and c.point[3]) or 0 }; Reapply() end end }),
+    "Horizontal offset", "Where the aura sits, left (−) or right (+) of the screen's center. You can also drag the selected aura on screen."))
+  add(tip(Dial(f, C1, 184, 170, { label = "Vertical Offset", min = -2000, max = 2000, step = 1, unit = "px", dragPx = 1600,
     get = function() local c = Cfg(); return c and c.point and c.point[3] or 0 end,
-    set = function(v) local c = Cfg(); if c then c.point = { "CENTER", (c.point and c.point[2]) or 0, v }; Reapply() end end }))
+    set = function(v) local c = Cfg(); if c then c.point = { "CENTER", (c.point and c.point[2]) or 0, v }; Reapply() end end }),
+    "Vertical offset", "Where the aura sits, below (−) or above (+) the screen's center. You can also drag the selected aura on screen."))
   -- Fixed rotation, positive = clockwise; it shares one AnimationGroup with the
   -- spin (Effects section), so the angle is where a spin starts from.
-  add(Dial(f, C1, 225, 170, { label = "Rotation", min = 0, max = 359, step = 1, unit = "°", dragPx = 720,
+  add(tip(Dial(f, C1, 225, 170, { label = "Rotation", min = 0, max = 359, step = 1, unit = "°", dragPx = 720,
     get = function() local c = Cfg(); return (c and c.angle) or 0 end,
-    set = function(v) local c = Cfg(); if c then c.angle = (v ~= 0) and v or nil; Reapply() end end }))
+    set = function(v) local c = Cfg(); if c then c.angle = (v ~= 0) and v or nil; Reapply() end end }),
+    "Rotation", "Turns the art clockwise by this many degrees. A spin (Effects section) starts from this angle. Not used by bars, or with Effects Only on."), hasArt)
 
   -- SIZE (the right column). Width and height can be LINKED — the bracket
   -- joining their two boxes (the owner's design: white at 40% when free, lime
@@ -1009,6 +1141,7 @@ local function BuildAppearance(parent)
       if c.lockAspect then c.height = clampDim(v / (c.aspect or 1)); if hDial then hDial:refresh() end end
       Reapply()
     end }))
+  tip(wDial, "Width", "The aura's width. Link it to the height with the bracket to keep the proportions.")
   hDial = add(Dial(f, C2, 184, 156, { label = "Height", min = 8, max = 8192, step = 1, unit = "px", dragPx = 4000,
     get = function() local c = Cfg(); return c and (c.height or c.size) or 64 end,
     set = function(v)
@@ -1017,6 +1150,7 @@ local function BuildAppearance(parent)
       if c.lockAspect then c.width = clampDim(v * (c.aspect or 1)); if wDial then wDial:refresh() end end
       Reapply()
     end }))
+  tip(hDial, "Height", "The aura's height. Link it to the width with the bracket to keep the proportions.")
   -- The bracket: the mock's Frame 509, 10 wide at x 349, its arms level with
   -- the middles of the Width and Height boxes (18.5 and 66.5 down; 20.5 and
   -- 72.5 while labels were 12).
@@ -1039,14 +1173,16 @@ local function BuildAppearance(parent)
   UI.attachTip(link, "Link width and height", "While linked, changing the width changes the height with it, and the other way round. Click to switch.")
   add(link)
 
-  add(Drop(f, C1, 286, 170, "Strata", X.STRATA_MODES,
+  add(tip(Drop(f, C1, 286, 170, "Strata", X.STRATA_MODES,
     function() local c = Cfg(); return (c and c.strata) or "HIGH" end,
-    function(v) local c = Cfg(); if c then c.strata = (v ~= "HIGH") and v or nil; Reapply() end end))
+    function(v) local c = Cfg(); if c then c.strata = (v ~= "HIGH") and v or nil; Reapply() end end),
+    "Strata", "Which layer of the interface the aura draws in: Background is behind almost everything, Tooltip in front of it all. High is the default."))
   -- LEVEL (2026-09-23; Displays.lua applies it): 0 = Auto, the frame's own level.
-  add(Dial(f, C2, 286, 170, { label = "Level", min = 0, max = 500, step = 1, dragPx = 1000,
+  local lv = add(Dial(f, C2, 286, 170, { label = "Level", min = 0, max = 500, step = 1, dragPx = 1000,
     fmt = function(v) v = math.floor(v + 0.5); return v == 0 and "Auto" or tostring(v) end,
     get = function() local c = Cfg(); return (c and c.level) or 0 end,
     set = function(v) local c = Cfg(); if c then c.level = (v > 0) and v or nil; Reapply() end end }))
+  tip(lv, "Level", "Fine order within the strata: higher draws in front. Auto uses the aura's own level.")
   return f
 end
 
@@ -1069,22 +1205,38 @@ local function BuildBar(parent)
   end
   local function isBar() local c = Cfg(); return c and c.kind == "bar" end
   local function mode() local b = get(); return (b and b.mode) or "aura_dur" end
-  local function stacksOn() local b = get(); return isBar() and (b and b.showStacks) == true end
-  local function timerOn() local b = get(); return isBar() and (b and b.showTimer) == true end
+  -- What applies, by Bar Type (the audit, 2026-09-27 — Displays.lua): the
+  -- COUNTDOWN is drawn only by the duration engine, which runs only for Aura
+  -- Duration; STACK TEXT reads an aura, so a Cooldown bar never fills it; Stack
+  -- Count never reads the fill direction; the FONT is only the two readouts'.
+  local function stacksAble() return isBar() and mode() ~= "cd_dur" end
+  local function timerAble() return isBar() and mode() == "aura_dur" end
+  local function stacksOn() local b = get(); return stacksAble() and (b and b.showStacks) == true end
+  local function timerOn() local b = get(); return timerAble() and (b and b.showTimer) == true end
+  -- the pandemic tint only ever fires for a spell that sends the pandemic alert
+  local function pandemicAble()
+    if not isBar() then return false end
+    local c = Cfg()
+    local sid = c and GA.CDM and GA.CDM.DisplaySpellID and GA.CDM:DisplaySpellID(c)
+    if not (sid and GA.CDM.ValidAlerts) then return mode() ~= "cd_dur" end
+    local ok = GA.CDM:ValidAlerts(sid)
+    if ok == nil then return mode() ~= "cd_dur" end
+    return ok.pandemic ~= false
+  end
 
   local MODES = { { "aura_dur", "Aura Duration" }, { "cd_dur", "Cooldown" }, { "stacks", "Stack Count" } }
-  add(Drop(f, C1, 0, 170, "Bar Type", MODES, mode, function(v)
+  add(tip(Drop(f, C1, 0, 170, "Bar Type", MODES, mode, function(v)
     local b = ensure(); if not b then return end
     b.mode = v
     -- Leaving duration mode must RELEASE the engine's slot, or its button keeps
     -- painting a drain over a bar that now means something else.
     if GA.AuraDuration and Sel() then GA.AuraDuration:Detach(Sel()) end
     repaint(); P.sync()
-  end), isBar)
+  end), "Bar type", "What the bar measures, from the FIRST trigger's spell: Aura Duration (a buff or debuff's time left), Cooldown (time until a spell is ready) or Stack Count. The first trigger has to be that kind of spell, or the bar won't move."), isBar)
   -- Changing the axis SWAPS width and height: a 220 × 24 bar stood on end is 24
   -- wide and 220 tall, which is what anyone means by it.
   local ORIENT = { { "HORIZONTAL", "Horizontal" }, { "VERTICAL", "Vertical" } }
-  add(Drop(f, C2, 0, 170, "Orientation", ORIENT,
+  add(tip(Drop(f, C2, 0, 170, "Orientation", ORIENT,
     function() local b = get(); return (b and b.orientation == "VERTICAL") and "VERTICAL" or "HORIZONTAL" end,
     function(v)
       local c = Cfg(); local b = ensure(); if not (b and c) then return end
@@ -1092,7 +1244,7 @@ local function BuildBar(parent)
       b.orientation = nowVert and "VERTICAL" or nil
       if wasVert ~= nowVert then c.width, c.height = (c.height or 24), (c.width or 220) end
       repaint(); P.sync()
-    end), isBar)
+    end), "Orientation", "Horizontal or vertical. Switching swaps the width and height, so the bar stands on end."), isBar)
 
   -- The fill texture (Shared Media bar textures only). RIGHT-CLICK clears it back
   -- to a plain color fill — the picker has no "none" row.
@@ -1115,37 +1267,43 @@ local function BuildBar(parent)
         tex:refresh(); repaint()
       end, (get() or {}).texture, "lsm")
     end), isBar)
-  UI.attachTip(tex, "Bar texture", "Click to choose a fill texture. Right-click to go back to a plain color fill.")
+  UI.attachTip(tex, "Bar texture", "The fill's texture. Click to choose one; right-click to go back to a plain color fill.")
   -- Rotate Texture: without it a gradient drawn for a horizontal bar stays
   -- horizontal when the bar is stood on end.
-  add(Switch(f, C2, 41, 170, "Rotate Texture", OFFON,
+  add(tip(Switch(f, C2, 41, 170, "Rotate Texture", OFFON,
     function() local b = get(); return (b and b.rotateTexture) == true end,
-    function(on) local b = ensure(); if b then b.rotateTexture = on or nil; repaint() end end), isBar)
+    function(on) local b = ensure(); if b then b.rotateTexture = on or nil; repaint() end end),
+    "Rotate texture", "Turns the fill texture with a vertical bar, so a texture drawn for horizontal bars still runs along the bar."), isBar)
 
   local DIRS = { { "drain", "Drains Down" }, { "fill", "Fills Up" } }
-  add(Drop(f, C1, 82, 170, "Bar Fill Direction", DIRS,
+  add(tip(Drop(f, C1, 82, 170, "Bar Fill Direction", DIRS,
     function() local b = get(); return (b and b.fill == "fill") and "fill" or "drain" end,
-    function(v) local b = ensure(); if b then b.fill = (v == "fill") and "fill" or nil; repaint() end end), isBar)
-  add(Switch(f, C2, 82, 170, "Reverse Fill", OFFON,
+    function(v) local b = ensure(); if b then b.fill = (v == "fill") and "fill" or nil; repaint() end end),
+    "Bar fill direction", "Drains Down: full when the timer starts, empty when it ends. Fills Up: the other way round. Not used by a Stack Count bar."),
+    function() return isBar() and mode() ~= "stacks" end)
+  add(tip(Switch(f, C2, 82, 170, "Reverse Fill", OFFON,
     function() local b = get(); return (b and b.reverse) == true end,
-    function(on) local b = ensure(); if b then b.reverse = on or nil; repaint() end end), isBar)
-  local function colorAt(x, w, label, key)
-    add(Color(f, x, 123, w, label, {
+    function(on) local b = ensure(); if b then b.reverse = on or nil; repaint() end end),
+    "Reverse fill", "Fills from the other end: right to left, or top to bottom."), isBar)
+  local function colorAt(x, w, label, key, tipText, gate)
+    add(tip(Color(f, x, 123, w, label, {
       get = function() local b = get(); return b and b[key] end,
-      set = function(v) local b = ensure(); if b then b[key] = v; repaint() end end }), isBar)
+      set = function(v) local b = ensure(); if b then b[key] = v; repaint() end end }), label, tipText), gate or isBar)
   end
-  colorAt(T1, 107, "Bar Fill Color", "color")
-  colorAt(T2, 106, "Background Color", "bg")
+  colorAt(T1, 107, "Bar Fill Color", "color", "The fill's color. Empty keeps the texture's own colors.")
+  colorAt(T2, 106, "Background Color", "bg", "The color of the empty part behind the fill. Empty: no background.")
   -- The BACKDROP turns this color while the DoT is in its pandemic window — the
   -- backdrop, not the fill: the fill is the engine's and cannot be recolored in
   -- combat (HANDOFF, 2026-09-19 — do not re-offer the fill).
-  colorAt(T3, 107, "Pandemic Color", "pandemicBg")
+  colorAt(T3, 107, "Pandemic Color", "pandemicBg", "The background turns this color in a DoT's pandemic window — when refreshing it no longer wastes time. Only for spells the game sends a pandemic alert for.", pandemicAble)
 
   -- THE READOUTS — one font for both: two typefaces on one 22px bar would read
   -- as an accident.
-  add(FontDrop(f, 0, 184, 238,
+  add(tip(FontDrop(f, 0, 184, 238,
     function() local b = get(); return b and b.font end,
-    function(path) local b2 = ensure(); if b2 then b2.font = path; repaint(); P.sync() end end), isBar)
+    function(path) local b2 = ensure(); if b2 then b2.font = path; repaint(); P.sync() end end),
+    "Font", "The typeface of the bar's Stack Text and Countdown Text. Used only while one of them shows."),
+    function() return stacksOn() or timerOn() end)
   -- MAX STACKS — how many stacks make a FULL bar (with Max 6, three stacks is
   -- half a bar). The game does not tell an addon an aura's maximum, so it is set
   -- here. It only means something in Stack Count mode: dimmed otherwise.
@@ -1157,26 +1315,32 @@ local function BuildBar(parent)
   function mx:refresh() local b = get(); self:SetText(tostring((b and b.max) or 10)) end
   mx._label = mxl
   add(mx, function() return isBar() and mode() == "stacks" end)
+  tip(mx, "Max stacks", "How many stacks fill the bar: with 6, three stacks is half a bar. The game doesn't tell addons an aura's maximum, so it's set here. Stack Count bars only.")
 
   local ANCHORS = { { "CENTER", "Center" }, { "TOP", "Top" }, { "BOTTOM", "Bottom" }, { "LEFT", "Left" }, { "RIGHT", "Right" } }
-  local function readout(y, label, showKey, colorKey, sizeKey, anchorKey, anchorDefault, gate)
-    add(Switch(f, C1, y, 170, label, OFFON,
+  local function readout(y, label, showKey, colorKey, sizeKey, anchorKey, anchorDefault, able, gate, what)
+    add(tip(Switch(f, C1, y, 170, label, OFFON,
       function() local b = get(); return (b and b[showKey]) == true end,
-      function(v) local b = ensure(); if b then b[showKey] = v or nil; repaint(); P.sync() end end), isBar)
-    add(Color(f, C2, y, 170, "Text Color", { title = label .. " Color",
+      function(v) local b = ensure(); if b then b[showKey] = v or nil; repaint(); P.sync() end end), label, what), able)
+    add(tip(Color(f, C2, y, 170, "Text Color", { title = label .. " Color",
       get = function() local b = get(); return b and b[colorKey] end,
-      set = function(v) local b = ensure(); if b then b[colorKey] = v; repaint() end end }), gate)
-    add(Dial(f, C1, y + 41, 170, { label = label .. " Size", min = 8, max = 32, step = 1, unit = "px", dragPx = 300,
+      set = function(v) local b = ensure(); if b then b[colorKey] = v; repaint() end end }), label .. " color", "The color of the " .. label:lower() .. ". Empty: white."), gate)
+    add(tip(Dial(f, C1, y + 41, 170, { label = label .. " Size", min = 8, max = 32, step = 1, unit = "px", dragPx = 300,
       get = function() local b = get(); return (b and b[sizeKey]) or 14 end,
-      set = function(v) local b = ensure(); if b then b[sizeKey] = v; repaint() end end }), gate)
-    add(Drop(f, C2, y + 41, 170, label .. " Position", ANCHORS,
-      function() local b = get(); return (b and b[anchorKey]) or anchorDefault end,
-      function(v) local b = ensure(); if b then b[anchorKey] = v; repaint() end end), gate)
+      set = function(v) local b = ensure(); if b then b[sizeKey] = v; repaint() end end }), label .. " size", "How big the " .. label:lower() .. " is."), gate)
+    add(tip(Drop(f, C2, y + 41, 170, label .. " Position", ANCHORS,
+      function() local b = get(); return (b and b[anchorKey]) or (type(anchorDefault) == "function" and anchorDefault() or anchorDefault) end,
+      function(v) local b = ensure(); if b then b[anchorKey] = v; repaint() end end), label .. " position", "Where on the bar the " .. label:lower() .. " sits."), gate)
   end
   -- Stacks default to TOP and the countdown to CENTER, so switched on together
-  -- they never print on top of each other.
-  readout(245, "Stack Text", "showStacks", "stackColor", "stackSize", "stackAnchor", "TOP", stacksOn)
-  readout(347, "Countdown Text", "showTimer", "timerColor", "timerSize", "timerAnchor", "CENTER", timerOn)
+  -- they never print on top of each other — except a Stack Count bar, which has
+  -- no countdown: its stacks default to CENTER (what Displays.lua draws; the
+  -- dropdown said Top until 2026-09-27).
+  readout(245, "Stack Text", "showStacks", "stackColor", "stackSize", "stackAnchor",
+    function() return mode() == "stacks" and "CENTER" or "TOP" end, stacksAble, stacksOn,
+    "Shows the aura's stack count on the bar. Not used by a Cooldown bar — stacks belong to an aura.")
+  readout(347, "Countdown Text", "showTimer", "timerColor", "timerSize", "timerAnchor", "CENTER", timerAble, timerOn,
+    "Shows the time left on the bar. Aura Duration bars only — the game draws the countdown only for an aura's duration.")
   return f
 end
 
@@ -1197,14 +1361,16 @@ local function BuildText(parent)
     return c.showLabel ~= false
   end
 
-  add(Switch(f, 0, 0, 102, "Show Text", OFFON, showing,
-    function(v) local t = ensure(); if t then t.show = v; Reapply(); P.sync() end end))
+  add(tip(Switch(f, 0, 0, 102, "Show Text", OFFON, showing,
+    function(v) local t = ensure(); if t then t.show = v; Reapply(); P.sync() end end),
+    "Show text", "Draws words with the aura on screen — its name, or what you type in Displayed Text. Works on every type of aura."))
   local dfl = Label(f, 122, 0, "Displayed Text")
   local df = UI.gField(f, 238, { placeholder = "The aura's name",
     commit = function(s) local t = ensure(); if t then t.str = (s ~= "" and s) or nil; Reapply() end end,
     revert = function(self) self:refresh() end })
   df:SetPoint("TOPLEFT", 122, -15)
   df._label = dfl
+  tip(df, "Displayed text", "The words shown on screen. Blank shows the aura's name. Not used while Show Charge Count is on — the count takes its place.")
   function df:refresh()
     local t, c = txt(), Cfg()
     self:SetText((t and t.str) or ""); self:SetCursorPosition(0)
@@ -1215,34 +1381,34 @@ local function BuildText(parent)
   local function countOn() local t = txt(); return (t and t.showCount) == true end
   add(df, function() return showing() and not countOn() end)
 
-  add(Dial(f, C1, 61, 170, { label = "Font Size", min = 6, max = 300, step = 1, unit = "px", dragPx = 900,
+  add(tip(Dial(f, C1, 61, 170, { label = "Font Size", min = 6, max = 300, step = 1, unit = "px", dragPx = 900,
     get = function() local t = txt(); return (t and t.size) or 14 end,
-    set = function(v) local t = ensure(); if t then t.size = v; Reapply() end end }), showing)
-  add(Dial(f, C2, 61, 170, { label = "Horizontal Offset", min = -400, max = 400, step = 1, unit = "px", dragPx = 800,
+    set = function(v) local t = ensure(); if t then t.size = v; Reapply() end end }), "Font size", "How big the text is."), showing)
+  add(tip(Dial(f, C2, 61, 170, { label = "Horizontal Offset", min = -400, max = 400, step = 1, unit = "px", dragPx = 800,
     get = function() local t = txt(); return (t and t.x) or 0 end,
-    set = function(v) local t = ensure(); if t then t.x = (v ~= 0) and v or nil; Reapply() end end }), showing)
-  add(Drop(f, C1, 102, 170, "Anchor", X.TE_ANCHOR,
+    set = function(v) local t = ensure(); if t then t.x = (v ~= 0) and v or nil; Reapply() end end }), "Horizontal offset", "Nudges the text left (−) or right (+) of its anchor point."), showing)
+  add(tip(Drop(f, C1, 102, 170, "Anchor", X.TE_ANCHOR,
     function() local t = txt(); return (t and t.anchor) or "BOTTOM" end,
-    function(v) local t = ensure(); if t then t.anchor = (v ~= "BOTTOM") and v or nil; Reapply() end end), showing)
-  add(Dial(f, C2, 102, 170, { label = "Vertical Offset", min = -400, max = 400, step = 1, unit = "px", dragPx = 800,
+    function(v) local t = ensure(); if t then t.anchor = (v ~= "BOTTOM") and v or nil; Reapply() end end), "Anchor", "Where the text sits against the aura: below it, above it, on it, or to one side."), showing)
+  add(tip(Dial(f, C2, 102, 170, { label = "Vertical Offset", min = -400, max = 400, step = 1, unit = "px", dragPx = 800,
     get = function() local t = txt(); return (t and t.y) or 0 end,
-    set = function(v) local t = ensure(); if t then t.y = (v ~= 0) and v or nil; Reapply() end end }), showing)
+    set = function(v) local t = ensure(); if t then t.y = (v ~= 0) and v or nil; Reapply() end end }), "Vertical offset", "Nudges the text down (−) or up (+) from its anchor point."), showing)
 
-  add(FontDrop(f, C1, 163, 170,
+  add(tip(FontDrop(f, C1, 163, 170,
     function() local t = txt(); return t and t.font end,
-    function(path) local t2 = ensure(); if t2 then t2.font = path; Reapply(); P.sync() end end), showing)
-  add(Color(f, C2, 163, 170, "Text Color", {
+    function(path) local t2 = ensure(); if t2 then t2.font = path; Reapply(); P.sync() end end), "Font", "The text's typeface."), showing)
+  add(tip(Color(f, C2, 163, 170, "Text Color", {
     get = function() local t = txt(); return t and t.color end,
-    set = function(v) local t = ensure(); if t then t.color = v; Reapply() end end }), showing)
-  add(Drop(f, C1, 204, 170, "Outline Type", X.TE_OUTLINE,
+    set = function(v) local t = ensure(); if t then t.color = v; Reapply() end end }), "Text color", "The text's color. Empty: white."), showing)
+  add(tip(Drop(f, C1, 204, 170, "Outline Type", X.TE_OUTLINE,
     function() local t = txt(); return (t and t.outline) or "OUTLINE" end,
-    function(v) local t = ensure(); if t then t.outline = (v ~= "OUTLINE") and v or nil; Reapply() end end), showing)
+    function(v) local t = ensure(); if t then t.outline = (v ~= "OUTLINE") and v or nil; Reapply() end end), "Outline", "A dark edge around the letters, so the text reads over bright art."), showing)
   -- The live charge count, in place of the text — which is why turning it on
   -- also turns the text on.
   local cc = add(Switch(f, C2, 204, 170, "Show Charge Count", OFFON,
     function() local t = txt(); return (t and t.showCount) == true end,
     function(v) local t = ensure(); if t then t.showCount = v or nil; if v then t.show = true end; Reapply(); P.sync() end end))
-  UI.attachTip(cc, "Show charge count", "Shows the spell's charges in place of the Displayed Text. A spell without charges shows nothing.")
+  UI.attachTip(cc, "Show charge count", "Shows the spell's charges in place of the Displayed Text. A spell without charges shows nothing. Works on every type of aura.")
   return f
 end
 
@@ -1268,11 +1434,14 @@ local function BuildEffects(parent)
   local ANIMS = { { "none", "None" } }
   if E then E:Each(function(m) ANIMS[#ANIMS + 1] = { m.id, m.label or m.id } end) end
   local function animID() local c = Cfg(); return (c and c.effects and c.effects.anim) or "none" end
-  local at = add(Drop(f, C1, 0, 170, "Animation Type", ANIMS, animID, function(v)
+  -- Bars never animate (Displays.lua ApplyEffects skips them — the audit,
+  -- 2026-09-27): the type and every animation setting dim on a bar.
+  local function animAble() local c = Cfg(); return c ~= nil and c.kind ~= "bar" end
+  local at = add(tip(Drop(f, C1, 0, 170, "Animation Type", ANIMS, animID, function(v)
     local c = Cfg(); if not c then return end
     c.effects = c.effects or {}; c.effects.anim = (v ~= "none") and v or nil
     Reapply(); P.layoutEffects(); P.sync()
-  end))
+  end), "Animation type", "A moving effect that traces the aura's Shape (set one in Appearance). Works with Effects Only on. Not used by bars."), animAble)
   -- Every animation traces the aura's SHAPE; with none set there is nothing to
   -- draw and the engine skips it. Said, so it never looks broken.
   local need = UI.gLabel(f, "", 10, CORAL); need:SetPoint("TOPRIGHT", f, "TOPLEFT", 170, -1)
@@ -1329,6 +1498,10 @@ local function BuildEffects(parent)
           dragPx = 400, get = function() return (get() or 0) * sc end, set = function(v) set(v / sc) end })
         if p.kind == "bispeed" then
           UI.attachTip(d.strip, p.label, ("−100%% = %s · 0 = still · +100%% = %s"):format(p.neg or "counter-clockwise", p.pos or "clockwise"))
+        elseif p.tip then
+          UI.attachTip(d, p.label, p.tip)
+        else
+          UI.attachTip(d, p.label, "A setting of the " .. (mod.label or id) .. " animation.")
         end
         b.rows[#b.rows + 1] = d
       end
@@ -1352,17 +1525,17 @@ local function BuildEffects(parent)
   local GLOW = { { "none", "None" }, { "autocast", "Autocast Shine" }, { "pixel", "Pixel Glow" },
                  { "proc", "Proc Glow" }, { "button", "Action Button Glow" } }
   local function glowType() local c = Cfg(); return (c and c.glow and c.glow.type) or "none" end
-  add(Drop(rest, C1, 0, 170, "Glow Type", GLOW, glowType, function(v)
+  add(tip(Drop(rest, C1, 0, 170, "Glow Type", GLOW, glowType, function(v)
     local c = Cfg(); if not c then return end
     c.glow = c.glow or {}; c.glow.type = (v ~= "none") and v or nil
     Reapply(); P.sync()
-  end))
-  add(Color(rest, C2, 0, 170, "Glow Color", { title = "Glow Color",
+  end), "Glow type", "A glow around the aura while it shows — the same glows action buttons use. Works on every type of aura, and with Effects Only on."))
+  add(tip(Color(rest, C2, 0, 170, "Glow Color", { title = "Glow Color",
     get = function() local c = Cfg(); return c and c.glow and c.glow.customColor and c.glow.color end,
     set = function(v)
       local c = Cfg(); if not c then return end
       c.glow = c.glow or {}; c.glow.color = v; c.glow.customColor = (v ~= nil) or nil; Reapply()
-    end }), function() return glowType() ~= "none" end)
+    end }), "Glow color", "Recolors the glow. Empty keeps the glow's own color."), function() return glowType() ~= "none" end)
 
   -- ROTATION — spins the aura's own artwork, so it needs one: a bar has none and
   -- "Effects Only" hides it on purpose. Dimmed then, rather than left looking live.
@@ -1370,27 +1543,30 @@ local function BuildEffects(parent)
   local function ensureRot() local c = Cfg(); if not c then return nil end; c.rotate = c.rotate or {}; return c.rotate end
   local function isIcon() local c = Cfg(); return c ~= nil and c.kind ~= "bar" and not c.noArt end
   local function spinning() local r = rot(); return isIcon() and r ~= nil and r.on == true end
-  add(Switch(rest, C1, 61, 170, "Rotation", OFFON,
+  add(tip(Switch(rest, C1, 61, 170, "Rotation", OFFON,
     function() local r = rot(); return isIcon() and (r and r.on) == true end,
-    function(v) local r = ensureRot(); if r then r.on = v or nil; Reapply(); P.sync() end end), isIcon)
+    function(v) local r = ensureRot(); if r then r.on = v or nil; Reapply(); P.sync() end end),
+    "Rotation", "Spins the aura's art continuously. Not used by bars, or with Effects Only on — there's no art to turn."), isIcon)
   -- A percentage: 100% = one turn every 3 seconds.
-  add(Dial(rest, C2, 61, 170, { label = "Rotation Speed", min = 10, max = 500, step = 10, unit = "%", dragPx = 500,
+  add(tip(Dial(rest, C2, 61, 170, { label = "Rotation Speed", min = 10, max = 500, step = 10, unit = "%", dragPx = 500,
     get = function() local r = rot(); return (r and r.speed) or 100 end,
-    set = function(v) local r = ensureRot(); if r then r.speed = (v ~= 100) and v or nil; Reapply() end end }), spinning)
-  add(Drop(rest, C1, 102, 170, "Rotation Direction", { { "cw", "Clockwise" }, { "ccw", "Counter-Clockwise" } },
+    set = function(v) local r = ensureRot(); if r then r.speed = (v ~= 100) and v or nil; Reapply() end end }),
+    "Rotation speed", "How fast it spins: 100% is one turn every 3 seconds."), spinning)
+  add(tip(Drop(rest, C1, 102, 170, "Rotation Direction", { { "cw", "Clockwise" }, { "ccw", "Counter-Clockwise" } },
     function() local r = rot(); return (r and r.dir) or "cw" end,
-    function(v) local r = ensureRot(); if r then r.dir = (v ~= "cw") and v or nil; Reapply() end end), spinning)
+    function(v) local r = ensureRot(); if r then r.dir = (v ~= "cw") and v or nil; Reapply() end end),
+    "Rotation direction", "Which way it spins."), spinning)
 
   -- SOUNDS
   local function soundLabel() local c = Cfg(); return (c and c.sound and c.sound.name) or "None" end
-  add(PickerDrop(rest, C1, 163, 127, "Sound Effect", soundLabel, function()
+  add(tip(PickerDrop(rest, C1, 163, 127, "Sound Effect", soundLabel, function()
     local c = Cfg(); if not c then return end
     X.OpenSoundPicker(function(item)
       if item.file then c.sound = c.sound or {}; c.sound.file = item.file; c.sound.name = item.name; c.sound.channel = "Master"
       else c.sound = nil end
       P.sync()
     end, c.sound and c.sound.file)
-  end))
+  end), "Sound effect", "A sound to play — pick None to turn it off. Sound Trigger decides when it plays. Works on every type of aura."))
   local play = UI.gButton(rest, "Play", { w = 39, h = 16 })
   play:SetPoint("TOPLEFT", 131, -178)
   play:SetScript("OnClick", function()
@@ -1398,6 +1574,7 @@ local function BuildEffects(parent)
   end)
   local function hasSound() local c = Cfg(); return c and c.sound ~= nil end
   add(play, hasSound)
+  tip(play, "Play", "Plays the chosen sound now, so you can hear it.")
   -- WHEN it plays. The CDM only sends the alerts a spell actually has, so a timing
   -- the spell never emits can never play: those grey out in the list — the
   -- PANDEMIC one only; the CDM's answer for the other two is unreliable (HANDOFF,
@@ -1412,10 +1589,11 @@ local function BuildEffects(parent)
   end
   local ON = { { "trigger", "When it triggers" }, { "ready", "When it comes off cooldown" },
                { "untrigger", "When it wears off" }, { "pandemic", "Pandemic window" } }
-  add(Drop(rest, C2, 163, 170, "Sound Trigger",
+  add(tip(Drop(rest, C2, 163, 170, "Sound Trigger",
     function() local out = {}; for _, v in ipairs(ON) do out[#out + 1] = { v[1], v[2], alertOff(v[1]) } end; return out end,
     function() local c = Cfg(); return (c and c.sound and c.sound.on) or "trigger" end,
-    function(v) local c = Cfg(); if c and c.sound then c.sound.on = v; P.sync() end end), hasSound)
+    function(v) local c = Cfg(); if c and c.sound then c.sound.on = v; P.sync() end end),
+    "Sound trigger", "When the sound plays: as the aura shows, as a cooldown comes off, as it wears off, or as a DoT enters its pandemic window. A timing the spell never sends is greyed out in the list."), hasSound)
   -- A timing already SET to something impossible has to be said out loud.
   local warn = UI.gLabel(rest, "", 10, CORAL); warn:SetPoint("TOPLEFT", C2, -198); warn:SetWidth(170)
   warn:SetJustifyH("LEFT"); warn:SetWordWrap(true)
@@ -1438,6 +1616,7 @@ local function BuildEffects(parent)
     if b then
       b:Show()
       local on = Cfg() ~= nil
+      on = on and animAble()
       for _, r in ipairs(b.rows) do r:refresh(); r:setEnabled(on) end
       extra = b.extra
     end
@@ -1446,7 +1625,7 @@ local function BuildEffects(parent)
     local h = 41 + extra + 20 + 194
     if math.abs((f:GetHeight() or 0) - h) > 0.5 then f:SetHeight(h); Relayout() end
     local c = Cfg()
-    need:SetText((b and c and not c.shape) and "Needs a Shape" or "")
+    need:SetText((b and c and not c.shape and c.kind ~= "bar") and "Needs a Shape" or "")
   end
   rows[#rows + 1] = { refresh = function() P.layoutEffects() end, setEnabled = function() end }
   P.layoutEffects()
@@ -1494,7 +1673,7 @@ function P.buildLoad(p, o)
   local function visW() local t = target(); if not t then return nil end; t.visibility = t.visibility or {}; return t.visibility end
 
   -- The master switch: NOT a "load when" — this aura (or group) at all.
-  put(Switch(p, 0, 0, 360, "This " .. noun, { { true, "Enabled" }, { false, "Disabled" } },
+  put(tip(Switch(p, 0, 0, 360, "This " .. noun, { { true, "Enabled" }, { false, "Disabled" } },
     function() local t = target(); return not (t and t.enabled == false) end,
     function(v)
       local t = target(); if not t then return end
@@ -1502,12 +1681,34 @@ function P.buildLoad(p, o)
       if v then t.enabled = nil else t.enabled = false end
       if GA.CDM then GA.CDM:Discover() end
       Poke(); X.RefreshList()
-    end))
+    end), "This " .. noun:lower(), "Disabled switches the " .. noun:lower() .. " off entirely — it never loads, whatever the conditions below say. Its settings are kept."))
 
   -- A checkbox row (the mock's Frame 366): 18 tall, 20 apart from y 51 (53 while
   -- labels were 12), the box 2 down, its label (Sansation 10) 10 right of it.
   local function at(b, x, i, y0) b:SetPoint("TOPLEFT", x, -((y0 or 51) + 2 + 20 * i)) end
-  local function check(label, get, set) return UI.gCheck(p, label, get, set, 10) end
+  -- one line each on what a tick means (the owner, 2026-09-27: tips on every setting)
+  local LOAD_TIP = {
+    ["In Combat"] = "Loads only while you're in combat. Tick both In and Out of Combat not to care.",
+    ["Out of Combat"] = "Loads only while you're out of combat. Tick both In and Out of Combat not to care.",
+    ["No Target"] = "Loads only while you have no target. Tick both No Target and Has Target not to care.",
+    ["Has Target"] = "Loads only while you have a target. Tick both No Target and Has Target not to care.",
+    ["While Casting"] = "Loads only while you're casting or channeling.",
+    ["While Mounted"] = "Loads only while you're mounted.",
+    ["In Vehicle"] = "Loads only while you're in a vehicle.",
+    ["In Instance"] = "Loads only inside a dungeon, raid, delve, battleground or arena.",
+    ["In Boss Encounter"] = "Loads only during a boss fight.",
+    ["Resting"] = "Loads only while you're resting (in a city or inn).",
+    ["Stealthed"] = "Loads only while you're stealthed.",
+    ["In a Group"] = "Loads only while you're in a party or raid.",
+    ["In a Raid"] = "Loads only while you're in a raid.",
+    ["In War Mode"] = "Loads only while War Mode is on.",
+    ["Alive"] = "Loads only while you're alive.",
+  }
+  local function check(label, get, set)
+    local b = UI.gCheck(p, label, get, set, 10)
+    tip(b, label, LOAD_TIP[label] or ("Loads only for the " .. label .. " specialization. Leave every spec ticked not to care; at least one stays ticked."))
+    return b
+  end
   -- a pair: `key` holds v1 (only the first), v2 (only the second) or nil (both)
   local function pair(x, i, label1, label2, key, v1, v2)
     local b1, b2
@@ -1585,6 +1786,7 @@ function P.buildLoad(p, o)
     end,
     revert = function(self) self:refresh() end })
   sk:SetPoint("TOPLEFT", 0, -(y0 + 15))
+  tip(sk, "Spell/Talent known", "A spell ID. The " .. noun:lower() .. " loads only while you know that spell or talent. Blank: don't check.")
   function sk:refresh() local v = vis(); self:SetText(v and v.spellKnown and tostring(v.spellKnown) or ""); helpText() end
   put(sk)
 
@@ -1592,7 +1794,7 @@ function P.buildLoad(p, o)
   -- a different question). The type seeds the rule; Off removes it.
   local y1 = y0 + 56
   local pwVal
-  put(Drop(p, 0, y1, 149, "Player Power", POWERS,
+  put(tip(Drop(p, 0, y1, 149, "Player Power", POWERS,
     function() local v = vis(); return (v and v.power and v.power.type) or "off" end,
     function(x)
       local v = visW(); if not v then return end
@@ -1603,7 +1805,7 @@ function P.buildLoad(p, o)
       end
       Poke(); if pwVal then pwVal:refresh() end
       P.sync(); if C._grows then for _, r in ipairs(C._grows) do r:refresh(); r:setEnabled(true) end end
-    end))
+    end), "Player power", "Loads only while one of your resources — combo points, holy power, mana… — is at least, at most or exactly a number. Off: don't check."))
   local function hasPower() local v = vis(); return v and v.power and v.power.type ~= nil end
   put(Drop(p, 159, y1 + 15, 130, nil, OPS,
     function() local v = vis(); return (v and v.power and v.power.op) or "ge" end,
@@ -1679,7 +1881,9 @@ function C:AccordionOpen() end
 function C:AccordionToggle() end
 function C:TrigInlineRender() P.renderTriggers() end
 function C:ShowGroupPane() end
-function C:UpdateEmptyState() P.syncHeader() end
+-- (every selection passes here) — the settings window re-lays out too, so a
+-- section that locks by the aura's type (Bar Fill) opens or shuts with it
+function C:UpdateEmptyState() P.syncHeader(); Relayout() end
 function C:SyncRailButtons() P.syncHeader() end
 function C:RefreshGroupButton() P.syncHeader() end
 function C:OnListRefresh() P.renderList(); P.syncHeader() end
@@ -1726,6 +1930,12 @@ local PROFILE = {
   },
 }
 
+-- A section's controls take their dimmed / live state as soon as it is BUILT,
+-- and again whenever it is shown: before 2026-09-27 they only did on the next
+-- aura switch, so a section opened for the first time showed every control
+-- live — a bar's Countdown looked usable on a Cooldown bar.
+local function Synced(build) return function(p) local f = build(p); P.sync(); return f end end
+
 GloomsHub:RegisterTab{
   id       = "auras",
   title    = "Auras",
@@ -1739,12 +1949,14 @@ GloomsHub:RegisterTab{
   sections = {
     { id = "triggers",   title = "Aura Triggers",               build = BuildTriggers, footer = BuildTriggersFooter,
       onShow = function() P.renderTriggers() end },
-    { id = "appearance", title = "Appearance, Position & Size", build = BuildAppearance },
-    { id = "bar",        title = "Bar Fill & Readouts",         build = BuildBar },
-    { id = "text",       title = "Text",                        build = BuildText },
-    { id = "effects",    title = "Effects, Motion & Sound",     build = BuildEffects,
-      onShow = function() if P.layoutEffects then P.layoutEffects() end end },
-    { id = "load",       title = "Aura Load Conditions",        build = BuildLoad },
+    { id = "appearance", title = "Appearance, Position & Size", build = Synced(BuildAppearance), onShow = function() P.sync() end },
+    -- shut on anything but a bar aura: everything in it is a bar's (the owner, 2026-09-27)
+    { id = "bar",        title = "Bar Fill & Readouts",         build = Synced(BuildBar), onShow = function() P.sync() end,
+      locked = function() local c = Cfg(); return not (c and c.kind == "bar") end },
+    { id = "text",       title = "Text",                        build = Synced(BuildText), onShow = function() P.sync() end },
+    { id = "effects",    title = "Effects, Motion & Sound",     build = Synced(BuildEffects),
+      onShow = function() P.sync(); if P.layoutEffects then P.layoutEffects() end end },
+    { id = "load",       title = "Aura Load Conditions",        build = Synced(BuildLoad), onShow = function() P.sync() end },
   },
   -- HIDE BLIZZARD CDM — a PROFILE setting, in Global Settings. Drives the
   -- viewer's alpha only, never Hide(), so GA's mirror keeps working.

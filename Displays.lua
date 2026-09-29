@@ -758,8 +758,14 @@ function D:ApplyConfig(spellID)
       if icon then
         f.tex:SetTexture(icon)
         f.tex:SetTexCoord(0.08, 0.92, 0.08, 0.92)  -- trim the default icon border
+      elseif cfg.uiType ~= "texture" then
+        -- An ICON aura with no trigger yet shows the game's red question mark
+        -- (the owner, 2026-09-27) — the same placeholder the aura list uses. An
+        -- aura from before the type was saved counts as an icon aura.
+        f.tex:SetTexture(134400)
+        f.tex:SetTexCoord(0.08, 0.92, 0.08, 0.92)
       else
-        f.tex:SetColorTexture(0.9, 0.2, 0.6)  -- fallback: unmistakable magenta panel
+        f.tex:SetColorTexture(0.9, 0.2, 0.6)  -- a TEXTURE aura with no art: unmistakable magenta
         f.tex:SetTexCoord(0, 1, 0, 1)
       end
     end
@@ -884,21 +890,42 @@ function D:SetInteractive(on)
 end
 
 -- Panel selection changed → re-apply which single display is draggable.
+-- THE EYE (the owner, 2026-09-27): each aura's saved eye (cfg.preview) is its
+-- state while NOT selected. Selecting an aura shows it at once whatever that
+-- says (`selShow`, fresh on every new selection); the eye on the selected aura
+-- toggles only `selShow`, and when the selection moves on the aura goes back
+-- to its saved eye.
 function D:SetSelectedDisplay(id)
+  if id ~= self.selectedID then self.selShow = true end
   self.selectedID = id
   self:ApplyInteractivity()
 end
 
--- While the panel is open (forced) the on-screen preview shows ONLY the selected
--- aura + any aura the user has 'eyed' on (cfg.preview) — so editing isn't buried
+-- While the panel is open (forced) the on-screen preview shows ONLY the auras
+-- whose eye is lit (D:EyeOn — the selected one's own switch, the rest their
+-- saved cfg.preview) — so editing isn't buried
 -- under every aura at once. Purely an editor convenience; in-game (not forced) is
 -- unaffected, and cfg.preview has nothing to do with whether the aura runs.
+function D:EyeOn(id)
+  if id == nil then return false end
+  if id == self.selectedID then return self.selShow ~= false end
+  local db = DB(); local cfg = db and db[id]
+  return (cfg and cfg.preview) and true or false
+end
+function D:ToggleEye(id)
+  if id == self.selectedID then self.selShow = not self:EyeOn(id)
+  else
+    local db = DB(); local cfg = db and db[id]; if not cfg then return end
+    cfg.preview = (not cfg.preview) or nil
+  end
+  self:RefreshForced()
+end
+
 function D:RefreshForced()
   if not self.forced then return end
   local db = DB(); if not db then return end
-  local sel = self.selectedID
-  for id, cfg in pairs(db) do
-    if (id == sel) or cfg.preview then
+  for id in pairs(db) do
+    if self:EyeOn(id) then
       local f = self:GetOrCreate(id); if f then f:Show() end
     else
       local f = self.frames[id]; if f then f:Hide() end
