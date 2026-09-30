@@ -1966,6 +1966,18 @@ GloomsHub:RegisterTab{
       set = function(on) if GA.CDM and GA.CDM.ToggleBlizzardHide then GA.CDM:ToggleBlizzardHide(on) end end,
       tip = "Hides Blizzard's own cooldown bars while Gloom's Auras reads them. For this profile." },
   },
+  -- UNDO (the Hub's Undo.lua, 2026-09-30): the active profile — every aura and
+  -- group; putting one back re-syncs the engine and the windows as a profile
+  -- switch does
+  undo     = {
+    snapshot = function() return GA.db and GloomsHub.UndoCopy(GA.db) or {} end,
+    restore  = function(snap)
+      if not GA.db then return end
+      GloomsHub:UndoPatch(GA.db, snap)
+      if GA.RefreshForProfile then GA.RefreshForProfile() end
+    end,
+    token    = function() return GA:ActiveProfileName() end,
+  },
   onBuilt  = function(sel, set) X.SetContainer(set) end,
   onOpen   = function()
     if GA.Displays then GA.Displays.forced = true; GA.Displays:SetInteractive(true) end

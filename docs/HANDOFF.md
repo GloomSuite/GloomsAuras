@@ -387,6 +387,11 @@ single source of "where we are + what not to relitigate."
 
 ---
 
+## Undo (2026-09-30) — the Hub's
+The Hub's suite-wide UNDO covers Auras through the `undo` block in `Pages.lua`'s RegisterTab: a
+snapshot is a deep copy of `GA.db` (the active profile); putting one back patches it in place and
+calls `GA.RefreshForProfile()`. Nothing else in Auras changed.
+
 ## GA's colour controls — the private picker is GONE (2026-07-26)
 
 `MakeColor` (the `[✓ label] + swatch` control behind **Recolor**, **Text Color** and glow **Custom
