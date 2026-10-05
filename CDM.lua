@@ -348,6 +348,55 @@ end
 -- One leaf condition: { spellID = N, state = "buff_active"|"buff_inactive"|"cd_ready"|"cd_oncd" }
 function CDM:EvalCondition(cond)
   local sid, state = cond.spellID, cond.state
+  -- TARGET CASTING (2026-10-03): plain — is the target casting at all. Whether
+  -- the cast can be interrupted is NOT decided here (it may be secret); it
+  -- fades the whole display through the game instead (CDM:KickGate).
+  if state == "tcast_any" or state == "tcast_kick" or state == "tcast_nokick" then
+    if self.tcast ~= true then return false end
+    if state == "tcast_any" then return true end
+    -- ★ A PLAIN flag decides here, as a real condition (2026-10-04, the owner:
+    -- a Kick sound played on UNinterruptible casts — the alpha gate hid the
+    -- visuals, but the trigger still fired, and the sound plays on the trigger).
+    -- Only a SECRET flag falls back to the gate (KickGate), which can't be
+    -- tested — and then the trigger sound is skipped (RefreshDisplays).
+    local locked = self.tcastLocked
+    if locked == nil or issecret(locked) then return true end
+    if state == "tcast_kick" then return not locked end
+    return locked and true or false
+  end
+  -- TRINKET READY (2026-10-04, the owner: inside a delve the Cooldown Manager
+  -- leaves the trinket out entirely, so a Cooldown Manager trigger had nothing
+  -- to bind and read READY all night). Read from the ITEM instead — CDM:
+  -- ItemOnCooldown. An item you aren't wearing is never "ready".
+  if state == "item_ready" or state == "item_oncd" then
+    if not cond.itemID then return false end
+    if C_Item and C_Item.IsEquippedItem and not C_Item.IsEquippedItem(cond.itemID) then return false end
+    local on = self:ItemOnCooldown(cond.itemID, cond.useSpell)
+    if state == "item_ready" then return not on end
+    return on
+  end
+  -- BUFF RUNNING LOW (2026-10-04, the owner: re-apply a rogue's 1-hour poisons
+  -- BEFORE they drop mid-pull). "blowN": the buff is missing or has under N
+  -- minutes left. OUT OF COMBAT ONLY — that's when your own buffs read plain;
+  -- in combat it is simply false, so it can never nag mid-pull (and never
+  -- touches a secret). Polled every few seconds (the BlowTicker, below):
+  -- time running down sends no event.
+  local mins = type(state) == "string" and tonumber(state:match("^blow(%d+)$"))
+  if mins then
+    if InCombatLockdown() or UnitAffectingCombat("player") then return false end
+    local a
+    if cond.name and C_UnitAuras.GetAuraDataBySpellName then
+      local ok, r = pcall(C_UnitAuras.GetAuraDataBySpellName, "player", cond.name, "HELPFUL"); if ok then a = r end
+    end
+    if not a and cond.buffID and C_UnitAuras.GetPlayerAuraBySpellID then
+      local ok, r = pcall(C_UnitAuras.GetPlayerAuraBySpellID, cond.buffID); if ok then a = r end
+    end
+    if not a then return true end                                   -- missing: re-apply
+    local exp, dur = a.expirationTime, a.duration
+    if issecret(exp) or issecret(dur) then return false end
+    if not exp or exp == 0 or not dur or dur == 0 then return false end   -- no expiry: never "low"
+    return (exp - GetTime()) < mins * 60
+  end
   if state == "buff_active" then
     return self.buffActive[sid] == true
   elseif state == "buff_inactive" then
@@ -680,7 +729,7 @@ function CDM:DisplaySpellID(cfg)
       end
       return nil
     end
-    return node.spellID
+    return node.spellID or node.buffID or node.useSpell   -- Buff Running Low: its buff; Trinket: its use-spell
   end
   return firstLeaf(cfg.trigger)
 end
@@ -1097,6 +1146,181 @@ end
 
 -- Re-evaluate every display and show/hide it. Sound fires on a hidden->shown
 -- edge unless `silent` (used for the initial sync so a reload doesn't blast sound).
+-- --------------------------------------------------------------------------
+-- ★ TARGET CASTING (2026-10-03, the owner: an aura for "my target is casting
+-- something I can interrupt"). The FIRST trigger kind not read from the
+-- Cooldown Manager. Two halves:
+--   * casting at all — PLAIN: the target's cast events, then whether
+--     UnitCastingInfo / UnitChannelInfo return a cast (a nil test only, the
+--     test Unit Frames' cast ring makes on a restricted map — FINDINGS §18.10);
+--   * interruptible — `notInterruptible` may be SECRET there. It is never
+--     tested: C_CurveUtil.EvaluateColorValueFromBoolean turns it into the
+--     display's alpha engine-side (0 or 1), the way the cast ring recolours.
+-- So the interrupt filter applies to the WHOLE display, whatever the trigger's
+-- Match logic — a known limit, worth saying in the tooltip.
+-- --------------------------------------------------------------------------
+function CDM:UpdateTargetCast()
+  local casting, locked = false, nil
+  if UnitExists("target") then
+    local name, _, _, _, _, _, _, ni = UnitCastingInfo("target")
+    if not name then name, _, _, _, _, _, ni = UnitChannelInfo("target") end
+    if name then casting, locked = true, ni end
+  end
+  self.tcast, self.tcastLocked = casting, locked
+end
+
+-- The kick state a display asks for: the first tcast_kick / tcast_nokick leaf.
+local function KickWant(node)
+  if type(node) ~= "table" then return nil end
+  if node.conditions then
+    for _, c in ipairs(node.conditions) do local w = KickWant(c); if w then return w end end
+    return nil
+  end
+  if node.state == "tcast_kick" or node.state == "tcast_nokick" then return node.state end
+  return nil
+end
+
+-- 1 = fully shown. For a display filtered by interrupt state: 0 or 1 from the
+-- (possibly secret) flag, engine-side; unknown → shown.
+function CDM:KickGate(cfg)
+  local want = KickWant(cfg and cfg.trigger)
+  if not want or not self.tcast then return 1 end
+  local locked = self.tcastLocked
+  if locked ~= nil and not issecret(locked) then return 1 end   -- plain: EvalCondition already decided
+  if locked == nil then return want == "tcast_kick" and 1 or 0 end   -- no flag at all: treat as interruptible
+  local onLocked, onFree = (want == "tcast_nokick") and 1 or 0, (want == "tcast_nokick") and 0 or 1
+  if issecret(locked) then
+    if not (C_CurveUtil and C_CurveUtil.EvaluateColorValueFromBoolean) then return 1 end
+    local ok, a = pcall(C_CurveUtil.EvaluateColorValueFromBoolean, locked, onLocked, onFree)
+    return ok and a or 1
+  end
+  return locked and onLocked or onFree
+end
+
+-- The poll for Buff Running Low: every 5 s while some display uses it, plus
+-- the moment combat starts (so the aura goes away as the pull begins).
+function CDM:UsesBuffLow()
+  local db = GA.db and GA.db.displays
+  if not db then return false end
+  local function has(node)
+    if type(node) ~= "table" then return false end
+    if node.conditions then for _, c in ipairs(node.conditions) do if has(c) then return true end end; return false end
+    return node.k == "blow"
+  end
+  for _, cfg in pairs(db) do if cfg.enabled ~= false and has(cfg.trigger) then return true end end
+  return false
+end
+do
+  local f = CreateFrame("Frame")
+  f:RegisterEvent("PLAYER_REGEN_DISABLED")
+  f:RegisterUnitEvent("UNIT_AURA", "player")
+  f:SetScript("OnEvent", function() if CDM:UsesBuffLow() then CDM:RefreshDisplays() end end)
+  C_Timer.NewTicker(5, function()
+    if not (InCombatLockdown() or UnitAffectingCombat("player")) and CDM:UsesBuffLow() then CDM:RefreshDisplays() end
+  end)
+end
+
+-- True while this display's interrupt filter rests on a SECRET flag — then the
+-- trigger can't know, so its sound is skipped rather than played on every cast.
+function CDM:KickSecret(cfg)
+  return self.tcast == true and KickWant(cfg and cfg.trigger) ~= nil
+    and self.tcastLocked ~= nil and issecret(self.tcastLocked)
+end
+
+-- ★ An equipped item's cooldown, secret-safe. Out of combat the item's start /
+-- duration read PLAIN — decided directly. In combat they may be SECRET: never
+-- compared — handed to a hidden Cooldown widget (SetCooldown, the same way the
+-- charge and cd-bar shadows work), whose IsShown says "running". If the widget
+-- refuses the secret numbers, the item's use-SPELL's duration object feeds it
+-- instead. `itemSrc` records the route for /ga trace. UNTESTED in game (2026-10-04).
+CDM.itemShadow, CDM.itemSrc, CDM.itemLast = {}, {}, {}
+local function ItemCooldownRaw(itemID)
+  local fn = (C_Item and C_Item.GetItemCooldown) or (C_Container and C_Container.GetItemCooldown) or _G.GetItemCooldown
+  if not fn then return nil end
+  local ok, st, du = pcall(fn, itemID)
+  if not ok then return nil end
+  return st, du
+end
+function CDM:ItemOnCooldown(itemID, useSpell)
+  local cd = self.itemShadow[itemID]
+  if not cd then
+    cd = mkShadowCooldown()
+    -- the END of a cooldown sends no event of its own: the widget hiding is it
+    local function soon() C_Timer.After(0, function() CDM:RefreshDisplays() end) end
+    cd:HookScript("OnShow", soon); cd:HookScript("OnHide", soon)
+    self.itemShadow[itemID] = cd
+  end
+  local st, du = ItemCooldownRaw(itemID)
+  if st ~= nil and du ~= nil and not issecret(st) and not issecret(du) then
+    self.itemSrc[itemID] = "plain"
+    local on = du > 1.5 and (st + du - GetTime()) > 0
+    pcall(cd.SetCooldown, cd, on and st or 0, on and du or 0)   -- keeps the widget's OnHide edge for later
+    self.itemLast[itemID] = on
+    return on
+  end
+  local fed = st ~= nil and du ~= nil and pcall(cd.SetCooldown, cd, st, du)
+  if fed then
+    self.itemSrc[itemID] = "hidden-item"
+  elseif useSpell and C_Spell and C_Spell.GetSpellCooldownDuration and cd.SetCooldownFromDurationObject then
+    local ok, dur = pcall(C_Spell.GetSpellCooldownDuration, useSpell, true)
+    if ok and dur ~= nil then pcall(cd.SetCooldownFromDurationObject, cd, dur, true); self.itemSrc[itemID] = "hidden-spell"
+    else self.itemSrc[itemID] = "no-source" end
+  else
+    self.itemSrc[itemID] = "no-source"
+  end
+  local shown
+  if pcall(function() shown = cd:IsShown() end) and not issecret(shown) then
+    self.itemLast[itemID] = shown and true or false
+    return self.itemLast[itemID]
+  end
+  self.itemSrc[itemID] = (self.itemSrc[itemID] or "") .. "/unreadable"
+  return self.itemLast[itemID] or false
+end
+function CDM:UsesItemTrigger()
+  local db = GA.db and GA.db.displays
+  if not db then return false end
+  local function has(node)
+    if type(node) ~= "table" then return false end
+    if node.conditions then for _, c in ipairs(node.conditions) do if has(c) then return true end end; return false end
+    return node.k == "item"
+  end
+  for _, cfg in pairs(db) do if cfg.enabled ~= false and has(cfg.trigger) then return true end end
+  return false
+end
+do
+  local f = CreateFrame("Frame")
+  f:RegisterEvent("BAG_UPDATE_COOLDOWN"); f:RegisterEvent("PLAYER_EQUIPMENT_CHANGED")
+  f:SetScript("OnEvent", function() if CDM:UsesItemTrigger() then CDM:RefreshDisplays() end end)
+end
+
+function CDM:UsesTargetCast()
+  local db = GA.db and GA.db.displays
+  if not db then return false end
+  local function has(node)
+    if type(node) ~= "table" then return false end
+    if node.conditions then for _, c in ipairs(node.conditions) do if has(c) then return true end end; return false end
+    return node.k == "tcast"
+  end
+  for _, cfg in pairs(db) do if cfg.enabled ~= false and has(cfg.trigger) then return true end end
+  return false
+end
+
+do
+  local f = CreateFrame("Frame")
+  f:RegisterEvent("PLAYER_TARGET_CHANGED")
+  for _, e in ipairs({ "UNIT_SPELLCAST_START", "UNIT_SPELLCAST_STOP", "UNIT_SPELLCAST_CHANNEL_START",
+                       "UNIT_SPELLCAST_CHANNEL_STOP", "UNIT_SPELLCAST_INTERRUPTED", "UNIT_SPELLCAST_FAILED",
+                       "UNIT_SPELLCAST_INTERRUPTIBLE", "UNIT_SPELLCAST_NOT_INTERRUPTIBLE",
+                       "UNIT_SPELLCAST_EMPOWER_START", "UNIT_SPELLCAST_EMPOWER_STOP" }) do
+    pcall(f.RegisterUnitEvent, f, e, "target")
+  end
+  f:SetScript("OnEvent", function()
+    if not CDM:UsesTargetCast() then CDM.tcast = false; return end
+    CDM:UpdateTargetCast()
+    CDM:RefreshDisplays()
+  end)
+end
+
 function CDM:RefreshDisplays(silent)
   if not GA.Displays then return end
   local db = GA.db and GA.db.displays
@@ -1119,10 +1343,12 @@ function CDM:RefreshDisplays(silent)
         -- Auto-path displays fire "trigger" from the CDM alert (OnAuraApplied/Available),
         -- which — unlike this shown edge — does NOT re-fire on a target swap. Only
         -- compound-trigger / decoration displays play "trigger" on the edge here.
-        if not wasShown and not silent and not soundUsesAlert(cfg) and soundOn(cfg) == "trigger" then
+        if not wasShown and not silent and not soundUsesAlert(cfg) and soundOn(cfg) == "trigger"
+           and not self:KickSecret(cfg) then   -- an interrupt filter on a secret flag: can't tell, stay quiet
           self:PlaySound(sid, cfg)
         end
         GA.Displays:Show(sid)
+        if GA.Displays.SetGate then GA.Displays:SetGate(sid, self:KickGate(cfg)) end   -- the interrupt filter (target casting)
         if cfg.kind == "bar" and GA.Displays.UpdateBar then
           GA.Displays:UpdateBar(sid)   -- feed the source aura's duration object → the bar drains
         end
@@ -1682,8 +1908,43 @@ function CDM:HookViewers()
   end
 end
 
+-- ★ LATE ICONS (2026-10-03, TESTED via /ga trace in a Story raid): a TRINKET
+-- in the Cooldown Manager is an item entry whose spell fills in a moment after
+-- the spell entries (Blizzard loads the item's data separately). Entering the
+-- raid, Discover ran before it had — "Font Trinket Ready <not bound>", stuck on
+-- the cooldown-unknown default of READY all night; the same trace later, once
+-- it had filled in, showed it bound and correctly on cooldown. Nothing re-runs
+-- Discover when one entry fills in, so: while a watched spell is still
+-- unbound, look again a few times (1, 3, 8, 20 s). Any other Discover starts
+-- the count over. Spells another spec owns stay unbound — four tries and stop.
+local RETRY = { 1, 3, 8, 20 }
+local rawDiscover = CDM.Discover
+function CDM:Discover(isRetry)
+  rawDiscover(self)
+  -- the aura list's "not in your Cooldown Manager" warning is worked out when
+  -- the list draws — redraw it, or a late bind leaves a stale warning behind
+  -- (the owner, 2026-10-04: Font Trinket Ready warned while working fine)
+  local X = GA.Config and GA.Config.X
+  if X and X.RefreshList then pcall(X.RefreshList) end
+  if not isRetry then self._retryN = 0 end
+  local bound = {}
+  for _, sid in pairs(self.frameToSpell) do bound[sid] = true end
+  local missing = false
+  for sid in pairs(self:WatchedSpells()) do if not bound[sid] then missing = true; break end end
+  if missing and (self._retryN or 0) < #RETRY then
+    self._retryN = (self._retryN or 0) + 1
+    local gen = (self._retryGen or 0) + 1
+    self._retryGen = gen
+    C_Timer.After(RETRY[self._retryN], function()
+      if self._retryGen == gen then self:Discover(true) end
+    end)
+  end
+end
+
 function CDM:Init()
+  if _G.GloomsAurasDB then _G.GloomsAurasDB.itemProbe = nil end   -- the one-off /ga items readout (2026-10-03), done with
   local ev = CreateFrame("Frame")
+  ev:RegisterEvent("PLAYER_EQUIPMENT_CHANGED")   -- a trinket swap: its Cooldown Manager entry changes spell
   ev:RegisterEvent("PLAYER_ENTERING_WORLD")
   ev:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
   ev:RegisterEvent("PLAYER_REGEN_ENABLED")   -- left combat: reseed availability (readable OOC)
@@ -1909,6 +2170,13 @@ function CDM:Trace()
     if node.conditions then
       print(("%s[group %s]:"):format(indent, node.logic or "AND"))
       for _, c in ipairs(node.conditions) do renderNode(c, indent .. "   ") end
+    elseif node.k == "item" then
+      local eq = C_Item and C_Item.IsEquippedItem and C_Item.IsEquippedItem(node.itemID)
+      print(("%s[%s] %s (item %s) equipped=%s route=%s onCooldown=%s => %s"):format(indent, tostring(node.state),
+        tostring(node.name), tostring(node.itemID), tostring(eq), tostring(self.itemSrc[node.itemID]),
+        tostring(self.itemLast[node.itemID]), tostring(self:EvalCondition(node))))
+    elseif node.k == "tcast" or node.k == "blow" then
+      print(("%s[%s] %s => %s"):format(indent, tostring(node.state), tostring(node.name), tostring(self:EvalCondition(node))))
     else
       local sid = node.spellID
       local line = ("%s[%s] %s (%s) mirror(buff=%s avail=%s) => %s%s"):format(

@@ -858,6 +858,16 @@ function D:SetShown(spellID, value)
     GA.AuraDuration:SetSlotActive(spellID, value)
   end
 end
+-- The interrupt filter's alpha (CDM:KickGate): 1, 0, or a secret 0/1 the game
+-- made from a target's "not interruptible" flag. On the display's own frame,
+-- which nothing else fades; ignored (full) while previewing.
+function D:SetGate(spellID, a)
+  self.gate = self.gate or {}
+  self.gate[spellID] = a
+  if self.forced then return end
+  local f = self.frames[spellID]
+  if f then pcall(f.SetAlpha, f, a) end
+end
 function D:Show(spellID) self:SetShown(spellID, true) end
 function D:Hide(spellID) self:SetShown(spellID, false) end
 
@@ -926,7 +936,7 @@ function D:RefreshForced()
   local db = DB(); if not db then return end
   for id in pairs(db) do
     if self:EyeOn(id) then
-      local f = self:GetOrCreate(id); if f then f:Show() end
+      local f = self:GetOrCreate(id); if f then f:SetAlpha(1); f:Show() end
     else
       local f = self.frames[id]; if f then f:Hide() end
     end
@@ -991,7 +1001,7 @@ function D:Preview()
       for spellID, cfg in pairs(db) do
         if cfg.enabled ~= false then
           local f = self:GetOrCreate(spellID)
-          if f then f:Show() end
+          if f then f:SetAlpha(1); f:Show() end
         end
       end
     end

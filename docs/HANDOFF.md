@@ -1,5 +1,30 @@
-# GloomsAuras — Session Handoff  (last updated 2026-09-29)
+# GloomsAuras — Session Handoff  (last updated 2026-10-04)
 
+> ## ▶▶▶ 2026-10-01 → 04 — TRIGGERS THAT DON'T COME FROM THE COOLDOWN MANAGER, PICKERS, FIXES
+> - **Other Triggers** (the triggers footer's middle button, a menu): three leaf kinds outside the CDM,
+>   each with its own `k` and NO `spellID` (so Discover never tries to bind it):
+>   - **Target Casting** (`k = "tcast"`, `tcast_any` / `tcast_kick` / `tcast_nokick`). Casting is
+>     PLAIN (cast events + a nil test). The interrupt flag is SECRET even in the open world (Hub
+>     FINDINGS §26): `CDM:KickGate` turns it into the display frame's alpha via
+>     `EvaluateColorValueFromBoolean` (`D:SetGate`; ignored while previewing), and `CDM:KickSecret`
+>     SKIPS the trigger sound then — a sound can't be gated by a secret. A plain flag (none measured so
+>     far) is a real condition in `EvalCondition`.
+>   - **Buff Running Low** (`k = "blow"`, `blowN` = missing or under N minutes; `name` + `buffID`):
+>     OUT OF COMBAT ONLY (your own buffs read plain then; in combat it's false). Polled every 5 s.
+>   - **Trinket Ready** (`k = "item"`, `item_ready` / `item_oncd`; `itemID` + `useSpell`): reads the
+>     ITEM's cooldown (`CDM:ItemOnCooldown`) — plain out of combat; in combat the secret start /
+>     duration go into a hidden Cooldown widget (fallback: the use-spell's duration object). The CDM
+>     leaves trinkets out inside delves (FINDINGS §27). `/ga trace` prints `route=`.
+> - **Late CDM icons:** `CDM:Discover` is wrapped — while any watched spell is unbound it retries at
+>   1 / 3 / 8 / 20 s; PLAYER_EQUIPMENT_CHANGED re-runs it; the aura list redraws after each (its
+>   "not in your Cooldown Manager" warning is worked out when the list draws).
+> - **Load-condition pairs fixed** (`P.buildLoad`'s `pair`: `if a and b then w[key] = nil else …`);
+>   the old `(a and b) and nil or …` meant neither box of a pair could change since 2026-09-24.
+> - **Bar auras go down to 1 px** (others stay at 8; the dials go to 1, the setters hold non-bars).
+> - **The spell / shape / texture / sound pickers are Suite windows** — `KitWindow(name, W, H, title)`
+>   + `ShowKitWindow(win)` in Config.lua: `UI.gWindow` on the Suite root, built like the Hub's Texture
+>   Browser, opened beside the settings window. Build any future picker the same way (Hub LESSONS).
+>
 > ## ▶▶▶ 2026-09-27 (late) — TYPES, THE EYE, DIMMING, TYPE SWITCHING
 > - **Icon / Texture / Bar are real types** (`P.AuraType`: `kind == "bar"`, else `uiType == "texture"`,
 >   else Icon — an aura from before `uiType` was saved counts as Icon). An Icon is CREATED with no

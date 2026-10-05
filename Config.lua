@@ -144,7 +144,17 @@ local STATE_LABEL = {
 -- Word a condition's state per the leaf's kind: cooldowns stay "cooldown …"; an aura's two
 -- buff states become buff (on you) / debuff (on target) / proc, from the picked entry's kind
 -- (selfAura + hasAura). Keeps the picker tags and the condition wording aligned.
+local TCAST_LABEL = {
+  tcast_any    = "casting anything",
+  tcast_kick   = "casting something interruptible",
+  tcast_nokick = "casting something NOT interruptible",
+}
+local BLOW_MINUTES = { 5, 10, 15, 20, 30 }
 local function StateLabel(state, k)
+  if TCAST_LABEL[state] then return TCAST_LABEL[state] end
+  local bm = type(state) == "string" and state:match("^blow(%d+)$")
+  if bm then return "missing or under " .. bm .. " min (out of combat)" end
+  if state == "item_ready" then return "ready (trinket)" elseif state == "item_oncd" then return "on cooldown (trinket)" end
   if state == "cd_ready" or state == "cd_castable" or state == "cd_oncd"
      or state == "charges_max" or state == "charges_notmax" then return STATE_LABEL[state] or "?" end
   local active = (state == "buff_active")
@@ -160,6 +170,12 @@ end
 -- Trigger state PILL wording (redesign): a bold main part + a regular "(suffix)".
 -- e.g. buff_active+debuff → "ACTIVE on Target" , " (Debuff)".
 local function TrigPill(state, k)
+  if state == "tcast_any" then return "Casting anything", ""
+  elseif state == "tcast_kick" then return "Casting something interruptible", ""
+  elseif state == "tcast_nokick" then return "Casting something NOT interruptible", "" end
+  local bm = type(state) == "string" and state:match("^blow(%d+)$")
+  if bm then return "Missing or under " .. bm .. " min", " (out of combat)" end
+  if state == "item_ready" then return "Ready", " (Trinket)" elseif state == "item_oncd" then return "On cooldown", " (Trinket)" end
   if state == "cd_ready" then return "READY", " (Cooldown)"
   elseif state == "cd_castable" then return "CASTABLE", " (Cooldown)"
   elseif state == "cd_oncd" then return "ON COOLDOWN", " (Cooldown)"
@@ -881,6 +897,52 @@ function C:AddBar(arg)
   end
 end
 
+-- ★ A picker is one of the SUITE'S WINDOWS (2026-10-04, the owner: the first
+-- pass gave them the name dialog's flat shell — "we've got all these new
+-- design pages/panels/popouts that look absolutely consistent... and you make
+-- this?"). Built exactly as the Hub's Texture Browser is: UI.gWindow on the
+-- Suite root (the rounded panel, the close disc above its corner, drag
+-- anywhere, the Suite's scale and window bands), the title at 20,-20 in
+-- Sansation 14, controls on `content`, a label 15 above each control. It opens
+-- beside the Auras settings window, else left of its selector, else centred.
+local function KitWindow(name, W, H, titleText)
+  local hub = _G.GloomsHub
+  local root = (hub and hub.SuiteRoot and hub:SuiteRoot()) or UIParent
+  local win = UI.gWindow({ name = name, parent = root, w = W, h = H, minH = H, maxH = H,
+    onFocus = function(self) if hub and hub.SuiteManage then hub:SuiteManage(self) else self:Raise() end end })
+  if win.grip then win.grip:Hide() end
+  local title = newText(win.content, FONT.sa, 14, COLOR.paper, "LEFT")
+  title:SetPoint("TOPLEFT", 20, -20); title:SetText(titleText)
+  win.title = title
+  return win, win.content
+end
+local function ShowKitWindow(win)
+  local hub = _G.GloomsHub
+  local root = hub and hub.SuiteRoot and hub:SuiteRoot()
+  local set = hub and hub.SuiteWindow and hub:SuiteWindow("auras", "set")
+  local sel = hub and hub.SuiteWindow and hub:SuiteWindow("auras", "sel")
+  local W, sw = win:GetWidth() or 0, (root and root:GetWidth()) or UIParent:GetWidth()
+  win:ClearAllPoints()
+  if set and set:IsShown() and set:GetRight() and set:GetRight() + 20 + W <= sw then
+    win:SetPoint("TOPLEFT", set, "TOPRIGHT", 20, 0)
+  elseif sel and sel:IsShown() and sel:GetLeft() and sel:GetLeft() - 20 - W >= 0 then
+    win:SetPoint("TOPRIGHT", sel, "TOPLEFT", -20, 0)
+  else
+    win:SetPoint("CENTER", root or UIParent, "CENTER")
+  end
+  win:Show()
+  if UI.gSnap then UI.gSnap(win) end
+  if hub and hub.SuiteManage then hub:SuiteManage(win) end
+end
+-- the kit's scrollbar look (UI.gScrollArea's): a 3-wide dark track, a violet 30% thumb
+local function KitBar(track, thumb)
+  track:SetColorTexture(0, 0, 0, 0.5); track:SetWidth(3)
+  thumb:SetColorTexture(COLOR.violet.r, COLOR.violet.g, COLOR.violet.b, 0.6); thumb:SetWidth(3)
+end
+local function KitText(parent, size, color, justify, bold)
+  return newText(parent, bold and FONT.saB or FONT.sa, size, color or COLOR.paper, justify or "LEFT")
+end
+
 -- --------------------------------------------------------------------------
 -- Aura picker: a scrollable list of the CDM registry (icon + name); click to
 -- add a display. Scrolls with the mouse wheel (no scrollbar thumb to drag).
@@ -999,7 +1061,7 @@ local function RefreshPicker()
         if item then
           row.item = item
           row.icon:SetTexture(item.icon or 134400)
-          row.text:SetText(item.tag and ("%s  |cff888888(%s)|r"):format(item.name, item.tag) or item.name)
+          row.text:SetText(item.tag and ("%s  |cff8f7fb0(%s)|r"):format(item.name, item.tag) or item.name)
           row:Show()
         else
           row.item = nil; row:Hide()
@@ -1021,72 +1083,57 @@ local function RefreshPicker()
 end
 
 local function BuildPicker()
-  local GAP = 14
+  local GAP = 20
   local colX = { cd = GAP, au = GAP + PICK_COL_W + GAP }
-  local ROWS_TOP = -104
+  local ROWS_TOP = -122
   local W = GAP + PICK_COL_W + GAP + PICK_COL_W + GAP
   local H = -ROWS_TOP + PICK_ROWS * PICK_ROW_H + 28
-  local f = CreateFrame("Frame", "GloomsAurasPicker", UIParent)
-  f:SetSize(W, H); f:SetPoint("CENTER"); f:SetFrameStrata("FULLSCREEN_DIALOG")
-  f:EnableMouse(true)
-  skinPlate(f)
-
-  local title = newText(f, FONT.title, 18, COLOR.purple, "CENTER")
-  title:SetPoint("TOP", 0, -12); title:SetText("Choose a spell to track")
-  local close = flatButton(f, 22, 20, COLOR.heroic, "X", 12)
-  close:SetPoint("TOPRIGHT", -8, -8); close:SetScript("OnClick", function() f:Hide() end)
-
-  -- Movable title bar (standard hold-drag).
-  f:SetMovable(true); f:SetClampedToScreen(true)
-  local ptb = CreateFrame("Frame", nil, f)
-  ptb:SetPoint("TOPLEFT", 2, -2); ptb:SetPoint("TOPRIGHT", -34, -2); ptb:SetHeight(28)
-  ptb:EnableMouse(true); ptb:RegisterForDrag("LeftButton")
-  ptb:SetScript("OnDragStart", function() if f:IsMovable() then f:StartMoving() end end)
-  ptb:SetScript("OnDragStop", function() f:StopMovingOrSizing() end)
+  local win, f = KitWindow("GloomsAurasPicker", W, H, "Choose a spell to track")
 
   -- Search box (filters BOTH columns by name).
-  local sb = flatEditBox(f, W - 2 * GAP, 22); sb:SetPoint("TOPLEFT", GAP, -46)
-  sb:SetScript("OnTextChanged", function(self) C._pick.search = self:GetText() or ""; RefreshPicker() end)
-  sb:SetScript("OnEscapePressed", function(self) self:SetText(""); self:ClearFocus() end)
-  local sl = newText(f, FONT.body, 11, MUTE, "LEFT"); sl:SetPoint("BOTTOMLEFT", sb, "TOPLEFT", 2, 3); sl:SetText("Search")
+  UI.gLabel(f, "Search"):SetPoint("TOPLEFT", GAP, -50)
+  local sb = UI.gField(f, W - 2 * GAP, { placeholder = "Part of the spell's name", revert = function(self) self:SetText("") end })
+  sb:SetPoint("TOPLEFT", GAP, -65)
+  sb:HookScript("OnTextChanged", function(self) C._pick.search = self:GetText() or ""; RefreshPicker() end)
 
   -- Two columns: Cooldowns (cd) + Buffs & Debuffs (au). Each is a mouse-wheel container
   -- whose child rows propagate the wheel up to it, so each column scrolls independently.
   local headers = { cd = "Cooldowns", au = "Buffs & Debuffs" }
   for _, key in ipairs({ "cd", "au" }) do
     local p, x = C._pick[key], colX[key]
-    local hdr = newText(f, FONT.title, 13, COLOR.purple, "LEFT")
-    hdr:SetPoint("TOPLEFT", x, -84); hdr:SetText(headers[key])
+    local hdr = UI.gLabel(f, headers[key])
+    hdr:SetPoint("TOPLEFT", x, -97)
 
     local col = CreateFrame("Frame", nil, f)
     col:SetPoint("TOPLEFT", x, ROWS_TOP); col:SetSize(PICK_COL_W, PICK_ROWS * PICK_ROW_H)
     col:EnableMouseWheel(true)
     col:SetScript("OnMouseWheel", function(_, delta) p.offset = p.offset - delta; RefreshPicker() end)
 
-    local track = col:CreateTexture(nil, "ARTWORK"); track:SetColorTexture(1, 1, 1, 0.08)
-    track:SetPoint("TOPRIGHT", 0, 0); track:SetSize(6, PICK_ROWS * PICK_ROW_H); p.track = track
-    p.thumb = col:CreateTexture(nil, "OVERLAY"); p.thumb:SetColorTexture(COLOR.orange.r, COLOR.orange.g, COLOR.orange.b, 1)
-    p.thumb:SetWidth(6); p.thumb:SetPoint("TOP", track, "TOP")
+    local track = col:CreateTexture(nil, "ARTWORK")
+    track:SetPoint("TOPRIGHT", 0, 0); track:SetHeight(PICK_ROWS * PICK_ROW_H); p.track = track
+    p.thumb = col:CreateTexture(nil, "OVERLAY"); p.thumb:SetPoint("TOP", track, "TOP")
+    KitBar(track, p.thumb)
 
     for i = 1, PICK_ROWS do
       local row = CreateFrame("Button", nil, col)
       row:SetSize(PICK_COL_W - 12, 22); row:SetPoint("TOPLEFT", 0, -(i - 1) * PICK_ROW_H)
-      local hl = row:CreateTexture(nil, "HIGHLIGHT"); hl:SetAllPoints(); hl:SetColorTexture(COLOR.purple.r, COLOR.purple.g, COLOR.purple.b, 0.20)
+      local hl = row:CreateTexture(nil, "HIGHLIGHT"); hl:SetAllPoints(); hl:SetColorTexture(COLOR.violet.r, COLOR.violet.g, COLOR.violet.b, 0.25)
       local icon = row:CreateTexture(nil, "ARTWORK"); icon:SetSize(18, 18); icon:SetPoint("LEFT", 2, 0); row.icon = icon
-      local text = newText(row, FONT.body, 12, TEXT, "LEFT"); text:SetPoint("LEFT", 24, 0); text:SetPoint("RIGHT", -4, 0); row.text = text
+      icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+      local text = KitText(row, 10); text:SetPoint("LEFT", 26, 0); text:SetPoint("RIGHT", -4, 0); row.text = text
       row:SetScript("OnClick", function(self)
         local item = self.item; if not item then return end
         if pickerOnPick then                 -- picking for a trigger condition
           local cb = pickerOnPick; pickerOnPick = nil
-          f:Hide(); cb(item)
+          win:Hide(); cb(item)
         end
       end)
       p.rows[i] = row
     end
   end
 
-  local footer = newText(f, FONT.body, 11, MUTE, "CENTER")
-  footer:SetPoint("BOTTOM", 0, 8); footer:SetText("mouse-wheel a column to scroll")
+  local footer = KitText(f, 9, COLOR.paper, "CENTER"); footer:SetAlpha(0.5)
+  footer:SetPoint("BOTTOM", 0, 10); footer:SetText("Mouse wheel scrolls a column · click a spell to add it")
 
   f:SetScript("OnShow", function()
     BuildAuraLists()
@@ -1094,10 +1141,9 @@ local function BuildPicker()
     C._pick.cd.offset = 0; C._pick.au.offset = 0
     RefreshPicker()
   end)
-  tinsert(UISpecialFrames, "GloomsAurasPicker")
-  f:Hide()  -- created hidden so the first OpenPicker transitions + fires OnShow
-  pickerFrame = f; RegisterSubWindow(f)
-  return f
+  win:Hide()  -- created hidden so the first OpenPicker transitions + fires OnShow
+  pickerFrame = win; RegisterSubWindow(win)
+  return win
 end
 
 local function OpenPicker(onPick)
@@ -1108,7 +1154,7 @@ local function OpenPicker(onPick)
   end
   -- Picked FROM the Trigger editor (onPick set) → keep it open underneath.
   CloseSubWindows(pickerFrame, onPick and C._trig.frame or nil)
-  pickerFrame:Show(); pickerFrame:Raise()
+  ShowKitWindow(pickerFrame)
 end
 
 -- --------------------------------------------------------------------------
@@ -1246,66 +1292,49 @@ end
 local function SetTexCat(key)
   texCurrentCat = key
   local cat = TexCat(key)
-  if texCatButton then texCatButton:SetText(cat.label) end
+  if texCatButton then texCatButton:refresh() end
   if texSearchBox then texSearchBox:SetText("") end
   if texSearchLabel then texSearchLabel:SetText(cat.searchMode == "spellid" and "Spell ID" or "Search") end
   RebuildTexData()
 end
 
 local function BuildTexturePicker()
-  local GX = 26
+  local GX = 20
   local W = GX * 2 + TEX_COLS * TEX_CELL
-  local H = 96 + TEX_ROWS * TEX_CELL + 20
-  local f = CreateFrame("Frame", "GloomsAurasTexPicker", UIParent)
-  f:SetSize(W, H); f:SetPoint("CENTER"); f:SetFrameStrata("FULLSCREEN_DIALOG")
-  f:EnableMouse(true); f:EnableMouseWheel(true)
-  skinPlate(f)
+  local H = 100 + TEX_ROWS * TEX_CELL + 30
+  local win, f = KitWindow("GloomsAurasTexPicker", W, H, "Choose a texture")
+  f:EnableMouseWheel(true)
 
-  local title = newText(f, FONT.title, 18, COLOR.purple, "CENTER"); title:SetPoint("TOP", 0, -12)
-  title:SetText("Choose a texture")
-  local close = flatButton(f, 22, 20, COLOR.heroic, "X", 12)
-  close:SetPoint("TOPRIGHT", -8, -8); close:SetScript("OnClick", function() f:Hide() end)
+  -- Category: the kit's dropdown (the old button + hand-made menu, 2026-10-04).
+  texCatButton = UI.gDrop(f, 168,
+    function() return TexCat(texCurrentCat).label end,
+    function() local o = {}; for _, cat in ipairs(TEX_CATS) do o[#o + 1] = { value = cat.key, label = cat.label } end; return o end,
+    function() return texCurrentCat end,
+    function(v) SetTexCat(v) end)
+  UI.gLabel(f, "Category"):SetPoint("TOPLEFT", GX, -50)
+  texCatButton:SetPoint("TOPLEFT", GX, -65)
 
-  f:SetMovable(true); f:SetClampedToScreen(true)
-  local tb = CreateFrame("Frame", nil, f); tb:SetPoint("TOPLEFT", 2, -2); tb:SetPoint("TOPRIGHT", -34, -2)
-  tb:SetHeight(28); tb:EnableMouse(true); tb:RegisterForDrag("LeftButton")
-  tb:SetScript("OnDragStart", function() if f:IsMovable() then f:StartMoving() end end)
-  tb:SetScript("OnDragStop", function() f:StopMovingOrSizing() end)
-
-  -- Category dropdown (button + drop-down menu).
-  texCatButton = flatButton(f, 168, 20, COLOR.heroic, "Shapes", 12)
-  texCatButton:SetPoint("TOPLEFT", GX, -40)
-  texCatMenu = CreateFrame("Frame", nil, f); texCatMenu:SetFrameStrata("FULLSCREEN_DIALOG")
-  texCatMenu:SetSize(200, #TEX_CATS * 22 + 8)
-  texCatMenu:SetPoint("TOPLEFT", texCatButton, "BOTTOMLEFT", 0, -2)
-  texCatMenu:SetFrameLevel((f:GetFrameLevel() or 1) + 20)  -- render above the grid cells
-  skinPlate(texCatMenu); texCatMenu:Hide()
-  for i, cat in ipairs(TEX_CATS) do
-    local item = flatButton(texCatMenu, 192, 20, COLOR.heroic, cat.label, 12); item:SetBase(0.12)
-    item:SetPoint("TOPLEFT", 4, -4 - (i - 1) * 22)
-    item:SetScript("OnClick", function() texCatMenu:Hide(); SetTexCat(cat.key) end)
-  end
-  texCatButton:SetScript("OnClick", function() texCatMenu:SetShown(not texCatMenu:IsShown()) end)
-
-  -- Search box (filters the current category by name, where names exist).
-  texSearchBox = flatEditBox(f, 110, 20)
-  texSearchBox:SetPoint("TOPRIGHT", -20, -40)
-  texSearchBox:SetScript("OnTextChanged", function() RebuildTexData() end)
-  texSearchBox:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
-  local sl = newText(f, FONT.body, 11, MUTE, "RIGHT"); sl:SetPoint("RIGHT", texSearchBox, "LEFT", -8, 0)
-  sl:SetText("Search")
+  -- Search box (filters the current category by name, where names exist; for
+  -- game icons it's a Spell ID lookup — the placeholder says which).
+  texSearchBox = UI.gField(f, 140, { placeholder = "Search", revert = function(self) self:SetText("") end })
+  texSearchBox:SetPoint("TOPRIGHT", -GX, -65)
+  UI.gLabel(f, "Search"):SetPoint("BOTTOMLEFT", texSearchBox, "TOPLEFT", 0, 4)
+  texSearchBox:HookScript("OnTextChanged", function() RebuildTexData() end)
+  texSearchLabel = texSearchBox.placeholder
 
   -- Grid of texture cells.
   for i = 1, TEX_PER do
     local col, rown = (i - 1) % TEX_COLS, math.floor((i - 1) / TEX_COLS)
     local cell = CreateFrame("Button", nil, f)
     cell:SetSize(TEX_CELL - 6, TEX_CELL - 6)
-    cell:SetPoint("TOPLEFT", GX + col * TEX_CELL, -70 - rown * TEX_CELL)
+    cell:SetPoint("TOPLEFT", GX + col * TEX_CELL, -97 - rown * TEX_CELL)
+    local bg = cell:CreateTexture(nil, "BACKGROUND", nil, -1); bg:SetAllPoints()
+    bg:SetColorTexture(COLOR.violet.r, COLOR.violet.g, COLOR.violet.b, 0.12)
     local sel = cell:CreateTexture(nil, "BACKGROUND")
     sel:SetPoint("TOPLEFT", -2, 2); sel:SetPoint("BOTTOMRIGHT", 2, -2)
-    sel:SetColorTexture(COLOR.purple.r, COLOR.purple.g, COLOR.purple.b, 1); sel:Hide(); cell.sel = sel
+    sel:SetColorTexture(COLOR.lime.r, COLOR.lime.g, COLOR.lime.b, 1); sel:Hide(); cell.sel = sel
     local t = cell:CreateTexture(nil, "ARTWORK"); t:SetAllPoints(); cell.tex = t
-    local hl = cell:CreateTexture(nil, "HIGHLIGHT"); hl:SetAllPoints(); hl:SetColorTexture(1, 1, 1, 0.25)
+    local hl = cell:CreateTexture(nil, "HIGHLIGHT"); hl:SetAllPoints(); hl:SetColorTexture(COLOR.violet.r, COLOR.violet.g, COLOR.violet.b, 0.35)
     cell:SetScript("OnClick", function(self)
       if not self.item then return end
       texCurrentTex = self.item.tex
@@ -1321,14 +1350,13 @@ local function BuildTexturePicker()
     texCells[i] = cell
   end
 
-  local footer = newText(f, FONT.body, 11, MUTE, "CENTER")
-  footer:SetPoint("BOTTOM", 0, 8); footer:SetText("mouse-wheel to scroll · click to apply")
+  local footer = KitText(f, 9, COLOR.paper, "CENTER"); footer:SetAlpha(0.5)
+  footer:SetPoint("BOTTOM", 0, 10); footer:SetText("Mouse wheel scrolls · click a texture to apply it")
 
   f:SetScript("OnMouseWheel", function(_, d) texOffset = texOffset - d * TEX_COLS; RefreshTexGrid() end)
-  tinsert(UISpecialFrames, "GloomsAurasTexPicker")
-  f:Hide()
-  texPickerFrame = f; RegisterSubWindow(f)
-  return f
+  win:Hide()
+  texPickerFrame = win; RegisterSubWindow(win)
+  return win
 end
 
 -- `only` (optional) LOCKS the picker to one category key. Used by the Bar section, which
@@ -1343,12 +1371,10 @@ local function OpenTexturePicker(onPick, current, only)
     local ok, err = pcall(BuildTexturePicker)
     if not ok then GA.msg("|cffff5555texture picker failed to build|r: " .. tostring(err)); return end
   end
-  if texCatMenu then texCatMenu:Hide() end
-  if texCatButton then texCatButton:SetEnabled(not only) end
+  if texCatButton then texCatButton:setEnabled(not only); texCatButton:refresh() end
   SetTexCat(only or texCurrentCat or DEFAULT_TEX_CAT)
   CloseSubWindows(texPickerFrame)
-  DockRight(texPickerFrame)
-  texPickerFrame:Show(); texPickerFrame:Raise()
+  ShowKitWindow(texPickerFrame)
 end
 
 -- --------------------------------------------------------------------------
@@ -1423,35 +1449,22 @@ local function RebuildSoundData()
 end
 
 local function BuildSoundPicker()
-  local W, H = 320, 68 + SND_ROWS * 24 + 30
-  local f = CreateFrame("Frame", "GloomsAurasSoundPicker", UIParent)
-  f:SetSize(W, H); f:SetPoint("CENTER"); f:SetFrameStrata("FULLSCREEN_DIALOG")
-  f:EnableMouse(true); f:EnableMouseWheel(true)
-  skinPlate(f)
+  local W, H = 360, 98 + SND_ROWS * 24 + 34
+  local win, f = KitWindow("GloomsAurasSoundPicker", W, H, "Choose a sound")
+  f:EnableMouseWheel(true)
 
-  local title = newText(f, FONT.title, 18, COLOR.purple, "CENTER"); title:SetPoint("TOP", 0, -12)
-  title:SetText("Choose a sound")
-  local close = flatButton(f, 22, 20, COLOR.heroic, "X", 12)
-  close:SetPoint("TOPRIGHT", -8, -8); close:SetScript("OnClick", function() f:Hide() end)
-
-  f:SetMovable(true); f:SetClampedToScreen(true)
-  local tb = CreateFrame("Frame", nil, f); tb:SetPoint("TOPLEFT", 2, -2); tb:SetPoint("TOPRIGHT", -34, -2)
-  tb:SetHeight(28); tb:EnableMouse(true); tb:RegisterForDrag("LeftButton")
-  tb:SetScript("OnDragStart", function() if f:IsMovable() then f:StartMoving() end end)
-  tb:SetScript("OnDragStop", function() f:StopMovingOrSizing() end)
-
-  soundSearchBox = flatEditBox(f, 150, 20); soundSearchBox:SetPoint("TOPRIGHT", -14, -38)
-  soundSearchBox:SetScript("OnTextChanged", function() RebuildSoundData() end)
-  soundSearchBox:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
-  local sl = newText(f, FONT.body, 11, MUTE, "LEFT"); sl:SetPoint("TOPLEFT", 14, -42); sl:SetText("Search")
+  UI.gLabel(f, "Search"):SetPoint("TOPLEFT", 20, -50)
+  soundSearchBox = UI.gField(f, W - 40, { placeholder = "Part of the sound's name", revert = function(self) self:SetText("") end })
+  soundSearchBox:SetPoint("TOPLEFT", 20, -65)
+  soundSearchBox:HookScript("OnTextChanged", function() RebuildSoundData() end)
 
   for i = 1, SND_ROWS do
-    local row = CreateFrame("Button", nil, f); row:SetSize(W - 28, 22)
-    row:SetPoint("TOPLEFT", 14, -66 - (i - 1) * 24)
+    local row = CreateFrame("Button", nil, f); row:SetSize(W - 52, 22)
+    row:SetPoint("TOPLEFT", 20, -96 - (i - 1) * 24)
     local sel = row:CreateTexture(nil, "BACKGROUND"); sel:SetAllPoints()
-    sel:SetColorTexture(COLOR.purple.r, COLOR.purple.g, COLOR.purple.b, 0.28); sel:Hide(); row.sel = sel
-    local hl = row:CreateTexture(nil, "HIGHLIGHT"); hl:SetAllPoints(); hl:SetColorTexture(1, 1, 1, 0.10)
-    local name = newText(row, FONT.body, 12, TEXT, "LEFT"); name:SetPoint("LEFT", 8, 0); name:SetPoint("RIGHT", -8, 0); row.name = name
+    sel:SetColorTexture(COLOR.violet.r, COLOR.violet.g, COLOR.violet.b, 0.55); sel:Hide(); row.sel = sel
+    local hl = row:CreateTexture(nil, "HIGHLIGHT"); hl:SetAllPoints(); hl:SetColorTexture(COLOR.violet.r, COLOR.violet.g, COLOR.violet.b, 0.25)
+    local name = KitText(row, 10); name:SetPoint("LEFT", 8, 0); name:SetPoint("RIGHT", -8, 0); row.name = name
     row:SetScript("OnClick", function(self)
       if not self.item then return end
       soundCurrent = self.item.file
@@ -1463,14 +1476,14 @@ local function BuildSoundPicker()
   end
 
   -- Scrollbar: a draggable ORANGE thumb on the right (the wheel also scrolls).
-  local SB_X, SB_TOP, SB_H = -6, -66, SND_ROWS * 24 - 2
-  local track = f:CreateTexture(nil, "ARTWORK"); track:SetColorTexture(1, 1, 1, 0.06)
-  track:SetPoint("TOPRIGHT", SB_X, SB_TOP); track:SetSize(6, SB_H)
-  local thumb = CreateFrame("Button", nil, f); thumb:SetWidth(6); thumb:EnableMouse(true)
+  local SB_X, SB_TOP, SB_H = -20, -96, SND_ROWS * 24 - 2
+  local track = f:CreateTexture(nil, "ARTWORK")
+  track:SetPoint("TOPRIGHT", SB_X, SB_TOP); track:SetHeight(SB_H)
+  local thumb = CreateFrame("Button", nil, f); thumb:SetWidth(3); thumb:EnableMouse(true)
   local tt = thumb:CreateTexture(nil, "OVERLAY"); tt:SetAllPoints()
-  tt:SetColorTexture(COLOR.orange.r, COLOR.orange.g, COLOR.orange.b, 1)
+  KitBar(track, tt); tt:SetWidth(3)
   thumb:SetPoint("TOPRIGHT", SB_X, SB_TOP)
-  f.sb = { thumb = thumb, top = SB_TOP, h = SB_H, x = SB_X }
+  win.sb = { thumb = thumb, top = SB_TOP, h = SB_H, x = SB_X }
 
   local dragging, startCursorY, startOffset = false, 0, 0
   thumb:SetScript("OnMouseDown", function()
@@ -1489,13 +1502,12 @@ local function BuildSoundPicker()
     RefreshSoundList()
   end)
 
-  local footer = newText(f, FONT.body, 11, MUTE, "CENTER"); footer:SetPoint("BOTTOM", 0, 8)
-  footer:SetText("click to apply + preview · drag the bar or use the wheel")
+  local footer = KitText(f, 9, COLOR.paper, "CENTER"); footer:SetAlpha(0.5); footer:SetPoint("BOTTOM", 0, 10)
+  footer:SetText("Click a sound to apply and hear it · drag the bar or use the wheel")
   f:SetScript("OnMouseWheel", function(_, d) soundOffset = soundOffset - d; RefreshSoundList() end)
-  tinsert(UISpecialFrames, "GloomsAurasSoundPicker")
-  f:Hide()
-  soundPickerFrame = f; RegisterSubWindow(f)
-  return f
+  win:Hide()
+  soundPickerFrame = win; RegisterSubWindow(win)
+  return win
 end
 
 local function OpenSoundPicker(onPick, current)
@@ -1509,8 +1521,7 @@ local function OpenSoundPicker(onPick, current)
   if soundSearchBox then soundSearchBox:SetText("") end
   RebuildSoundData()
   CloseSubWindows(soundPickerFrame)
-  DockRight(soundPickerFrame)
-  soundPickerFrame:Show(); soundPickerFrame:Raise()
+  ShowKitWindow(soundPickerFrame)
 end
 
 -- --------------------------------------------------------------------------
@@ -1567,6 +1578,61 @@ function C:TrigAddLeaf(item, ti)
   table.insert(list, leaf)
   self:TrigRebind()
 end
+-- A TARGET CASTING condition (CDM:EvalCondition / KickGate): no spell; starts
+-- on "something interruptible", the reason it exists.
+function C:TrigAddTargetCast(ti)
+  local t = self:TrigTree(); if not t then return end
+  local list = (ti and t.conditions[ti] and t.conditions[ti].conditions) or t.conditions
+  table.insert(list, { k = "tcast", state = "tcast_kick", name = "Target" })
+  if GA.CDM and GA.CDM.UpdateTargetCast then GA.CDM:UpdateTargetCast() end
+  self:TrigRebind()
+end
+-- A BUFF RUNNING LOW condition (CDM:EvalCondition "blowN"): any buff of yours,
+-- typed by name or spell ID — not from the Cooldown Manager list, so poisons
+-- work whether it tracks them or not. Stored as `buffID` (never `spellID`, so
+-- Discover doesn't try to bind it) + its name; starts at 15 minutes.
+function C:TrigAddBuffLow(text, ti)
+  local t = self:TrigTree(); if not t then return end
+  text = (text or ""):gsub("^%s+", ""):gsub("%s+$", "")
+  if text == "" then return end
+  local id = tonumber(text)
+  local name = text
+  if id then
+    name = (C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(id)) or text
+  elseif C_Spell and C_Spell.GetSpellInfo then
+    local info = C_Spell.GetSpellInfo(text)
+    if info and info.spellID then id = info.spellID; name = info.name or text end
+  end
+  local list = (ti and t.conditions[ti] and t.conditions[ti].conditions) or t.conditions
+  table.insert(list, { k = "blow", state = "blow15", buffID = id, name = name })
+  self:TrigRebind()
+end
+-- A TRINKET READY condition (CDM:EvalCondition "item_ready"): the item itself,
+-- not its Cooldown Manager entry — the Cooldown Manager drops trinkets inside
+-- delves (2026-10-04). Stored as itemID + its use-spell (the in-combat fallback
+-- and the icon) — never `spellID`, so Discover doesn't try to bind it.
+function C:TrigAddItem(itemID, ti)
+  local t = self:TrigTree(); if not t or not itemID then return end
+  local name = (C_Item and C_Item.GetItemNameByID and C_Item.GetItemNameByID(itemID)) or ("Item " .. itemID)
+  local _, useSpell
+  if C_Item and C_Item.GetItemSpell then _, useSpell = C_Item.GetItemSpell(itemID) end
+  local list = (ti and t.conditions[ti] and t.conditions[ti].conditions) or t.conditions
+  table.insert(list, { k = "item", state = "item_ready", itemID = itemID, useSpell = useSpell, name = name })
+  self:TrigRebind()
+end
+-- The equipped trinkets, for the menu: { value = itemID, label = "Top: name" }.
+function C:EquippedTrinkets()
+  local out = {}
+  for slot, where in pairs({ [13] = "Top", [14] = "Bottom" }) do
+    local id = GetInventoryItemID("player", slot)
+    if id then
+      local nm = (C_Item and C_Item.GetItemNameByID and C_Item.GetItemNameByID(id)) or ("Item " .. id)
+      out[#out + 1] = { value = id, label = where .. " trinket: " .. nm, slot = slot }
+    end
+  end
+  table.sort(out, function(a, b) return a.slot < b.slot end)
+  return out
+end
 function C:TrigAddGroup()
   local t = self:TrigTree(); if not t then return end
   table.insert(t.conditions, { logic = "OR", conditions = {} })   -- OR is the usual reason to group
@@ -1588,6 +1654,13 @@ end
 function C:TrigStates(ti, ci)
   local leaf = self:TrigNode(ti, ci); if not leaf or not leaf.state then return {} end
   local s = leaf.state
+  if leaf.k == "tcast" then return { "tcast_any", "tcast_kick", "tcast_nokick" } end
+  if leaf.k == "item" then return { "item_ready", "item_oncd" } end
+  if leaf.k == "blow" then
+    local out = {}
+    for _, m in ipairs(BLOW_MINUTES) do out[#out + 1] = "blow" .. m end
+    return out
+  end
   if s == "cd_ready" or s == "cd_castable" or s == "cd_oncd" or s == "charges_max" or s == "charges_notmax" then
     local isCharge = GA.CDM and GA.CDM.isCharge and GA.CDM.isCharge[leaf.spellID]
     return isCharge and { "cd_ready", "cd_castable", "cd_oncd", "charges_max", "charges_notmax" }
@@ -2017,8 +2090,8 @@ local function RefreshShapeGrid()
     -- Written out rather than an and/or chain: those collapse on a zero channel, and
     -- a tint silently losing a component is a horrible thing to chase later.
     if th.tex then
-      if on then th.tex:SetVertexColor(COLOR.purple.r, COLOR.purple.g, COLOR.purple.b)
-      else th.tex:SetVertexColor(0.75, 0.75, 0.75) end
+      if on then th.tex:SetVertexColor(COLOR.lime.r, COLOR.lime.g, COLOR.lime.b)
+      else th.tex:SetVertexColor(0.85, 0.85, 0.85) end
     end
   end
 end
@@ -2029,7 +2102,7 @@ local function BuildShapePicker()
   local secs = { { title = "None", keys = { "" } } }
   for _, g in ipairs((hub and hub.SHAPE_GROUPS) or {}) do secs[#secs + 1] = g end
 
-  local GX, TOP = 18, 46
+  local GX, TOP = 20, 54
   local total = 0
   for _, s in ipairs(secs) do
     local n = math.max(1, math.ceil(#s.keys / SHAPE_COLS))
@@ -2038,29 +2111,19 @@ local function BuildShapePicker()
   local W = GX * 2 + SHAPE_COLS * SHAPE_CELL + (SHAPE_COLS - 1) * SHAPE_GAP
   local H = TOP + total + 24
 
-  local f = CreateFrame("Frame", "GloomsAurasShapePicker", UIParent)
-  f:SetSize(W, H); f:SetPoint("CENTER"); f:SetFrameStrata("FULLSCREEN_DIALOG"); f:EnableMouse(true)
-  skinPlate(f)
-  local title = newText(f, FONT.title, 18, COLOR.purple, "CENTER"); title:SetPoint("TOP", 0, -12)
-  title:SetText("Choose a shape")
-  local close = flatButton(f, 22, 20, COLOR.heroic, "X", 12)
-  close:SetPoint("TOPRIGHT", -8, -8); close:SetScript("OnClick", function() f:Hide() end)
-  f:SetMovable(true); f:SetClampedToScreen(true)
-  local tb = CreateFrame("Frame", nil, f); tb:SetPoint("TOPLEFT", 2, -2); tb:SetPoint("TOPRIGHT", -34, -2)
-  tb:SetHeight(28); tb:EnableMouse(true); tb:RegisterForDrag("LeftButton")
-  tb:SetScript("OnDragStart", function() if f:IsMovable() then f:StartMoving() end end)
-  tb:SetScript("OnDragStop", function() f:StopMovingOrSizing() end)
+  local win, f = KitWindow("GloomsAurasShapePicker", W, H, "Choose a shape")
 
   local function makeThumb(key)
     local b = CreateFrame("Button", nil, f)
     b:SetSize(SHAPE_CELL, SHAPE_CELL)
-    local bg = b:CreateTexture(nil, "BACKGROUND"); bg:SetAllPoints(); bg:SetColorTexture(1, 1, 1, 0.04)
-    b.edge = addEdges(b, COLOR.purple, 2)
+    local bg = b:CreateTexture(nil, "BACKGROUND"); bg:SetAllPoints(); bg:SetColorTexture(COLOR.violet.r, COLOR.violet.g, COLOR.violet.b, 0.12)
+    local hl = b:CreateTexture(nil, "HIGHLIGHT"); hl:SetAllPoints(); hl:SetColorTexture(COLOR.violet.r, COLOR.violet.g, COLOR.violet.b, 0.25)
+    b.edge = addEdges(b, COLOR.lime, 2)
     for _, side in ipairs({ "top", "bottom", "left", "right" }) do
       if b.edge[side] then b.edge[side]:Hide() end
     end
     if key == "" then
-      local none = newText(b, FONT.body, 11, MUTE, "CENTER")
+      local none = KitText(b, 10, COLOR.paper, "CENTER")
       none:SetPoint("CENTER"); none:SetText("None")
     else
       local info = (hub and hub.ShapeInfo and hub:ShapeInfo(key)) or { aspect = 1, orient = "square" }
@@ -2089,8 +2152,8 @@ local function BuildShapePicker()
 
   local y = TOP
   for _, s in ipairs(secs) do
-    local lbl = newText(f, FONT.body, 11, MUTE, "LEFT")
-    lbl:SetPoint("TOPLEFT", GX, -y); lbl:SetText(s.title)
+    local lbl = UI.gLabel(f, s.title)
+    lbl:SetPoint("TOPLEFT", GX, -y)
     y = y + 18
     for i, key in ipairs(s.keys) do
       local col, rowIdx = (i - 1) % SHAPE_COLS, math.floor((i - 1) / SHAPE_COLS)
@@ -2101,12 +2164,11 @@ local function BuildShapePicker()
     y = y + n * SHAPE_CELL + (n - 1) * SHAPE_GAP + 10
   end
 
-  local footer = newText(f, FONT.body, 11, MUTE, "CENTER")
-  footer:SetPoint("BOTTOM", 0, 8); footer:SetText("click to apply")
-  tinsert(UISpecialFrames, "GloomsAurasShapePicker")
-  f:Hide()
-  shapePickerFrame = f; RegisterSubWindow(f)
-  return f
+  local footer = KitText(f, 9, COLOR.paper, "CENTER"); footer:SetAlpha(0.5)
+  footer:SetPoint("BOTTOM", 0, 10); footer:SetText("Click a shape to apply it")
+  win:Hide()
+  shapePickerFrame = win; RegisterSubWindow(win)
+  return win
 end
 
 local function OpenShapePicker(onPick, current)
@@ -2118,8 +2180,7 @@ local function OpenShapePicker(onPick, current)
   end
   RefreshShapeGrid()
   CloseSubWindows(shapePickerFrame)
-  DockRight(shapePickerFrame)
-  shapePickerFrame:Show(); shapePickerFrame:Raise()
+  ShowKitWindow(shapePickerFrame)
 end
 
 local function BuildFontPicker()

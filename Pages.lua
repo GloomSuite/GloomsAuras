@@ -855,7 +855,10 @@ local function FillLeaf(r, ti, ci, leaf)
   r._ti, r._ci, r._node = ti, ci, leaf
   local sid = leaf.spellID
   r.name:SetText(leaf.name or (sid and C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(sid)) or "?")
-  r.icon:SetTexture((sid and C_Spell and C_Spell.GetSpellTexture and C_Spell.GetSpellTexture(sid)) or 134400)
+  local iconID = sid or leaf.buffID   -- a Buff Running Low condition: its buff's icon
+  r.icon:SetTexture((leaf.k == "tcast" and 132219)   -- Kick's icon for a Target Casting condition
+    or (leaf.k == "item" and leaf.itemID and C_Item and C_Item.GetItemIconByID and C_Item.GetItemIconByID(leaf.itemID))
+    or (iconID and C_Spell and C_Spell.GetSpellTexture and C_Spell.GetSpellTexture(iconID)) or 134400)
   r.pill:SetLabel(StateText(leaf.state, leaf.k))
   r:SetAlpha(1)
 end
@@ -989,7 +992,7 @@ function P.renderTriggers()
   end
   for i = nr + 1, #TR.rows do TR.rows[i]:Hide() end
   for i = ng + 1, #TR.groups do TR.groups[i]:Hide() end
-  if TR.addT then TR.addT:SetEnabled(cfg ~= nil); TR.addG:SetEnabled(cfg ~= nil) end
+  if TR.addT then TR.addT:SetEnabled(cfg ~= nil); TR.addC:SetEnabled(cfg ~= nil); TR.addG:SetEnabled(cfg ~= nil) end
   local h = TRIG_TOP + math.max(16, y - TRIG_GAP)
   body:SetHeight(math.max(16, y - TRIG_GAP))
   if TR.sec and math.abs((TR.sec:GetHeight() or 0) - h) > 0.5 then TR.sec:SetHeight(h); Relayout() end
@@ -1018,12 +1021,30 @@ local function BuildTriggersFooter(parent)
   TR.addT:SetPoint("TOPLEFT", 0, 0)
   TR.addT:SetScript("OnClick", function() X.OpenPicker(function(item) C:TrigAddLeaf(item, nil) end) end)
   tip(TR.addT, "Add a trigger", "Adds a condition on a spell from your Cooldown Manager. For a bar, the FIRST trigger's spell is what the bar measures.")
+  -- the triggers that don't come from the Cooldown Manager, in one menu
+  TR.addC = UI.gButton(f, "Other Triggers")
+  TR.addC:SetPoint("LEFT", TR.addT, "RIGHT", 10, 0)
+  TR.addC:SetScript("OnClick", function(self)
+    UI.gList(self, {
+      { value = "tcast", label = "Target Casting" },
+      { value = "blow",  label = "Buff Running Low" },
+      { value = "item",  label = "Trinket Ready" },
+    }, nil, function(v)
+      if v == "item" then
+        local list = C:EquippedTrinkets()
+        if #list == 0 then UI.confirm("You don't have a trinket equipped.", function() end); return end
+        C_Timer.After(0, function() UI.gList(TR.addC, list, nil, function(id) C:TrigAddItem(id, nil) end) end)
+      elseif v == "tcast" then C:TrigAddTargetCast(nil)
+      else UI.nameDialog("Which buff? Name or spell ID", "", function(text) C:TrigAddBuffLow(text, nil) end) end
+    end)
+  end)
+  tip(TR.addC, "Other triggers", "Conditions that don't come from your Cooldown Manager.\n\nTarget Casting: your target is casting anything, something you can interrupt, or something you can't. The interrupt choice fades the whole aura in or out with the cast, whatever Match All / Any / None says — so it works best as the aura's only condition, or with Match All.\n\nBuff Running Low: one of your buffs is missing or has under 5–30 minutes left — checked out of combat only, so it never shows mid-pull. Type the buff's name or spell ID. One per poison, with Match Any, for a rogue's poisons.\n\nTrinket Ready: one of your equipped trinkets is off (or on) cooldown — read from the trinket itself, so it works where the Cooldown Manager leaves trinkets out (delves).")
   TR.addG = UI.gButton(f, "Create Trigger Group")
   TR.addG:SetPoint("TOPRIGHT", 0, 0)
   TR.addG:SetScript("OnClick", function() C:TrigAddGroup() end)
   UI.attachTip(TR.addG, "Trigger group", "Adds an empty group. Drag conditions into it; its own Match decides how they combine.")
   local on = Cfg() ~= nil
-  TR.addT:SetEnabled(on); TR.addG:SetEnabled(on)
+  TR.addT:SetEnabled(on); TR.addC:SetEnabled(on); TR.addG:SetEnabled(on)
   return f
 end
 
@@ -1132,21 +1153,32 @@ local function BuildAppearance(parent)
   -- joining their two boxes (the owner's design: white at 40% when free, lime
   -- when linked in these mocks; click it to switch).
   local wDial, hDial
-  local function clampDim(n) return math.max(8, math.min(8192, math.floor(n + 0.5))) end
-  wDial = add(Dial(f, C2, 143, 156, { label = "Width", min = 8, max = 8192, step = 1, unit = "px", dragPx = 4000,
+  -- ★ The floor is 1 px for a BAR (a thin line is a real bar — the owner,
+  -- 2026-10-01) and 8 for everything else. The 8 was only ever a safe pick
+  -- (2026-07-07); nothing drawn depends on it. The dials go to 1 and the
+  -- setters hold non-bars at 8 (a dial's own min is fixed when it's built).
+  local function minDim() local c = Cfg(); return (c and c.kind == "bar") and 1 or 8 end
+  local function clampDim(n) return math.max(minDim(), math.min(8192, math.floor(n + 0.5))) end
+  wDial = add(Dial(f, C2, 143, 156, { label = "Width", min = 1, max = 8192, step = 1, unit = "px", dragPx = 4000,
     get = function() local c = Cfg(); return c and (c.width or c.size) or 64 end,
     set = function(v)
       local c = Cfg(); if not c then return end
+      local held = v < minDim()
+      if held then v = minDim() end
       c.width = v
+      if held and wDial then wDial:refresh() end   -- after the write: the dial shows the floor
       if c.lockAspect then c.height = clampDim(v / (c.aspect or 1)); if hDial then hDial:refresh() end end
       Reapply()
     end }))
   tip(wDial, "Width", "The aura's width. Link it to the height with the bracket to keep the proportions.")
-  hDial = add(Dial(f, C2, 184, 156, { label = "Height", min = 8, max = 8192, step = 1, unit = "px", dragPx = 4000,
+  hDial = add(Dial(f, C2, 184, 156, { label = "Height", min = 1, max = 8192, step = 1, unit = "px", dragPx = 4000,
     get = function() local c = Cfg(); return c and (c.height or c.size) or 64 end,
     set = function(v)
       local c = Cfg(); if not c then return end
+      local held = v < minDim()
+      if held then v = minDim() end
       c.height = v
+      if held and hDial then hDial:refresh() end   -- after the write: the dial shows the floor
       if c.lockAspect then c.width = clampDim(v * (c.aspect or 1)); if wDial then wDial:refresh() end end
       Reapply()
     end }))
@@ -1716,7 +1748,10 @@ function P.buildLoad(p, o)
     local function write(a, b)
       if not a and not b then return end
       local w = visW(); if not w then return end
-      w[key] = (a and b) and nil or (a and v1 or v2)
+      -- NOT `(a and b) and nil or …` — `x and nil or y` is always y, so ticking
+      -- the second box of a pair wrote the first's value back and neither box
+      -- could ever change (owner-reported 2026-10-01; the 2026-07-08 wall again).
+      if a and b then w[key] = nil else w[key] = a and v1 or v2 end
       Poke(); b1:refresh(); b2:refresh()
     end
     b1 = put(check(label1, function() local a = st(); return a end, function(on) local _, b = st(); write(on, b) end))
