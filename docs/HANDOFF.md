@@ -1,4 +1,27 @@
-# GloomsAuras — Session Handoff  (last updated 2026-10-04)
+# GloomsAuras — Session Handoff  (last updated 2026-10-05)
+
+> ## ▶▶▶ 2026-10-05 — GROUPS AS ANCHORS, GROUP-CONFLICT NOTES, GAME ART & FLIPBOOKS
+> - **Groups work like Gloom's UI's** (the owner's pick; REVERSES "groups are no longer selected"):
+>   a header click SELECTS (`C.groupSel`, `P.selectGroup`), the lime triangle folds (`r.fold`); the six
+>   aura sections hide and the **Group** section shows (Attach To · Scale · Horizontal / Vertical
+>   Position · the group's load conditions via `P.buildLoad` · Members). Data: `g.x / g.y / g.scale /
+>   g.attach`; a member's `cfg.point` is its OFFSET from the anchor (old groups have no x/y = 0, so old
+>   absolute points read unchanged). `Displays.lua`: `D:Place / Pos / SetGroup / SetAttach / ApplyGroup`
+>   — **every write of `cfg.group` goes through `D:SetGroup`** (keeps the aura in place). Scale is the
+>   frame's `SetScale`. Green brackets (`D:SetEditGroup`, `RefreshGroupHandle`) drag a group; while a
+>   group is selected no aura frame takes the mouse. List: an aura drags onto a group / Ungrouped
+>   (`P.auraDragStart / Stop`); group headers still drag to reorder. Arrow keys: `nudge` in RegisterTab.
+> - **What the group adds** (`P.groupRuleWords`, `P.loadConflict`): a lime note under the aura's Load
+>   Conditions; a CORAL warning there and on its list line (the existing warn icon, "Check this aura")
+>   when they contradict — In/Out of Combat, Has/No Target, no spec in common, Player Power ranges, a
+>   group switched off. Gloom's UI has the exact version.
+> - **Game Art & Flipbooks** (Choose → a menu): the Hub's `GloomsHub:PickTexture` (tool "auras"); the
+>   pick comes back as `cfg.texture` (+ `cfg.sheet` from `GloomsHub:SheetFor`). Displays now draws a
+>   media name, an ATLAS (its file + coords), a file ID or a path, and a sheet as a FLIPBOOK on a child
+>   frame (`f.flip`). Flipbook Columns / Rows / Frames / Speed at the foot of Appearance (419 tall).
+>   `SetAuraIcon` draws any of these in the list / tab. **Untested in game.**
+> - **Duplicate** lands exactly on the original (the +24/-24 nudge removed); Duplicate As still beside.
+
 
 > ## ▶▶▶ 2026-10-01 → 04 — TRIGGERS THAT DON'T COME FROM THE COOLDOWN MANAGER, PICKERS, FIXES
 > - **Other Triggers** (the triggers footer's middle button, a menu): three leaf kinds outside the CDM,

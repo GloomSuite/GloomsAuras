@@ -304,7 +304,12 @@ local function DeleteGroup(gid)
   local g = Groups(); if not g or not g[gid] then return nil end
   local name = g[gid].name or gid
   local db = DB()
-  if db then for _, cfg in pairs(db) do if cfg.group == gid then cfg.group = nil end end end
+  -- members STAY where they are on screen (2026-10-05: groups are anchors now)
+  if db then for _, cfg in pairs(db) do
+    if cfg.group == gid then
+      if GA.Displays and GA.Displays.SetGroup then GA.Displays:SetGroup(cfg, nil) else cfg.group = nil end
+    end
+  end end
   g[gid] = nil
   return name
 end
@@ -834,6 +839,7 @@ end
 local function SetSelected(sid)
   selectedID = sid
   C.groupSel = nil                           -- an aura and a group are never both selected
+  if GA.Displays and GA.Displays.SetEditGroup then GA.Displays:SetEditGroup(nil) end
   if C._trig then C._trig.editID = sid end   -- inline Trigger section edits the selected aura
   if GA.Displays then GA.Displays:SetSelectedDisplay(sid) end  -- only this one is draggable
   local cfg = Cfg()
@@ -2919,9 +2925,9 @@ function C:OpenGroupAssignMenu(anchor)
     r:SetScript("OnClick", function()
       menu:Hide(); local cur = Cfg(); if not cur then return end
       if val == "__new" then
-        OpenNameDialog("New Group", "", function(nm) local gid = CreateGroup(nm); if gid then cur.group = gid; RefreshList(); C:RefreshGroupButton() end end)
+        OpenNameDialog("New Group", "", function(nm) local gid = CreateGroup(nm); if gid then GA.Displays:SetGroup(cur, gid); RefreshList(); C:RefreshGroupButton() end end)
       else
-        cur.group = val; RefreshList(); C:RefreshGroupButton()
+        GA.Displays:SetGroup(cur, val); RefreshList(); C:RefreshGroupButton()
       end
     end)
   end

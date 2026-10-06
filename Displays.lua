@@ -43,6 +43,202 @@ function D:Config(spellID)
 end
 
 -- --------------------------------------------------------------------------
+-- ★ GROUPS AS ANCHORS (2026-10-05, the owner: "work more like overlays" — Gloom's
+-- UI's groups, GloomsOverlays.lua). A group has a POSITION: `g.x / g.y` from the
+-- screen's centre, or from the centre of the frame it is ATTACHED to (`g.attach`,
+-- a Hub anchor id — Unit Frames' frames), and a `g.scale` (nil = 1) that sizes
+-- every member and the spaces between them. A member's `cfg.point` is then its
+-- OFFSET from the group's anchor (in unscaled units); an ungrouped aura's is from
+-- the screen's centre, as always. A group from before this has no x / y (= 0) and
+-- no attach, so every member's old absolute point reads unchanged as its offset.
+-- Joining or leaving a group KEEPS the aura where it is on screen (SetGroup).
+-- --------------------------------------------------------------------------
+local function GroupsT() return GA.db and GA.db.groups end
+function D:GroupOf(cfg)
+  local gid = cfg and cfg.group
+  local g = gid and GroupsT() and GroupsT()[gid]
+  return g
+end
+-- what a group is pinned to: the anchor's frame, or the screen
+function D:GroupRel(g)
+  local f = g and g.attach and GloomsHub and GloomsHub.AnchorFrame and GloomsHub:AnchorFrame(g.attach)
+  return f or UIParent
+end
+local function GroupScale(g) return (g and g.scale) or 1 end
+D.GroupScale = GroupScale
+-- where a frame's centre is, from the screen's centre, in UIParent units
+local function CenterOffset(f)
+  if f == UIParent then return 0, 0 end
+  local cx, cy = f:GetCenter()
+  local ux, uy = UIParent:GetCenter()
+  if not (cx and ux) then return 0, 0 end
+  local k = f:GetEffectiveScale() / UIParent:GetEffectiveScale()
+  return cx * k - ux, cy * k - uy
+end
+function D:GroupOrigin(g)
+  local ax, ay = CenterOffset(self:GroupRel(g))
+  return ax + (g.x or 0), ay + (g.y or 0)
+end
+-- where an aura is PINNED: the frame, its centre's offset from that frame's
+-- centre (UIParent units), and its group's scale
+function D:Place(cfg)
+  local p = cfg.point or { "CENTER", 0, 0 }
+  local px, py = p[2] or 0, p[3] or 0
+  local g = self:GroupOf(cfg)
+  if not g then return UIParent, px, py, 1 end
+  local k = GroupScale(g)
+  return self:GroupRel(g), (g.x or 0) + px * k, (g.y or 0) + py * k, k
+end
+-- where an aura SITS on screen, from the screen's centre
+function D:Pos(cfg)
+  local rel, x, y = self:Place(cfg)
+  local ax, ay = CenterOffset(rel)
+  return ax + x, ay + y
+end
+-- an aura's box on screen (its size times its group's scale)
+function D:BoxSize(cfg)
+  local k = GroupScale(self:GroupOf(cfg))
+  return (cfg.width or cfg.size or 64) * k, (cfg.height or cfg.size or 64) * k
+end
+-- into a group (nil = out of every group), KEEPING its place on screen
+function D:SetGroup(cfg, gid)
+  local x, y = self:Pos(cfg)
+  local g = gid and GroupsT() and GroupsT()[gid]
+  cfg.group = g and gid or nil
+  if g then
+    local ox, oy = self:GroupOrigin(g)
+    local k = GroupScale(g)
+    cfg.point = { "CENTER", math.floor((x - ox) / k + 0.5), math.floor((y - oy) / k + 0.5) }
+  else
+    cfg.point = { "CENTER", math.floor(x + 0.5), math.floor(y + 0.5) }
+  end
+end
+-- attach a group to an anchor (nil = the screen), KEEPING it where it is
+function D:SetAttach(g, id)
+  local ox, oy = self:GroupOrigin(g)
+  g.attach = id
+  local ax, ay = CenterOffset(self:GroupRel(g))
+  g.x, g.y = math.floor(ox - ax + 0.5), math.floor(oy - ay + 0.5)
+end
+-- the display ids in a group
+function D:GroupMembers(gid)
+  local out, db = {}, DB()
+  if db then for id, cfg in pairs(db) do if cfg.group == gid then out[#out + 1] = id end end end
+  return out
+end
+-- re-place every member of a group (its anchor, attach or scale moved)
+function D:ApplyGroup(gid)
+  for _, id in ipairs(self:GroupMembers(gid)) do
+    if self.frames[id] then self:ApplyConfig(id) end
+  end
+  if self.RefreshGroupHandle then self:RefreshGroupHandle() end
+end
+-- THE GROUP'S HANDLE (Gloom's UI's, GloomsOverlays.lua MakeHandle): while the
+-- windows have a GROUP selected, green corner brackets round every member —
+-- drag them to move the whole group. Moved from the SAVED numbers, never from
+-- what a frame reports (Hub FINDINGS §21). An empty group is a 40 square at its
+-- anchor.
+local groupHandle
+local moveListeners = {}
+function D:OnGroupMoved(fn) moveListeners[#moveListeners + 1] = fn end
+local function Cursor()
+  local x, y = GetCursorPosition()
+  local sc = UIParent:GetEffectiveScale()
+  return x / sc, y / sc
+end
+local function EnsureGroupHandle()
+  if groupHandle then return groupHandle end
+  local h = CreateFrame("Frame", nil, UIParent)
+  h:SetFrameStrata("HIGH"); h:SetFrameLevel(1000)
+  h:EnableMouse(true); h:Hide()
+  if GloomsHub and GloomsHub.UI and GloomsHub.UI.gBrackets then GloomsHub.UI.gBrackets(h, 0.2, 0.8, 0.4, 0.9) end
+  local function finish(self)
+    self:SetScript("OnUpdate", nil)
+    if not self.moving then return end
+    self.moving = false
+    for _, fn in ipairs(moveListeners) do fn() end
+    D:RefreshGroupHandle()
+  end
+  h:SetScript("OnMouseDown", function(self, button)
+    if button ~= "LeftButton" then return end
+    local g = D.editGroup and GroupsT() and GroupsT()[D.editGroup]
+    if not g then return end
+    local cx, cy = Cursor()
+    local ox, oy = g.x or 0, g.y or 0
+    self.moving = true
+    self:SetScript("OnUpdate", function(me)
+      if not IsMouseButtonDown("LeftButton") then finish(me); return end
+      local x, y = Cursor()
+      g.x = math.floor(ox + (x - cx) + 0.5)
+      g.y = math.floor(oy + (y - cy) + 0.5)
+      D:ApplyGroup(D.editGroup)
+      for _, fn in ipairs(moveListeners) do fn(true) end
+    end)
+  end)
+  h:SetScript("OnMouseUp", function(self) finish(self) end)
+  groupHandle = h
+  return h
+end
+function D:RefreshGroupHandle()
+  local gid = self.forced and self.editGroup
+  local g = gid and GroupsT() and GroupsT()[gid]
+  if not g then
+    if groupHandle and not groupHandle.moving then groupHandle:Hide() end
+    return
+  end
+  local h = EnsureGroupHandle()
+  local rel = self:GroupRel(g)
+  local l, r, b, t
+  local db = DB()
+  for _, id in ipairs(self:GroupMembers(gid)) do
+    local cfg = db[id]
+    local _, x, y = self:Place(cfg)
+    local w, hh = self:BoxSize(cfg)
+    l = math.min(l or math.huge, x - w / 2); r = math.max(r or -math.huge, x + w / 2)
+    b = math.min(b or math.huge, y - hh / 2); t = math.max(t or -math.huge, y + hh / 2)
+  end
+  local gx, gy = g.x or 0, g.y or 0
+  if not l then l, r, b, t = gx - 20, gx + 20, gy - 20, gy + 20
+  else l, r, b, t = l - 4, r + 4, b - 4, t + 4 end
+  h:SetSize(r - l, t - b)
+  h:ClearAllPoints()
+  h:SetPoint("CENTER", rel, "CENTER", (l + r) / 2, (b + t) / 2)
+  h:Show()
+end
+-- The windows call this when a group is selected (nil: none, or closed).
+function D:SetEditGroup(gid)
+  self.editGroup = gid
+  self:ApplyInteractivity()
+  self:RefreshGroupHandle()
+end
+-- arrow-key nudges: a group, or one aura, by (dx, dy) screen units; a member of
+-- a scaled group moves 1/scale of its own offset units, so a press is one pixel
+function D:NudgeGroup(gid, dx, dy)
+  local g = gid and GroupsT() and GroupsT()[gid]; if not g then return end
+  g.x, g.y = (g.x or 0) + dx, (g.y or 0) + dy
+  self:ApplyGroup(gid)
+  for _, fn in ipairs(moveListeners) do fn(true) end
+end
+function D:NudgeAura(id, dx, dy)
+  local cfg = self:Config(id); if not cfg then return end
+  local k = GroupScale(self:GroupOf(cfg))
+  local p = cfg.point or { "CENTER", 0, 0 }
+  cfg.point = { "CENTER", (p[2] or 0) + dx / k, (p[3] or 0) + dy / k }
+  self:ApplyConfig(id)
+  self:RefreshGroupHandle()
+  for _, fn in ipairs(moveListeners) do fn(true) end
+end
+
+-- Unit Frames' frames arrive after us: place everything again so an attached
+-- group finds its frame.
+if GloomsHub and GloomsHub.OnAnchorsChanged then
+  GloomsHub:OnAnchorsChanged(function()
+    local db = DB(); if not db then return end
+    for id in pairs(db) do if D.frames and D.frames[id] then D:ApplyConfig(id) end end
+  end)
+end
+
+-- --------------------------------------------------------------------------
 -- Glow effects (LibCustomGlow). Pure rendering — never touches aura data. A glow
 -- is active while the aura FRAME is shown AND cfg.glow.type is set: started on the
 -- frame's OnShow, stopped on OnHide, re-applied on any config change. All calls are
@@ -710,11 +906,15 @@ function D:ApplyConfig(spellID)
   local h = cfg.height or cfg.size or 64
   f:SetSize(w, h)
 
-  -- point = { "CENTER", x, y } ; x/y are offsets from screen centre (up/right +).
-  local p = cfg.point or { "CENTER", 0, 0 }
+  -- point = { "CENTER", x, y }: offsets from the screen's centre (up/right +),
+  -- or from its GROUP's anchor (D:Place). A group's scale is the frame's scale,
+  -- so everything the aura draws — art, text, glow, bar — grows with it; the
+  -- offset is divided back out because SetPoint works in the frame's own scale.
+  local rel, px, py, k = self:Place(cfg)
+  f:SetScale(k)
   if not f.__dragging then  -- don't snap it back mid-drag
     f:ClearAllPoints()
-    f:SetPoint("CENTER", UIParent, "CENTER", p[2] or 0, p[3] or 0)
+    f:SetPoint("CENTER", rel, "CENTER", px / k, py / k)
   end
 
   if cfg.kind == "bar" then
@@ -742,11 +942,48 @@ function D:ApplyConfig(spellID)
     f.tex:SetShown(not cfg.noArt)
 
     -- Texture: a custom file path / fileID if set, else the spell's own icon.
+    -- ★ Since 2026-10-05 (the owner: "select those for texture auras, just like
+    -- I can for overlays") it is ANYTHING the Hub's texture browser hands back —
+    -- a Suite media name, an atlas, a file ID or a path — and `cfg.sheet` (the
+    -- Hub's SheetFor: cols × rows > 1) plays it as a FLIPBOOK, frame by frame,
+    -- exactly as Gloom's UI does. The stepping runs on a child frame, so a
+    -- hidden aura costs nothing.
     local custom = cfg.texture
     if type(custom) == "string" and custom:match("^%d+$") then custom = tonumber(custom) end  -- a typed/stored fileID
-    if custom and custom ~= "" then
-      f.tex:SetTexture(custom)
-      f.tex:SetTexCoord(0, 1, 0, 1)
+    local sh = cfg.sheet
+    if not (sh and sh.fileID and (sh.cols or 1) * (sh.rows or 1) > 1) then sh = nil end
+    if f.flip then f.flip:SetScript("OnUpdate", nil) end
+    if custom and custom ~= "" and sh then
+      f.tex:SetTexture(sh.fileID)
+      local cols, rows = sh.cols or 1, sh.rows or 1
+      local uL, vT = sh.uLeft or 0, sh.vTop or 0
+      local cw, rh = ((sh.uRight or 1) - uL) / cols, ((sh.vBottom or 1) - vT) / rows
+      f.tex:SetTexCoord(uL, uL + cw, vT, vT + rh)
+      local frameDur = 1 / math.max(1, sh.fps or 15)
+      local total = math.max(1, math.min(sh.frames or (cols * rows), cols * rows))
+      local elapsed, frame = 0, 0
+      f.flip = f.flip or CreateFrame("Frame", nil, f)
+      f.flip:SetScript("OnUpdate", function(_, dt)
+        elapsed = elapsed + dt
+        if elapsed < frameDur then return end
+        elapsed = elapsed - frameDur
+        frame = (frame + 1) % total
+        local col, row = frame % cols, math.floor(frame / cols)
+        f.tex:SetTexCoord(uL + col * cw, uL + (col + 1) * cw, vT + row * rh, vT + (row + 1) * rh)
+      end)
+    elseif custom and custom ~= "" then
+      -- a Suite media name, then a file ID, then an ATLAS (its file, cut to its
+      -- coordinates), else a path
+      local path = type(custom) == "string" and GloomsHub and GloomsHub.ResolveAssetPath and GloomsHub:ResolveAssetPath(custom)
+      local info = type(custom) == "string" and not path and C_Texture and C_Texture.GetAtlasInfo and C_Texture.GetAtlasInfo(custom)
+      if path then f.tex:SetTexture(path); f.tex:SetTexCoord(0, 1, 0, 1)
+      elseif info then
+        f.tex:SetTexture(info.file)
+        f.tex:SetTexCoord(info.leftTexCoord, info.rightTexCoord, info.topTexCoord, info.bottomTexCoord)
+      else
+        f.tex:SetTexture(custom)
+        f.tex:SetTexCoord(0, 1, 0, 1)
+      end
     else
       -- The display's spell as the engine resolves it (its first trigger, for an aura
       -- built in the tab — cfg.spellID is nil there, and `spellID` is the display KEY,
@@ -878,9 +1115,19 @@ function D:SavePositionFromFrame(spellID)
   local fx, fy = f:GetCenter()
   local ux, uy = UIParent:GetCenter()
   if not (fx and ux) then return end
-  cfg.point = { "CENTER", math.floor(fx - ux + 0.5), math.floor(fy - uy + 0.5) }
-  f:ClearAllPoints()
-  f:SetPoint("CENTER", UIParent, "CENTER", cfg.point[2], cfg.point[3])
+  -- the frame's centre in UIParent units (a grouped aura's frame is scaled)
+  local fk = f:GetEffectiveScale() / UIParent:GetEffectiveScale()
+  local x, y = fx * fk - ux, fy * fk - uy
+  local g = self:GroupOf(cfg)
+  if g then
+    local ox, oy = self:GroupOrigin(g)
+    local k = GroupScale(g)
+    cfg.point = { "CENTER", math.floor((x - ox) / k + 0.5), math.floor((y - oy) / k + 0.5) }
+  else
+    cfg.point = { "CENTER", math.floor(x + 0.5), math.floor(y + 0.5) }
+  end
+  self:ApplyConfig(spellID)
+  if self.RefreshGroupHandle then self:RefreshGroupHandle() end
 end
 
 -- Enable/disable mouse on all display frames (draggable while the panel is open).
@@ -890,8 +1137,10 @@ end
 function D:ApplyInteractivity()
   local sel = self.selectedID
   local haveSel = sel ~= nil and self.frames[sel] ~= nil
+  -- a GROUP selected: only its green box moves things (2026-10-05)
+  local grp = self.editGroup ~= nil
   for id, f in pairs(self.frames) do
-    f:EnableMouse((self.forced and (not haveSel or id == sel)) and true or false)
+    f:EnableMouse((self.forced and not grp and (not haveSel or id == sel)) and true or false)
   end
 end
 

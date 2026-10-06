@@ -46,6 +46,9 @@ local function Sel() return X.Selected() end
 local function Reapply() X.ReapplySelected() end
 local function Poke()
   if GA.CDM then GA.CDM:UpdateVisibilityPoll(); GA.CDM:RefreshDisplays() end
+  -- a load condition changed: the group note and the list's warnings follow
+  if P.refreshInherited then P.refreshInherited() end
+  if P.renderList then P.renderList() end
 end
 local function Relayout() if GloomsHub.RefreshWindows then GloomsHub:RefreshWindows("auras") end end
 
@@ -57,6 +60,7 @@ function P.sync()
     if r.refresh then r:refresh() end
     if r.setEnabled then r:setEnabled(on) end
   end
+  if P.refreshInherited then P.refreshInherited() end
 end
 
 -- A row for the shared list: `ctrl` is a kit control (it has refresh /
@@ -103,9 +107,56 @@ local function AuraIcon(cfg)
   return tex or (sid and C_Spell and C_Spell.GetSpellTexture and C_Spell.GetSpellTexture(sid)) or 134400
 end
 
+-- A small picture of the aura on any texture (the list, the tab, a group's
+-- members): its art however it is given — a media name, an ATLAS, a flipbook's
+-- first frame (2026-10-05), a file ID or a path — else the spell's icon.
+local function SetAuraIcon(t, cfg)
+  local tex = cfg and cfg.texture
+  if tex == "" then tex = nil end
+  local sh = cfg and cfg.sheet
+  if tex and sh and sh.fileID and (sh.cols or 1) * (sh.rows or 1) > 1 then
+    t:SetTexture(sh.fileID)
+    local uL, vT = sh.uLeft or 0, sh.vTop or 0
+    t:SetTexCoord(uL, uL + ((sh.uRight or 1) - uL) / sh.cols, vT, vT + ((sh.vBottom or 1) - vT) / sh.rows)
+    return
+  end
+  if type(tex) == "string" and not tonumber(tex) then
+    local path = GloomsHub.ResolveAssetPath and GloomsHub:ResolveAssetPath(tex)
+    local info = not path and C_Texture and C_Texture.GetAtlasInfo and C_Texture.GetAtlasInfo(tex)
+    if path then t:SetTexture(path); t:SetTexCoord(0, 1, 0, 1); return end
+    if info then
+      t:SetTexture(info.file)
+      t:SetTexCoord(info.leftTexCoord, info.rightTexCoord, info.topTexCoord, info.bottomTexCoord)
+      return
+    end
+  end
+  t:SetTexture(AuraIcon(cfg))
+  t:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+end
+
+
 local function GroupName(gid)
   local g = gid and X.Groups() and X.Groups()[gid]
   return g and (g.name or "Group") or "Ungrouped"
+end
+
+-- ★ A GROUP IS SELECTABLE (2026-10-05, the owner: "work more like overlays").
+-- Clicking its header selects it — the aura sections give way to the GROUP
+-- section (on/off, Attach To, position, scale, its load conditions, its
+-- members) and green brackets round its members drag the whole group. The lime
+-- triangle folds it. Selecting an aura clears it (Config.lua SetSelected).
+local function SelGroup()
+  local gid = C.groupSel
+  return (gid and X.Groups() and X.Groups()[gid]) and gid or nil
+end
+P.SelGroup = SelGroup
+function P.selectGroup(gid)
+  X.SetSelected(nil)
+  C.groupSel = gid
+  if GA.Displays and GA.Displays.SetEditGroup then GA.Displays:SetEditGroup(gid) end
+  X.RefreshList(); P.syncHeader()
+  if P.refreshGroupSection then P.refreshGroupSection() end
+  Relayout()
 end
 
 -- ---------------------------------------------------------------------------
@@ -237,6 +288,16 @@ local function listRow(i)
   r.hl:Hide()
   r.tri = r:CreateTexture(nil, "ARTWORK"); r.tri:SetTexture(UI.G_TRI); r.tri:SetSize(7, 6)
   r.tri:SetPoint("CENTER", r, "LEFT", 4, 0)
+  -- the triangle FOLDS (a header click selects the group, 2026-10-05)
+  r.fold = CreateFrame("Button", nil, r); r.fold:SetSize(12, LIST_ROW_H); r.fold:SetPoint("LEFT", -2, 0)
+  r.fold:SetScript("OnClick", function()
+    if r.kind == "group" then
+      local g = X.Groups() and X.Groups()[r.gid]
+      if g then g.collapsed = (not g.collapsed) or nil; X.RefreshList() end
+    elseif r.kind == "ungrouped" then
+      GA.db.ungroupedCollapsed = (not GA.db.ungroupedCollapsed) or nil; X.RefreshList()
+    end
+  end)
   r.icon = r:CreateTexture(nil, "ARTWORK"); r.icon:SetSize(12, 12); r.icon:SetPoint("LEFT", 0, 0)
   r.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
   r.name = UI.newText(r, FONT.sa, 10, COLOR.paper, "LEFT"); r.name:SetPoint("LEFT", 18, 0)
@@ -247,7 +308,7 @@ local function listRow(i)
   r.warn = CreateFrame("Button", nil, r); r.warn:SetSize(12, 12)
   local wt = r.warn:CreateTexture(nil, "ARTWORK"); wt:SetAllPoints()
   wt:SetTexture(UI.G_WARN); wt:SetTexCoord(0, 12 / 16, 0, 12 / 16); UI.tint(wt, CORAL)
-  UI.attachTip(r.warn, "Not in your Cooldown Manager", function() return r.warnText or "" end)
+  UI.attachTip(r.warn, "Check this aura", function() return r.warnText or "" end)
   -- The eye: on screen = lime, hidden = white at 40%. Selecting an aura shows it; its eye on the selected aura is for now only, and it returns to its saved eye when another is selected.
   r.eye = CreateFrame("Button", nil, r); r.eye:SetSize(14, 14); r.eye:SetPoint("RIGHT", 0, 0)
   r.eye.t = r.eye:CreateTexture(nil, "ARTWORK"); r.eye.t:SetSize(14, 8.5); r.eye.t:SetPoint("CENTER", 0, 0)
@@ -259,29 +320,36 @@ local function listRow(i)
   end)
   UI.attachTip(r.eye, "Show on screen", "Shows this aura on screen while the panel is open, so you can place it. The aura you select shows while it's selected — click its eye to hide it for now; once you select another, it goes back to its own eye. It does not change whether the aura runs in play.")
   r:SetScript("OnEnter", function(self)
-    if (self.kind == "aura" and self.id ~= Sel()) or self.kind == "add" then
+    if (self.kind == "aura" and self.id ~= Sel()) or self.kind == "add" or (self.kind == "group" and self.gid ~= SelGroup()) then
       self.hl:SetColorTexture(VIOLET.r, VIOLET.g, VIOLET.b, 0.15); self.hl:Show()
     end
   end)
-  r:SetScript("OnLeave", function(self) if not (self.kind == "aura" and self.id == Sel()) then self.hl:Hide() end end)
+  r:SetScript("OnLeave", function(self)
+    if not ((self.kind == "aura" and self.id == Sel()) or (self.kind == "group" and self.gid == SelGroup())) then self.hl:Hide() end
+  end)
   r:SetScript("OnClick", function(self, button)
     if self.kind == "group" then
       if button == "RightButton" then P.groupContext(self.gid, self); return end
-      local g = X.Groups() and X.Groups()[self.gid]
-      if g then g.collapsed = (not g.collapsed) or nil; X.RefreshList() end
+      P.selectGroup(self.gid)
     elseif self.kind == "ungrouped" then
       GA.db.ungroupedCollapsed = (not GA.db.ungroupedCollapsed) or nil; X.RefreshList()
     elseif self.kind == "aura" then
       if button == "RightButton" then X.SetSelected(self.id); P.auraContext(self); return end
       X.SetSelected(self.id)
-    elseif button == "LeftButton" and self.kind == "add" then P.newAuraMenu(self, self.gid) end
+    elseif button == "LeftButton" and self.kind == "add" then P.newAuraMenu(self, self.gid or false) end
   end)
   r:SetScript("OnDoubleClick", function(self)
     if self.kind == "aura" and self.id then X.SetSelected(self.id); C:RenameSelected() end
   end)
   r:RegisterForDrag("LeftButton")
-  r:SetScript("OnDragStart", function(self) if self.kind == "group" then P.groupDragStart(self) end end)
-  r:SetScript("OnDragStop", function(self) if self.kind == "group" then P.groupDragStop(self) end end)
+  -- a group header drags to REORDER; an aura drags INTO a group (or out to
+  -- Ungrouped), keeping its place on screen (2026-10-05)
+  r:SetScript("OnDragStart", function(self)
+    if self.kind == "group" then P.groupDragStart(self) elseif self.kind == "aura" then P.auraDragStart(self) end
+  end)
+  r:SetScript("OnDragStop", function(self)
+    if self.kind == "group" then P.groupDragStop(self) elseif P.auraDragging then P.auraDragStop() end
+  end)
   listRows[i] = r
   return r
 end
@@ -346,13 +414,14 @@ function P.renderList()
       local r = listRow(n)
       r.kind, r.id, r.gid = e.kind, e.id, e.gid
       r:ClearAllPoints(); r:SetPoint("TOPLEFT", P.listClip, "TOPLEFT", 0, -y)
-      r.tri:Hide(); r.icon:Hide(); r.warn:Hide(); r.eye:Hide(); r.hl:Hide()
+      r.tri:Hide(); r.icon:Hide(); r.warn:Hide(); r.eye:Hide(); r.hl:Hide(); r.fold:Hide()
       r.name:ClearAllPoints(); r.name:SetPoint("LEFT", 18, 0); r.name:SetWidth(0)
       r.name:SetAlpha(1); r:SetAlpha(1)
       if e.kind == "group" or e.kind == "ungrouped" then
         local g = e.gid and X.Groups()[e.gid]
         local collapsed = (e.kind == "group" and g and g.collapsed) or (e.kind == "ungrouped" and GA.db and GA.db.ungroupedCollapsed)
-        r.tri:Show(); r.tri:SetRotation(collapsed and (math.pi / 2) or 0); UI.tint(r.tri, LIME)
+        r.tri:Show(); r.tri:SetRotation(collapsed and (math.pi / 2) or 0); UI.tint(r.tri, LIME); r.fold:Show()
+        if e.kind == "group" and e.gid == SelGroup() then r.hl:SetColorTexture(VIOLET.r, VIOLET.g, VIOLET.b, 0.3); r.hl:Show() end
         UI.setFont(r.name, FONT.saB, 12)
         r.name:ClearAllPoints(); r.name:SetPoint("LEFT", 12, 0)
         local txt = (e.kind == "group") and (g and g.name or "Group") or "Ungrouped"
@@ -365,7 +434,7 @@ function P.renderList()
         if P.dragGid and e.gid == P.dragGid then r:SetAlpha(0.4) end
       elseif e.kind == "aura" then
         local cfg = DB() and DB()[e.id]
-        r.icon:Show(); r.icon:SetTexture(AuraIcon(cfg))
+        r.icon:Show(); SetAuraIcon(r.icon, cfg)
         local isSel = (e.id == selID)
         UI.setFont(r.name, FONT.sa, 10)
         r.name:SetText((cfg and cfg.label) or ("Spell " .. tostring(e.id))); r.name:SetTextColor(1, 1, 1)
@@ -373,6 +442,8 @@ function P.renderList()
         -- a disabled aura greys (Load Conditions → Disabled)
         if cfg and cfg.enabled == false then r.name:SetAlpha(0.5) end
         local warnText = cfg and C:SilentYesText(cfg)
+        local conflict = P.loadConflict(cfg)
+        if conflict then warnText = warnText and (conflict .. "\n\n" .. warnText) or conflict end
         r.warnText = warnText
         -- Cap a name only when it is too long for the row: pinning every name to its
         -- own measured width lets rounding shave the last letter (or add a "…").
@@ -407,13 +478,20 @@ end
 
 -- The type menu behind New Aura and "+ ADD NEW AURA" (the latter files the new
 -- aura straight into its group).
+-- gid nil = the selected group, if any; false = Ungrouped. A new aura in a group
+-- starts at the group's anchor (Gloom's UI's rule).
 function P.newAuraMenu(anchor, gid)
+  if gid == nil then gid = SelGroup() end
   UI.gList(anchor, { { value = "icon", label = "Icon Aura" }, { value = "texture", label = "Texture Aura" },
                      { value = "bar", label = "Bar Aura" } }, nil,
     function(uiType)
       C:CreateAura(uiType)
       local cfg = Cfg()
-      if cfg and gid then cfg.group = gid; X.RefreshList(); P.syncHeader() end
+      if cfg and gid then
+        cfg.group = gid; cfg.point = { "CENTER", 0, 0 }
+        Reapply(); X.RefreshList(); P.syncHeader()
+        if GA.CDM then GA.CDM:Discover() end
+      end
     end, { minW = 120 })
 end
 
@@ -443,7 +521,7 @@ function P.groupContext(gid, anchor)
       if GA.CDM then GA.CDM:Discover() end
       Poke(); X.RefreshList()
     elseif v == "load" then
-      P.groupLoadWindow():open(gid)
+      P.selectGroup(gid)   -- the Group section holds its load conditions (2026-10-05)
     elseif v == "delete" then
       -- Deleting CONFIRMS (CONTRACTS §4); a group's auras are never deleted with it.
       C:OpenConfirm(("Delete the group \"%s\"?  Its auras aren't deleted — they move to Ungrouped."):format(grp.name or "?"), function()
@@ -465,7 +543,9 @@ end
 function P.duplicateSelected()
   local id = Sel(); if not (id and DB() and DB()[id]) then return end
   local copy = X.DeepCopy(DB()[id]); copy.label = (copy.label or "Aura") .. " (copy)"
-  local p = copy.point or { "CENTER", 0, 0 }; copy.point = { "CENTER", (p[2] or 0) + 24, (p[3] or 0) - 24 }
+  -- exactly where the original is (the owner, 2026-10-05: the old 24 px nudge
+  -- "is moving it") — the copy sits on top of it until moved. DeepCopy keeps the
+  -- group, so a grouped copy keeps its offset too.
   local nid = X.NewDisplayID(); DB()[nid] = copy
   if GA.CDM then GA.CDM:Discover() end
   X.SetSelected(nid)
@@ -573,11 +653,12 @@ function P.groupMenu(anchor)
     if v == "__new" then
       X.OpenNameDialog("New Group", "", function(nm)
         if not nm or nm:gsub("%s", "") == "" then return end
-        local gid = X.CreateGroup(nm); if gid then cur.group = gid; X.RefreshList(); P.syncHeader() end
+        local gid = X.CreateGroup(nm); if gid then GA.Displays:SetGroup(cur, gid); Reapply(); X.RefreshList(); P.syncHeader() end
       end)
     else
-      cur.group = (v ~= "__none") and v or nil
-      X.RefreshList(); P.syncHeader()
+      GA.Displays:SetGroup(cur, (v ~= "__none") and v or nil)
+      Reapply(); X.RefreshList(); P.syncHeader()
+      if GA.CDM then GA.CDM:Discover() end; Poke()
     end
   end, { cursor = true, minW = 160 })
 end
@@ -689,6 +770,81 @@ function P.groupDragStop()
   X.RefreshList()
 end
 
+-- ---------------------------------------------------------------------------
+-- An AURA dragged onto a group (2026-10-05, Gloom's UI's list): over a group's
+-- header, an aura in it, or its "+ ADD NEW AURA" line it would join that group;
+-- over Ungrouped (or an ungrouped aura) it would leave its group. Letting go
+-- files it there, KEEPING its place on screen (Displays:SetGroup); off the
+-- list, nothing changes.
+-- ---------------------------------------------------------------------------
+local function auraDropTarget()
+  local function headOf(gid)
+    for _, h in ipairs(listRows) do
+      if h:IsShown() and ((gid and h.kind == "group" and h.gid == gid) or (not gid and h.kind == "ungrouped")) then return h end
+    end
+  end
+  for _, r in ipairs(listRows) do
+    if r:IsShown() and r.kind and r:IsMouseOver() then
+      if r.kind == "group" then return r.gid, r end
+      if r.kind == "ungrouped" then return false, r end
+      if r.kind == "aura" or r.kind == "add" then
+        local gid = r.gid
+        if r.kind == "aura" then
+          local cfg = DB() and DB()[r.id]
+          gid = cfg and cfg.group
+          if gid and not (X.Groups() and X.Groups()[gid]) then gid = nil end
+        end
+        return gid or false, headOf(gid)
+      end
+    end
+  end
+end
+
+function P.auraDragStart(row)
+  local cfg = DB() and DB()[row.id]; if not cfg then return end
+  local gh = P.auraGhost
+  if not gh then
+    gh = CreateFrame("Frame", nil, UIParent); gh:SetFrameStrata("TOOLTIP"); gh:SetSize(200, LIST_ROW_H)
+    local b = gh:CreateTexture(nil, "BACKGROUND"); b:SetAllPoints(); b:SetColorTexture(VIOLET.r, VIOLET.g, VIOLET.b, 0.5)
+    gh.text = UI.newText(gh, FONT.sa, 10, COLOR.paper, "LEFT"); gh.text:SetPoint("LEFT", 12, 0)
+    P.auraGhost = gh
+  end
+  gh:SetScale(row:GetEffectiveScale() / UIParent:GetEffectiveScale())
+  gh.text:SetText(cfg.label or "Aura")
+  P.auraDragging = { id = row.id, row = row }
+  row:SetAlpha(0.4)
+  gh:SetScript("OnUpdate", function(self)
+    local x, y = GetCursorPosition(); local sc = self:GetEffectiveScale()
+    self:ClearAllPoints(); self:SetPoint("LEFT", UIParent, "BOTTOMLEFT", x / sc + 8, y / sc)
+    local _, head = auraDropTarget()
+    if head ~= P.auraDropHead then
+      if P.auraDropHead then P.renderList() end
+      P.auraDropHead = head
+      if head then head.hl:SetColorTexture(VIOLET.r, VIOLET.g, VIOLET.b, 0.4); head.hl:Show() end
+    end
+  end)
+  gh:Show()
+end
+
+function P.auraDragStop()
+  local d = P.auraDragging; P.auraDragging = nil
+  if P.auraGhost then P.auraGhost:Hide(); P.auraGhost:SetScript("OnUpdate", nil) end
+  P.auraDropHead = nil
+  if not d then return end
+  local cfg = DB() and DB()[d.id]
+  local target = auraDropTarget()
+  local now = cfg and cfg.group
+  if now and not (X.Groups() and X.Groups()[now]) then now = nil end
+  if not cfg or target == nil or (target == false and not now) or (target and target == now) then
+    P.renderList(); return       -- dropped where it already was, or off the list
+  end
+  GA.Displays:SetGroup(cfg, target or nil)
+  if GA.Displays.frames[d.id] then GA.Displays:ApplyConfig(d.id) end
+  if GA.CDM then GA.CDM:Discover() end
+  Poke()
+  X.SetSelected(d.id)
+end
+
 local function BuildSelector(c, api)
   local clip = CreateFrame("Frame", nil, c)
   clip:SetPoint("TOPLEFT", 20, -LIST_TOP); clip:SetPoint("BOTTOMRIGHT", -20, LIST_FOOT)
@@ -725,7 +881,7 @@ local function BuildSelector(c, api)
   local newA = UI.gButton(c, "New Aura")
   newA:SetPoint("BOTTOMLEFT", 20, 20)
   newA:SetScript("OnClick", function(self) P.newAuraMenu(self, nil) end)
-  UI.attachTip(newA, "New aura", "Creates a blank aura and opens it for editing. Pick the kind: Icon, Texture or Bar.")
+  UI.attachTip(newA, "New aura", "Creates a blank aura and opens it for editing. Pick the kind: Icon, Texture or Bar. With a group selected, it goes into that group, at the group's anchor.")
   local newG = UI.gButton(c, "New Group")
   newG:SetPoint("BOTTOMRIGHT", -20, 20)
   newG:SetScript("OnClick", function()
@@ -735,7 +891,7 @@ local function BuildSelector(c, api)
       if gid then X.RefreshList() end
     end)
   end)
-  UI.attachTip(newG, "New group", "Groups hold a set of auras that load together: one load rule and one on/off switch gate every aura inside. Right-click a group's name for its settings; drag it to move it.")
+  UI.attachTip(newG, "New group", "Groups hold a set of auras that move, scale and load together. Click a group's name to select it (its settings, and green brackets on screen to drag it); the triangle folds it. Drag an aura onto a group to put it in, onto Ungrouped to take it out; drag a group's name to reorder.")
   P.renderList()
 end
 
@@ -763,14 +919,23 @@ local function BuildTab(tab)
   local hit = CreateFrame("Button", nil, tab); hit:SetHeight(16); hit:SetPoint("TOPLEFT", 46, -6)
   hit:RegisterForClicks("LeftButtonUp", "RightButtonUp")
   hit:SetScript("OnClick", function(self, button)
+    local gid = SelGroup()
+    if gid then
+      if button == "RightButton" then P.groupContext(gid, self) else P.auraSwitch(self) end
+      return
+    end
     if not Cfg() then return end
     if button == "RightButton" then P.auraContext(self) else P.auraSwitch(self) end
   end)
   UI.attachTip(hit, "The aura you're editing", "Click to switch to another aura. Right-click to rename, duplicate, move or delete this one.")
   function t:refresh()
     local cfg = Cfg()
-    if cfg then
-      icon:SetTexture(AuraIcon(cfg)); icon:Show()
+    local gid = SelGroup()
+    if gid then
+      icon:Hide(); name:SetText(GroupName(gid)); name:SetAlpha(1)
+      kind:SetText("Group")
+    elseif cfg then
+      SetAuraIcon(icon, cfg); icon:Show()
       name:SetText(cfg.label or "Aura"); name:SetAlpha(1)
       kind:SetText(TYPE_LABEL[AuraType(cfg)] or "")
     else
@@ -1051,8 +1216,25 @@ end
 -- ===========================================================================
 -- SECTION · APPEARANCE, POSITION & SIZE (the mock's Frame 530, 317 tall)
 -- ===========================================================================
+-- THE GAME'S ART AND FLIPBOOKS (2026-10-05, the owner: "select those for
+-- texture auras, just like I can for overlays"): the Hub's texture browser
+-- (GloomsHub:PickTexture — Game Art, Sheets, My Media, Favorites) beside this
+-- window; its pick comes back as the aura's texture, with the spritesheet
+-- settings (cfg.sheet, GloomsHub:SheetFor) when it is one.
+function P.browseArt()
+  local c = Cfg(); if not c then return end
+  GloomsHub:PickTexture({ tool = "auras", text = (c.texture ~= nil) and tostring(c.texture) or "", sheet = c.sheet,
+    actions = { { label = "Use This Texture", tip = "Puts this texture into the aura you're editing — with the spritesheet settings above.",
+      fn = function(t, sh)
+        local cur = Cfg(); if not cur then return end
+        cur.texture = (t ~= nil and t ~= "") and (tonumber(t) or t) or nil
+        cur.sheet = sh
+        Reapply(); P.sync(); X.RefreshList(); P.syncHeader()
+      end } } })
+end
+
 local function BuildAppearance(parent)
-  local f = Section(parent, 317)
+  local f = Section(parent, 419)
   -- What applies (the audit, 2026-09-27 — Displays.lua's two branches): a BAR
   -- draws none of the artwork settings; EFFECTS ONLY hides the artwork, so
   -- nothing drawn on it matters either. Those dim; they never hide.
@@ -1072,7 +1254,13 @@ local function BuildAppearance(parent)
       local c = Cfg(); if not c then return end
       local v = (txt or ""):match("^%s*(.-)%s*$")
       if v == "" then v = nil elseif tonumber(v) then v = tonumber(v) end
-      if v ~= c.texture then c.texture = v; Reapply(); X.RefreshList(); P.syncHeader() end
+      if v ~= c.texture then
+        c.texture = v
+        -- a flipbook follows its texture (the same grid on the new art)
+        local sh = c.sheet
+        if sh then c.sheet = v and GloomsHub:SheetFor(tostring(v), sh.cols, sh.rows, sh.frames, sh.fps) or nil end
+        Reapply(); X.RefreshList(); P.syncHeader()
+      end
     end,
     revert = function(self) self:refresh() end,
   })
@@ -1086,12 +1274,21 @@ local function BuildAppearance(parent)
   tf._label = artL
   add(tf, hasArt)
   tip(tf, "Icon/Art", "The picture the aura shows: a texture path or an icon ID, typed here or picked with Choose. Icon auras can leave it blank to show the first trigger's spell icon. Not used by bars, or with Effects Only on.")
-  choose:SetScript("OnClick", function()
+  choose:SetScript("OnClick", function(self)
     local c = Cfg(); if not c then return end
-    X.OpenTexturePicker(function(tex) c.texture = tex; Reapply(); P.sync(); X.RefreshList(); P.syncHeader() end, c.texture)
+    UI.gList(self, {
+      { value = "icons", label = "Icons & Textures…" },
+      { value = "game", label = "Game Art & Flipbooks…" },
+    }, nil, function(v)
+      local cur = Cfg(); if not cur then return end
+      if v == "game" then P.browseArt()
+      else
+        X.OpenTexturePicker(function(tex) cur.texture = tex; cur.sheet = nil; Reapply(); P.sync(); X.RefreshList(); P.syncHeader() end, cur.texture)
+      end
+    end, { minW = 170 })
   end)
   add(choose, hasArt)
-  tip(choose, "Choose art", "Browse textures and icons for this aura.")
+  tip(choose, "Choose art", "Icons & Textures: spell icons and the textures your addons share. Game Art & Flipbooks: the game's own art, its animated sheets, your Media and your Favorites — the same browser Gloom's UI uses.")
 
   -- Shape: a STENCIL cut through that texture — it draws nothing itself, and it
   -- is what an animation traces. (Most shapes crop very little off an icon; see
@@ -1137,11 +1334,11 @@ local function BuildAppearance(parent)
   add(tip(Dial(f, C1, 143, 170, { label = "Horizontal Offset", min = -2000, max = 2000, step = 1, unit = "px", dragPx = 1600,
     get = function() local c = Cfg(); return c and c.point and c.point[2] or 0 end,
     set = function(v) local c = Cfg(); if c then c.point = { "CENTER", v, (c.point and c.point[3]) or 0 }; Reapply() end end }),
-    "Horizontal offset", "Where the aura sits, left (−) or right (+) of the screen's center. You can also drag the selected aura on screen."))
+    "Horizontal offset", "Where the aura sits, left (−) or right (+) of the screen's center — or, in a group, of the group's anchor. You can also drag the selected aura on screen, or nudge it with the arrow keys while this section is open."))
   add(tip(Dial(f, C1, 184, 170, { label = "Vertical Offset", min = -2000, max = 2000, step = 1, unit = "px", dragPx = 1600,
     get = function() local c = Cfg(); return c and c.point and c.point[3] or 0 end,
     set = function(v) local c = Cfg(); if c then c.point = { "CENTER", (c.point and c.point[2]) or 0, v }; Reapply() end end }),
-    "Vertical offset", "Where the aura sits, below (−) or above (+) the screen's center. You can also drag the selected aura on screen."))
+    "Vertical offset", "Where the aura sits, below (−) or above (+) the screen's center — or, in a group, of the group's anchor. You can also drag the selected aura on screen, or nudge it with the arrow keys while this section is open."))
   -- Fixed rotation, positive = clockwise; it shares one AnimationGroup with the
   -- spin (Effects section), so the angle is where a spin starts from.
   add(tip(Dial(f, C1, 225, 170, { label = "Rotation", min = 0, max = 359, step = 1, unit = "°", dragPx = 720,
@@ -1215,6 +1412,35 @@ local function BuildAppearance(parent)
     get = function() local c = Cfg(); return (c and c.level) or 0 end,
     set = function(v) local c = Cfg(); if c then c.level = (v > 0) and v or nil; Reapply() end end }))
   tip(lv, "Level", "Fine order within the strata: higher draws in front. Auto uses the aura's own level.")
+
+  -- FLIPBOOK (2026-10-05, Gloom's UI's spritesheet settings): more than one
+  -- column or row plays the art frame by frame — left to right, then row by
+  -- row. 1 × 1 = a still picture. The texture browser fills these in for a sheet.
+  local function hasTex() local c = Cfg(); return hasArt() and c.texture ~= nil and c.texture ~= "" end
+  local function anim() local c = Cfg(); local sh = c and c.sheet; return hasTex() and sh ~= nil and (sh.cols or 1) * (sh.rows or 1) > 1 end
+  local function sheetGet(k, d) return function() local c = Cfg(); local sh = c and c.sheet; return (sh and sh[k]) or d end end
+  local function setSheet(cols, rows, frames, fps)
+    local c = Cfg(); if not (c and c.texture) then return end
+    local old = c.sheet
+    cols = cols or (old and old.cols) or 1
+    rows = rows or (old and old.rows) or 1
+    -- a new grid plays every frame of it; Frames trims the last ones off
+    if not frames and (cols ~= (old and old.cols) or rows ~= (old and old.rows)) then frames = cols * rows end
+    c.sheet = GloomsHub:SheetFor(tostring(c.texture), cols, rows, frames or (old and old.frames), fps or (old and old.fps) or 15)
+    Reapply(); P.sync()
+  end
+  add(tip(Dial(f, C1, 347, 170, { label = "Flipbook Columns", min = 1, max = 32, step = 1, dragPx = 300,
+    get = sheetGet("cols", 1), set = function(v) setSheet(v, nil) end }),
+    "Flipbook columns", "How many frames across the art. More than one column or row plays it as an animation, frame by frame. 1 × 1 = a still picture. The Game Art browser fills these in for an animated sheet."), hasTex)
+  add(tip(Dial(f, C2, 347, 170, { label = "Flipbook Rows", min = 1, max = 32, step = 1, dragPx = 300,
+    get = sheetGet("rows", 1), set = function(v) setSheet(nil, v) end }),
+    "Flipbook rows", "How many rows of frames down the art."), hasTex)
+  add(tip(Dial(f, C1, 388, 170, { label = "Frames", min = 1, max = 1024, step = 1, dragPx = 600,
+    get = sheetGet("frames", 1), set = function(v) setSheet(nil, nil, v) end }),
+    "Frames", "How many frames to play — fewer than columns × rows when the sheet's last row isn't full."), anim)
+  add(tip(Dial(f, C2, 388, 170, { label = "Speed (frames per second)", min = 1, max = 60, step = 1, dragPx = 300,
+    get = sheetGet("fps", 15), set = function(v) setSheet(nil, nil, nil, v) end }),
+    "Speed", "How fast the flipbook plays, in frames per second."), anim)
   return f
 end
 
@@ -1688,6 +1914,82 @@ local POWERS = {
 }
 local OPS = { { "ge", "at least" }, { "le", "at most" }, { "eq", "exactly" } }
 
+-- ---------------------------------------------------------------------------
+-- ★ WHAT THE GROUP ADDS (2026-10-05, the owner: a group's load conditions and
+-- an aura's can disagree, and nothing on the aura said so). An aura loads only
+-- while its group's conditions AND its own pass. So the aura's Load Conditions
+-- say what its group adds, and a CONTRADICTION — the two can never be true at
+-- once — is a coral warning there and on the aura's line in the list. Only the
+-- clear-cut pairs: In vs Out of Combat, Has vs No Target, no specialization in
+-- common, Player Power ranges that cannot meet, and a group switched off.
+-- ---------------------------------------------------------------------------
+local LOAD_SINGLES = {
+  { "casting", "While Casting" }, { "mounted", "While Mounted" }, { "vehicle", "In Vehicle" },
+  { "instance", "In Instance" }, { "encounter", "In Boss Encounter" }, { "resting", "Resting" },
+  { "stealthed", "Stealthed" }, { "group", "In a Group" }, { "raid", "In a Raid" },
+  { "warmode", "In War Mode" }, { "alive", "Alive" },
+}
+local function powerName(t) for _, pw in ipairs(POWERS) do if pw[1] == t then return pw[2] end end; return "Power" end
+local function opWord(op) for _, o in ipairs(OPS) do if o[1] == op then return o[2] end end; return "at least" end
+local function specNames(set)
+  local o = {}
+  for _, sp in ipairs(X.PlayerSpecs()) do if set[sp.id] then o[#o + 1] = sp.name end end
+  return table.concat(o, " or ")
+end
+-- the group's rule in words (nil = it limits nothing)
+function P.groupRuleWords(g)
+  local v = g and g.visibility
+  if not v then return nil end
+  local o = {}
+  if v.combat == "in" then o[#o + 1] = "In Combat" elseif v.combat == "out" then o[#o + 1] = "Out of Combat" end
+  if v.target == "has" then o[#o + 1] = "Has Target" elseif v.target == "none" then o[#o + 1] = "No Target" end
+  for _, s1 in ipairs(LOAD_SINGLES) do if v[s1[1]] then o[#o + 1] = s1[2] end end
+  if v.specs and next(v.specs) then o[#o + 1] = specNames(v.specs) end
+  if v.spellKnown then
+    local nm = C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(v.spellKnown)
+    o[#o + 1] = "knows " .. (nm or ("spell " .. v.spellKnown))
+  end
+  if v.power and v.power.type then
+    o[#o + 1] = ("%s %s %s"):format(powerName(v.power.type), opWord(v.power.op), tostring(v.power.value or 0))
+  end
+  return (#o > 0) and table.concat(o, ", ") or nil
+end
+-- a power rule as a range
+local function range(pw)
+  local n = tonumber(pw.value) or 0
+  if pw.op == "le" then return -math.huge, n elseif pw.op == "eq" then return n, n end
+  return n, math.huge
+end
+-- why this aura can never load with its group (nil = it can)
+function P.loadConflict(cfg)
+  local g = cfg and cfg.group and X.Groups() and X.Groups()[cfg.group]
+  if not g then return nil end
+  if g.enabled == false then return ("Its group \"%s\" is switched off, so it never loads."):format(g.name or "Group") end
+  local gv, av = g.visibility, cfg.visibility
+  if not (gv and av) then return nil end
+  local why
+  if gv.combat and av.combat and gv.combat ~= av.combat then
+    why = (av.combat == "in") and "this aura loads only In Combat, its group only Out of Combat"
+      or "this aura loads only Out of Combat, its group only In Combat"
+  elseif gv.target and av.target and gv.target ~= av.target then
+    why = (av.target == "has") and "this aura needs a target, its group needs no target"
+      or "this aura needs no target, its group needs a target"
+  elseif gv.specs and av.specs and next(gv.specs) and next(av.specs) then
+    local common = false
+    for id in pairs(av.specs) do if gv.specs[id] then common = true end end
+    if not common then why = ("this aura loads only for %s, its group only for %s"):format(specNames(av.specs), specNames(gv.specs)) end
+  end
+  if not why and gv.power and av.power and gv.power.type and gv.power.type == av.power.type then
+    local alo, ahi = range(av.power)
+    local glo, ghi = range(gv.power)
+    if math.max(alo, glo) > math.min(ahi, ghi) then
+      why = ("its %s can't be %s %s and %s %s at once"):format(powerName(av.power.type),
+        opWord(av.power.op), tostring(av.power.value or 0), opWord(gv.power.op), tostring(gv.power.value or 0))
+    end
+  end
+  return why and ("Never loads: " .. why .. ".") or nil
+end
+
 function P.buildLoad(p, o)
   local sink, target, noun = o.sink, o.target, o.noun or "Aura"
   local function put(ctrl, gate)
@@ -1858,7 +2160,128 @@ end
 local function BuildLoad(parent)
   local f = Section(parent, 395)
   local h = P.buildLoad(f, { sink = rows, target = Cfg, noun = "Aura" })
+  -- what its GROUP adds, and any contradiction (2026-10-05)
+  local note = UI.gLabel(f, "", 10)
+  note:SetPoint("TOPLEFT", 0, -(h + 14)); note:SetWidth(360); note:SetWordWrap(true)
+  function P.refreshInherited()
+    local cfg = Cfg()
+    local g = cfg and cfg.group and X.Groups() and X.Groups()[cfg.group]
+    local conflict = P.loadConflict(cfg)
+    local words = g and P.groupRuleWords(g)
+    local text
+    if conflict then
+      text = conflict .. (words and ("  Its group \"" .. (g.name or "Group") .. "\" loads only: " .. words .. ".") or "")
+      note:SetTextColor(CORAL.r, CORAL.g, CORAL.b); note:SetAlpha(1)
+    elseif words then
+      text = ("Also limited by its group \"%s\": %s. Both have to be true."):format(g.name or "Group", words)
+      note:SetTextColor(LIME.r, LIME.g, LIME.b); note:SetAlpha(1)
+    end
+    note:SetText(text or ""); note:SetShown(text ~= nil)
+    local want = h + (text and (14 + math.ceil(note:GetStringHeight())) or 0)
+    if math.abs((f:GetHeight() or 0) - want) > 0.5 then f:SetHeight(want); Relayout() end
+  end
   f:SetHeight(h)
+  P.refreshInherited()
+  return f
+end
+
+-- ===========================================================================
+-- SECTION · GROUP (2026-10-05, the owner: groups like Gloom's UI's) — shown in
+-- place of the aura sections while a GROUP is selected. Not mocked: Gloom's
+-- UI's Group section in this window's grid. Attach To | Scale; the anchor's
+-- Horizontal | Vertical Position; the group's load conditions (the same builder
+-- as an aura's — its first switch is the group's on/off); the members (click
+-- one to select it).
+-- ===========================================================================
+if GA.Displays and GA.Displays.OnGroupMoved then
+  GA.Displays:OnGroupMoved(function(live)
+    for _, d in ipairs(P.groupDials or {}) do if d.refresh then d:refresh() end end
+    if not live then P.sync() end
+  end)
+end
+local function BuildGroupSection(p)
+  local f = Section(p, 400)
+  local gsink = {}
+  local function grp() local gid = SelGroup(); return gid and X.Groups()[gid] end
+  local function gput(ctrl)
+    gsink[#gsink + 1] = { refresh = function() if ctrl.refresh then ctrl:refresh() end end,
+      setEnabled = function(_, on) if ctrl.setEnabled then ctrl:setEnabled(on) end; if ctrl._label then ctrl._label:SetAlpha(on and 1 or UI.G_DIM) end end }
+    return ctrl
+  end
+  local function regroup()
+    local gid = SelGroup(); if gid and GA.Displays then GA.Displays:ApplyGroup(gid) end
+  end
+  gput(tip(Drop(f, C1, 0, 170, "Attach To",
+    function()
+      local o = { { "__screen", "Screen" } }
+      for _, a in ipairs(GloomsHub.Anchors and GloomsHub:Anchors() or {}) do o[#o + 1] = { a.id, a.label } end
+      return o
+    end,
+    function() local g = grp(); return (g and g.attach) or "__screen" end,
+    function(v)
+      local g = grp(); if not g then return end
+      GA.Displays:SetAttach(g, (v ~= "__screen") and v or nil)
+      regroup(); P.refreshGroupSection()
+    end), "Attach to", "Screen: the group's position is measured from the middle of the screen. A unit frame: from that frame's center, and the group moves with the frame — drag the frame in Unit Frames and everything here follows."))
+  gput(tip(Dial(f, C2, 0, 170, { label = "Scale", min = 10, max = 400, step = 1, unit = "%", dragPx = 800,
+    get = function() local g = grp(); return math.floor(((g and g.scale) or 1) * 100 + 0.5) end,
+    set = function(v) local g = grp(); if not g then return end; g.scale = (v ~= 100) and (v / 100) or nil; regroup() end }),
+    "Scale", "Makes every aura in the group bigger or smaller together — their sizes and the spaces between them — around the group's anchor. Each keeps its own size; this multiplies it."))
+  local gx = gput(tip(Dial(f, C1, 41, 170, { fine = true, label = "Horizontal Position", min = -2000, max = 2000, step = 1, unit = "px", dragPx = 1600,
+    get = function() local g = grp(); return (g and g.x) or 0 end,
+    set = function(v) local g = grp(); if g then g.x = v; regroup() end end }),
+    "The group's anchor", "Moves every aura in the group together — from the middle of the screen, or from the attached frame's center. Each aura's own position is measured from here. Drag the green brackets on screen, or nudge with the arrow keys (Shift: 10) while this section is open."))
+  local gy = gput(tip(Dial(f, C2, 41, 170, { fine = true, label = "Vertical Position", min = -2000, max = 2000, step = 1, unit = "px", dragPx = 1600,
+    get = function() local g = grp(); return (g and g.y) or 0 end,
+    set = function(v) local g = grp(); if g then g.y = v; regroup() end end }),
+    "The group's anchor", "Moves every aura in the group together, up (+) or down (−)."))
+  local lhead = UI.gLabel(f, "Group Load Conditions", 12, LILAC); lhead:SetPoint("TOPLEFT", 0, -92)
+  local body = CreateFrame("Frame", nil, f); body:SetPoint("TOPLEFT", 0, -114); body:SetSize(360, 400)
+  local lh = P.buildLoad(body, { sink = gsink, target = grp, noun = "Group" })
+  body:SetHeight(lh)
+  local mtop = 114 + lh + 24
+  local mhead = UI.gLabel(f, "Members", 12, LILAC); mhead:SetPoint("TOPLEFT", 0, -mtop)
+  local empty = UI.gLabel(f, "No auras in this group yet. Drag one onto the group in the list, or click New Aura with this group selected.", 10)
+  empty:SetPoint("TOPLEFT", 0, -(mtop + 20)); empty:SetWidth(360); empty:SetWordWrap(true); empty:SetAlpha(0.6)
+  local mrows = {}
+  local function memberRow(i)
+    local r = mrows[i]
+    if r then return r end
+    r = CreateFrame("Button", nil, f); r:SetSize(360, LIST_ROW_H)
+    r.icon = r:CreateTexture(nil, "ARTWORK"); r.icon:SetSize(12, 12); r.icon:SetPoint("LEFT", 0, 0)
+    r.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+    r.name = UI.newText(r, FONT.sa, 10, COLOR.paper, "LEFT"); r.name:SetPoint("LEFT", 18, 0)
+    r.hl = r:CreateTexture(nil, "BACKGROUND"); r.hl:SetPoint("TOPLEFT", -4, 1); r.hl:SetPoint("BOTTOMRIGHT", 4, -1)
+    r.hl:SetColorTexture(VIOLET.r, VIOLET.g, VIOLET.b, 0.15); r.hl:Hide()
+    r:SetScript("OnEnter", function(self) self.hl:Show() end)
+    r:SetScript("OnLeave", function(self) self.hl:Hide() end)
+    r:SetScript("OnClick", function(self) if self.id then X.SetSelected(self.id) end end)
+    UI.attachTip(r, "Member", "Click to select it.")
+    mrows[i] = r
+    return r
+  end
+  function P.refreshGroupSection()
+    local g = grp()
+    local on = g ~= nil
+    for _, r in ipairs(gsink) do r:refresh(); r:setEnabled(on) end
+    lhead:SetAlpha(on and 1 or UI.G_DIM); mhead:SetAlpha(on and 1 or UI.G_DIM)
+    local ids = on and X.AurasInGroup(SelGroup()) or {}
+    local rtop = mtop + 20
+    for i, id in ipairs(ids) do
+      local cfg = DB()[id]
+      local r = memberRow(i)
+      r.id = id
+      SetAuraIcon(r.icon, cfg)
+      r.name:SetText((cfg and cfg.label) or "Aura")
+      r:ClearAllPoints(); r:SetPoint("TOPLEFT", 0, -(rtop + (i - 1) * LIST_ROW_H)); r:Show()
+    end
+    for i = #ids + 1, #mrows do mrows[i]:Hide(); mrows[i].id = nil end
+    empty:SetShown(#ids == 0)
+    local h = rtop + ((#ids > 0) and (#ids * LIST_ROW_H) or math.ceil(empty:GetStringHeight())) + 10
+    if math.abs((f:GetHeight() or 0) - h) > 0.5 then f:SetHeight(h); Relayout() end
+  end
+  P.groupDials = { gx, gy }
+  P.refreshGroupSection()
   return f
 end
 
@@ -1926,9 +2349,9 @@ function C:RefreshGroupPane()
   for _, r in ipairs(C._grows or {}) do r:refresh(); r:setEnabled(true) end
   P.syncHeader()
 end
--- Anything that still asks to SELECT a group gets its load conditions instead.
+-- Selecting a group (2026-10-05: groups are selectable again — Gloom's UI's way).
 function C:SelectGroup(gid)
-  if gid and X.Groups() and X.Groups()[gid] then P.groupLoadWindow():open(gid) end
+  if gid and X.Groups() and X.Groups()[gid] then P.selectGroup(gid) end
 end
 -- C:OnProfileSwitched re-syncs "Hide Blizzard CDM" this way (it lives in Global
 -- Settings now).
@@ -1983,16 +2406,36 @@ GloomsHub:RegisterTab{
   tab      = { w = 340, build = BuildTab },
   sections = {
     { id = "triggers",   title = "Aura Triggers",               build = BuildTriggers, footer = BuildTriggersFooter,
-      onShow = function() P.renderTriggers() end },
-    { id = "appearance", title = "Appearance, Position & Size", build = Synced(BuildAppearance), onShow = function() P.sync() end },
+      onShow = function() P.renderTriggers() end, hidden = function() return SelGroup() ~= nil end },
+    { id = "appearance", title = "Appearance, Position & Size", build = Synced(BuildAppearance), onShow = function() P.sync() end,
+      hidden = function() return SelGroup() ~= nil end },
     -- shut on anything but a bar aura: everything in it is a bar's (the owner, 2026-09-27)
     { id = "bar",        title = "Bar Fill & Readouts",         build = Synced(BuildBar), onShow = function() P.sync() end,
-      locked = function() local c = Cfg(); return not (c and c.kind == "bar") end },
-    { id = "text",       title = "Text",                        build = Synced(BuildText), onShow = function() P.sync() end },
+      locked = function() local c = Cfg(); return not (c and c.kind == "bar") end, hidden = function() return SelGroup() ~= nil end },
+    { id = "text",       title = "Text",                        build = Synced(BuildText), onShow = function() P.sync() end,
+      hidden = function() return SelGroup() ~= nil end },
     { id = "effects",    title = "Effects, Motion & Sound",     build = Synced(BuildEffects),
-      onShow = function() P.sync(); if P.layoutEffects then P.layoutEffects() end end },
-    { id = "load",       title = "Aura Load Conditions",        build = Synced(BuildLoad), onShow = function() P.sync() end },
+      onShow = function() P.sync(); if P.layoutEffects then P.layoutEffects() end end, hidden = function() return SelGroup() ~= nil end },
+    { id = "load",       title = "Aura Load Conditions",        build = Synced(BuildLoad), onShow = function() P.sync() end,
+      hidden = function() return SelGroup() ~= nil end },
+    -- a GROUP selected (2026-10-05): its own section in place of the aura's
+    { id = "group",      title = "Group",                       build = BuildGroupSection,
+      onShow = function() if P.refreshGroupSection then P.refreshGroupSection() end end,
+      hidden = function() return SelGroup() == nil end },
   },
+  -- ARROW KEYS (the Hub's Undo.lua): the selected group while its section is
+  -- open; the selected aura while Appearance, Position & Size is
+  nudge    = function(dx, dy, isOpen)
+    local gid = SelGroup()
+    if gid and isOpen("group") then
+      GA.Displays:NudgeGroup(gid, dx, dy)
+      if P.refreshGroupSection then P.refreshGroupSection() end
+      return true
+    end
+    local id = Sel()
+    if id and isOpen("appearance") then GA.Displays:NudgeAura(id, dx, dy); P.sync(); return true end
+    return false
+  end,
   -- HIDE BLIZZARD CDM — a PROFILE setting, in Global Settings. Drives the
   -- viewer's alpha only, never Hide(), so GA's mirror keeps working.
   globals  = {
@@ -2010,6 +2453,8 @@ GloomsHub:RegisterTab{
       if not GA.db then return end
       GloomsHub:UndoPatch(GA.db, snap)
       if GA.RefreshForProfile then GA.RefreshForProfile() end
+      if GA.Displays and GA.Displays.RefreshGroupHandle then GA.Displays:RefreshGroupHandle() end
+      if P.refreshGroupSection then P.refreshGroupSection() end
     end,
     token    = function() return GA:ActiveProfileName() end,
   },
@@ -2021,8 +2466,9 @@ GloomsHub:RegisterTab{
   end,
   onClose  = function()
     X.CloseSubWindows()   -- a docked picker must not linger
+    if GloomsHub.ClosePicker then GloomsHub:ClosePicker() end   -- the texture browser too
     if P.groupLoad then P.groupLoad:Hide() end
-    if GA.Displays then GA.Displays.forced = false; GA.Displays:SetSelectedDisplay(nil) end
+    if GA.Displays then GA.Displays.forced = false; GA.Displays:SetEditGroup(nil); GA.Displays:SetSelectedDisplay(nil) end
     if GA.CDM and GA.CDM.Discover then GA.CDM:Discover() end
   end,
 }
