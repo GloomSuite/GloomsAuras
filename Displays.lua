@@ -43,6 +43,71 @@ function D:Config(spellID)
 end
 
 -- --------------------------------------------------------------------------
+-- ★ COLOR CHANGE (2026-10-06, the owner: "change tint color at 6+ combo points"
+-- — one aura, not a duplicate per color). `cfg.colorChange = { power = <power
+-- type>, at = N, color = {r,g,b} }`: at N or more of that resource the art
+-- wears `color`, below it its own Recolor. Player power reads PLAIN (FINDINGS'
+-- player-power entry, TESTED 2026-10-05); a secret read keeps the own color.
+-- Re-tinted on every power change — a vertex colour, nothing more.
+-- --------------------------------------------------------------------------
+-- …or a STATE (2026-10-06, the owner): `cc.state` = "combat" | "nocombat" |
+-- "target" | "casting" | "stealth" — all plain to read, in combat too. One
+-- condition, one color (the owner: multi-rule "too complex for a color change").
+local inCombat = false
+local function StateOn(state)
+  if state == "combat" then return inCombat or InCombatLockdown() end
+  if state == "nocombat" then return not (inCombat or InCombatLockdown()) end
+  if state == "target" then return UnitExists("target") end
+  if state == "casting" then return (UnitCastingInfo("player") or UnitChannelInfo("player")) ~= nil end
+  if state == "stealth" then return IsStealthed() and true or false end
+  return false
+end
+function D:TintFor(cfg)
+  local cc = cfg and cfg.colorChange
+  if cc and cc.color then
+    if cc.state then
+      if StateOn(cc.state) then return cc.color end
+    elseif cc.power ~= nil then
+      local cur = UnitPower("player", cc.power)
+      if not (issecretvalue and issecretvalue(cur)) and type(cur) == "number" and cur >= (tonumber(cc.at) or 1) then
+        return cc.color
+      end
+    end
+  end
+  return cfg and cfg.color
+end
+function D:RefreshTints()
+  local db = DB(); if not db then return end
+  for id, f in pairs(self.frames) do
+    local cfg = db[id]
+    if cfg and cfg.colorChange and cfg.kind ~= "bar" and f.tex then
+      local c = self:TintFor(cfg)
+      if c then f.tex:SetVertexColor(c[1] or 1, c[2] or 1, c[3] or 1) else f.tex:SetVertexColor(1, 1, 1) end
+    end
+  end
+end
+do
+  local tintEv = CreateFrame("Frame")
+  tintEv:RegisterUnitEvent("UNIT_POWER_UPDATE", "player")
+  tintEv:RegisterUnitEvent("UNIT_POWER_FREQUENT", "player")
+  tintEv:RegisterUnitEvent("UNIT_MAXPOWER", "player")
+  tintEv:RegisterEvent("PLAYER_ENTERING_WORLD")
+  -- the states: combat edges (InCombatLockdown can still read the old state
+  -- inside these, so the edge itself is remembered), target, casting, stealth
+  tintEv:RegisterEvent("PLAYER_REGEN_DISABLED"); tintEv:RegisterEvent("PLAYER_REGEN_ENABLED")
+  tintEv:RegisterEvent("PLAYER_TARGET_CHANGED"); tintEv:RegisterEvent("UPDATE_STEALTH")
+  for _, e in ipairs({ "UNIT_SPELLCAST_START", "UNIT_SPELLCAST_STOP", "UNIT_SPELLCAST_CHANNEL_START",
+                       "UNIT_SPELLCAST_CHANNEL_STOP", "UNIT_SPELLCAST_INTERRUPTED", "UNIT_SPELLCAST_FAILED" }) do
+    tintEv:RegisterUnitEvent(e, "player")
+  end
+  tintEv:SetScript("OnEvent", function(_, event)
+    if event == "PLAYER_REGEN_DISABLED" then inCombat = true
+    elseif event == "PLAYER_REGEN_ENABLED" then inCombat = false end
+    D:RefreshTints()
+  end)
+end
+
+-- --------------------------------------------------------------------------
 -- ★ GROUPS AS ANCHORS (2026-10-05, the owner: "work more like overlays" — Gloom's
 -- UI's groups, GloomsOverlays.lua). A group has a POSITION: `g.x / g.y` from the
 -- screen's centre, or from the centre of the frame it is ATTACHED to (`g.attach`,
@@ -205,6 +270,88 @@ function D:RefreshGroupHandle()
   h:SetPoint("CENTER", rel, "CENTER", (l + r) / 2, (b + t) / 2)
   h:Show()
 end
+-- ★ MULTI-SELECT (2026-10-06, the owner: "position some of the individual
+-- pieces in concert within the group"). Shift-click in the list builds
+-- `D.multi` (display ids); with two or more, lime brackets round all of them
+-- move them TOGETHER — each by the same screen distance, in its own group's
+-- offset units (÷ its group's scale). The settings dim meanwhile (the owner:
+-- "fine if it disables settings"). Moved from the saved numbers, like the group.
+local multiHandle
+local function MultiIDs()
+  local out, db = {}, DB()
+  for _, id in ipairs(D.multi or {}) do if db and db[id] then out[#out + 1] = id end end
+  return out
+end
+function D:RefreshMultiHandle()
+  local ids = self.forced and MultiIDs() or {}
+  if #ids < 2 then
+    if multiHandle and not multiHandle.moving then multiHandle:Hide() end
+    return
+  end
+  if not multiHandle then
+    local h = CreateFrame("Frame", nil, UIParent)
+    h:SetFrameStrata("HIGH"); h:SetFrameLevel(1001)
+    h:EnableMouse(true); h:Hide()
+    if GloomsHub and GloomsHub.UI and GloomsHub.UI.gBrackets then GloomsHub.UI.gBrackets(h, 0.44, 0.93, 0.25, 0.9) end
+    local function finish(self)
+      self:SetScript("OnUpdate", nil)
+      if not self.moving then return end
+      self.moving = false
+      for _, fn in ipairs(moveListeners) do fn() end
+      D:RefreshMultiHandle()
+    end
+    h:SetScript("OnMouseDown", function(self, button)
+      if button ~= "LeftButton" then return end
+      local cx, cy = Cursor()
+      local db = DB()
+      local start = {}
+      for _, id in ipairs(MultiIDs()) do
+        local p = db[id].point or { "CENTER", 0, 0 }
+        start[id] = { p[2] or 0, p[3] or 0, GroupScale(D:GroupOf(db[id])) }
+      end
+      self.moving = true
+      self:SetScript("OnUpdate", function(me)
+        if not IsMouseButtonDown("LeftButton") then finish(me); return end
+        local x, y = Cursor()
+        for id, st in pairs(start) do
+          local cfg = db[id]
+          if cfg then
+            cfg.point = { "CENTER", math.floor(st[1] + (x - cx) / st[3] + 0.5), math.floor(st[2] + (y - cy) / st[3] + 0.5) }
+            if D.frames[id] then D:ApplyConfig(id) end
+          end
+        end
+        D:RefreshMultiHandle(); D:RefreshGroupHandle()
+        for _, fn in ipairs(moveListeners) do fn(true) end
+      end)
+    end)
+    h:SetScript("OnMouseUp", function(self) finish(self) end)
+    multiHandle = h
+  end
+  local db = DB()
+  local l, r, b, t
+  for _, id in ipairs(ids) do
+    local x, y = self:Pos(db[id])
+    local w, hh = self:BoxSize(db[id])
+    l = math.min(l or math.huge, x - w / 2); r = math.max(r or -math.huge, x + w / 2)
+    b = math.min(b or math.huge, y - hh / 2); t = math.max(t or -math.huge, y + hh / 2)
+  end
+  multiHandle:SetSize(r - l + 8, t - b + 8)
+  multiHandle:ClearAllPoints()
+  multiHandle:SetPoint("CENTER", UIParent, "CENTER", (l + r) / 2, (b + t) / 2)
+  multiHandle:Show()
+end
+-- the list's multi-selection (nil / fewer than 2 = none)
+function D:SetMulti(ids)
+  self.multi = (ids and #ids >= 2) and ids or nil
+  self:ApplyInteractivity()
+  self:RefreshForced()
+  self:RefreshMultiHandle()
+end
+function D:NudgeMulti(dx, dy)
+  for _, id in ipairs(MultiIDs()) do self:NudgeAura(id, dx, dy) end
+  self:RefreshMultiHandle()
+end
+
 -- The windows call this when a group is selected (nil: none, or closed).
 function D:SetEditGroup(gid)
   self.editGroup = gid
@@ -959,17 +1106,20 @@ function D:ApplyConfig(spellID)
       local uL, vT = sh.uLeft or 0, sh.vTop or 0
       local cw, rh = ((sh.uRight or 1) - uL) / cols, ((sh.vBottom or 1) - vT) / rows
       f.tex:SetTexCoord(uL, uL + cw, vT, vT + rh)
-      local frameDur = 1 / math.max(1, sh.fps or 15)
-      local total = math.max(1, math.min(sh.frames or (cols * rows), cols * rows))
-      local elapsed, frame = 0, 0
+      -- which frame: the Hub's ONE timing (Forward / Reverse / eased Ping-Pong,
+      -- GloomsHub:SheetFrame — 2026-10-06), so every tool plays alike
+      local elapsed, shown = 0, -1
+      local function show(frame)
+        if frame == shown then return end
+        shown = frame
+        local col, row = frame % cols, math.floor(frame / cols)
+        f.tex:SetTexCoord(uL + col * cw, uL + (col + 1) * cw, vT + row * rh, vT + (row + 1) * rh)
+      end
+      show(GloomsHub:SheetFrame(sh, 0))
       f.flip = f.flip or CreateFrame("Frame", nil, f)
       f.flip:SetScript("OnUpdate", function(_, dt)
         elapsed = elapsed + dt
-        if elapsed < frameDur then return end
-        elapsed = elapsed - frameDur
-        frame = (frame + 1) % total
-        local col, row = frame % cols, math.floor(frame / cols)
-        f.tex:SetTexCoord(uL + col * cw, uL + (col + 1) * cw, vT + row * rh, vT + (row + 1) * rh)
+        show(GloomsHub:SheetFrame(sh, elapsed))
       end)
     elseif custom and custom ~= "" then
       -- a Suite media name, then a file ID, then an ATLAS (its file, cut to its
@@ -1011,8 +1161,9 @@ function D:ApplyConfig(spellID)
     -- Recolour / blend / desaturate — pure rendering, no combat data involved.
     f.tex:SetBlendMode((cfg.blend and cfg.blend ~= "" and cfg.blend) or "BLEND")
     f.tex:SetDesaturated(cfg.desaturate and true or false)
-    if cfg.color then
-      f.tex:SetVertexColor(cfg.color[1] or 1, cfg.color[2] or 1, cfg.color[3] or 1)
+    local c = self:TintFor(cfg)
+    if c then
+      f.tex:SetVertexColor(c[1] or 1, c[2] or 1, c[3] or 1)
     else
       f.tex:SetVertexColor(1, 1, 1)
     end
@@ -1138,7 +1289,7 @@ function D:ApplyInteractivity()
   local sel = self.selectedID
   local haveSel = sel ~= nil and self.frames[sel] ~= nil
   -- a GROUP selected: only its green box moves things (2026-10-05)
-  local grp = self.editGroup ~= nil
+  local grp = self.editGroup ~= nil or self.multi ~= nil
   for id, f in pairs(self.frames) do
     f:EnableMouse((self.forced and not grp and (not haveSel or id == sel)) and true or false)
   end
@@ -1167,6 +1318,7 @@ end
 -- unaffected, and cfg.preview has nothing to do with whether the aura runs.
 function D:EyeOn(id)
   if id == nil then return false end
+  if self.multi then for _, m in ipairs(self.multi) do if m == id then return true end end end
   if id == self.selectedID then return self.selShow ~= false end
   local db = DB(); local cfg = db and db[id]
   return (cfg and cfg.preview) and true or false

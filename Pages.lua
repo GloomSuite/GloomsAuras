@@ -150,6 +150,31 @@ local function SelGroup()
   return (gid and X.Groups() and X.Groups()[gid]) and gid or nil
 end
 P.SelGroup = SelGroup
+
+-- ★ MULTI-SELECT (2026-10-06): shift-click in the list builds a set of auras;
+-- two or more move together (lime brackets on screen, the arrow keys) and drag
+-- into a group together. The settings dim meanwhile. A plain click ends it.
+local function Multi() return (GA.Displays and GA.Displays.multi) or nil end
+local function InMulti(id)
+  for _, m in ipairs(Multi() or {}) do if m == id then return true end end
+  return false
+end
+P.Multi = Multi
+function P.toggleMulti(id)
+  local list = {}
+  for _, m in ipairs(Multi() or {}) do list[#list + 1] = m end
+  if #list == 0 and Sel() then list[1] = Sel() end    -- the aura being edited starts the set
+  local found
+  for i, m in ipairs(list) do if m == id then table.remove(list, i); found = true; break end end
+  if not found then list[#list + 1] = id end
+  if #list >= 2 then
+    X.SetSelected(nil)                                -- clears a group and any old set first
+    GA.Displays:SetMulti(list)
+    X.RefreshList(); P.syncHeader(); P.sync(); Relayout()
+  else
+    X.SetSelected(list[1])                            -- back to editing one
+  end
+end
 function P.selectGroup(gid)
   X.SetSelected(nil)
   C.groupSel = gid
@@ -320,12 +345,12 @@ local function listRow(i)
   end)
   UI.attachTip(r.eye, "Show on screen", "Shows this aura on screen while the panel is open, so you can place it. The aura you select shows while it's selected — click its eye to hide it for now; once you select another, it goes back to its own eye. It does not change whether the aura runs in play.")
   r:SetScript("OnEnter", function(self)
-    if (self.kind == "aura" and self.id ~= Sel()) or self.kind == "add" or (self.kind == "group" and self.gid ~= SelGroup()) then
+    if (self.kind == "aura" and self.id ~= Sel() and not InMulti(self.id)) or self.kind == "add" or (self.kind == "group" and self.gid ~= SelGroup()) then
       self.hl:SetColorTexture(VIOLET.r, VIOLET.g, VIOLET.b, 0.15); self.hl:Show()
     end
   end)
   r:SetScript("OnLeave", function(self)
-    if not ((self.kind == "aura" and self.id == Sel()) or (self.kind == "group" and self.gid == SelGroup())) then self.hl:Hide() end
+    if not ((self.kind == "aura" and (self.id == Sel() or InMulti(self.id))) or (self.kind == "group" and self.gid == SelGroup())) then self.hl:Hide() end
   end)
   r:SetScript("OnClick", function(self, button)
     if self.kind == "group" then
@@ -334,6 +359,7 @@ local function listRow(i)
     elseif self.kind == "ungrouped" then
       GA.db.ungroupedCollapsed = (not GA.db.ungroupedCollapsed) or nil; X.RefreshList()
     elseif self.kind == "aura" then
+      if button == "LeftButton" and IsShiftKeyDown() then P.toggleMulti(self.id); return end
       if button == "RightButton" then X.SetSelected(self.id); P.auraContext(self); return end
       X.SetSelected(self.id)
     elseif button == "LeftButton" and self.kind == "add" then P.newAuraMenu(self, self.gid or false) end
@@ -435,7 +461,7 @@ function P.renderList()
       elseif e.kind == "aura" then
         local cfg = DB() and DB()[e.id]
         r.icon:Show(); SetAuraIcon(r.icon, cfg)
-        local isSel = (e.id == selID)
+        local isSel = (e.id == selID) or InMulti(e.id)
         UI.setFont(r.name, FONT.sa, 10)
         r.name:SetText((cfg and cfg.label) or ("Spell " .. tostring(e.id))); r.name:SetTextColor(1, 1, 1)
         if isSel then r.hl:SetColorTexture(VIOLET.r, VIOLET.g, VIOLET.b, 0.3); r.hl:Show() end
@@ -789,12 +815,16 @@ local function auraDropTarget()
       if r.kind == "ungrouped" then return false, r end
       if r.kind == "aura" or r.kind == "add" then
         local gid = r.gid
+        local over, before
         if r.kind == "aura" then
           local cfg = DB() and DB()[r.id]
           gid = cfg and cfg.group
           if gid and not (X.Groups() and X.Groups()[gid]) then gid = nil end
+          -- REORDER (2026-10-06): which half of the row the cursor is in
+          local _, cy = GetCursorPosition(); cy = cy / r:GetEffectiveScale()
+          over, before = r, cy > (((r:GetTop() or 0) + (r:GetBottom() or 0)) / 2)
         end
-        return gid or false, headOf(gid)
+        return gid or false, headOf(gid), over, before
       end
     end
   end
@@ -810,18 +840,31 @@ function P.auraDragStart(row)
     P.auraGhost = gh
   end
   gh:SetScale(row:GetEffectiveScale() / UIParent:GetEffectiveScale())
-  gh.text:SetText(cfg.label or "Aura")
+  local n = InMulti(row.id) and #Multi() or 1
+  gh.text:SetText(n > 1 and (n .. " auras") or (cfg.label or "Aura"))
   P.auraDragging = { id = row.id, row = row }
   row:SetAlpha(0.4)
   gh:SetScript("OnUpdate", function(self)
     local x, y = GetCursorPosition(); local sc = self:GetEffectiveScale()
     self:ClearAllPoints(); self:SetPoint("LEFT", UIParent, "BOTTOMLEFT", x / sc + 8, y / sc)
-    local _, head = auraDropTarget()
+    local _, head, over, before = auraDropTarget()
     if head ~= P.auraDropHead then
       if P.auraDropHead then P.renderList() end
       P.auraDropHead = head
       if head then head.hl:SetColorTexture(VIOLET.r, VIOLET.g, VIOLET.b, 0.4); head.hl:Show() end
     end
+    -- the line where it will land, between two auras (2026-10-06)
+    if not P.auraLine then
+      P.auraLine = P.listClip:CreateTexture(nil, "OVERLAY"); P.auraLine:SetHeight(2)
+      P.auraLine:SetColorTexture(LILAC.r, LILAC.g, LILAC.b, 1)
+    end
+    local line = P.auraLine
+    line:ClearAllPoints()
+    if over then
+      if before then line:SetPoint("BOTTOMLEFT", over, "TOPLEFT", 0, 0); line:SetPoint("BOTTOMRIGHT", over, "TOPRIGHT", 0, 0)
+      else line:SetPoint("TOPLEFT", over, "BOTTOMLEFT", 0, 0); line:SetPoint("TOPRIGHT", over, "BOTTOMRIGHT", 0, 0) end
+      line:Show()
+    else line:Hide() end
   end)
   gh:Show()
 end
@@ -830,19 +873,47 @@ function P.auraDragStop()
   local d = P.auraDragging; P.auraDragging = nil
   if P.auraGhost then P.auraGhost:Hide(); P.auraGhost:SetScript("OnUpdate", nil) end
   P.auraDropHead = nil
+  if P.auraLine then P.auraLine:Hide() end
   if not d then return end
   local cfg = DB() and DB()[d.id]
-  local target = auraDropTarget()
+  local target, _, over, before = auraDropTarget()
   local now = cfg and cfg.group
   if now and not (X.Groups() and X.Groups()[now]) then now = nil end
-  if not cfg or target == nil or (target == false and not now) or (target and target == now) then
+  local multiDrag = InMulti(d.id)
+  local overSelf = over and (over.id == d.id or (multiDrag and InMulti(over.id)))
+  if not cfg or target == nil or overSelf
+     or (not multiDrag and not over and ((target == false and not now) or (target and target == now))) then
     P.renderList(); return       -- dropped where it already was, or off the list
   end
-  GA.Displays:SetGroup(cfg, target or nil)
-  if GA.Displays.frames[d.id] then GA.Displays:ApplyConfig(d.id) end
+  -- a row in the multi-selection carries the WHOLE set (2026-10-06)
+  local ids = InMulti(d.id) and Multi() or { d.id }
+  for _, id in ipairs(ids) do
+    local c = DB()[id]
+    if c then
+      GA.Displays:SetGroup(c, target or nil)
+      if GA.Displays.frames[id] then GA.Displays:ApplyConfig(id) end
+    end
+  end
+  -- THE ORDER in the group it landed in: the moved aura(s) go before / after
+  -- the row they were dropped on, or at the end (a header / "+ ADD" drop);
+  -- every aura there is numbered, so the order is the owner's from now on
+  local dest = target or nil
+  local rest, moving = {}, {}
+  for _, id in ipairs(ids) do moving[id] = true end
+  for _, id in ipairs(X.AurasInGroup(dest)) do if not moving[id] then rest[#rest + 1] = id end end
+  local at = #rest + 1
+  if over then for i, id in ipairs(rest) do if id == over.id then at = before and i or (i + 1) end end end
+  for k, id in ipairs(ids) do table.insert(rest, at + k - 1, id) end
+  for i, id in ipairs(rest) do DB()[id].order = i end
   if GA.CDM then GA.CDM:Discover() end
   Poke()
-  X.SetSelected(d.id)
+  if #ids > 1 then
+    local keep = {}
+    for _, id in ipairs(ids) do keep[#keep + 1] = id end
+    GA.Displays:SetMulti(keep); X.RefreshList(); P.syncHeader()
+  else
+    X.SetSelected(d.id)
+  end
 end
 
 local function BuildSelector(c, api)
@@ -931,7 +1002,11 @@ local function BuildTab(tab)
   function t:refresh()
     local cfg = Cfg()
     local gid = SelGroup()
-    if gid then
+    local multi = Multi()
+    if multi then
+      icon:Hide(); name:SetText(#multi .. " auras selected"); name:SetAlpha(1)
+      kind:SetText("Shift-click to add or drop")
+    elseif gid then
       icon:Hide(); name:SetText(GroupName(gid)); name:SetAlpha(1)
       kind:SetText("Group")
     elseif cfg then
@@ -1216,6 +1291,20 @@ end
 -- ===========================================================================
 -- SECTION · APPEARANCE, POSITION & SIZE (the mock's Frame 530, 317 tall)
 -- ===========================================================================
+-- The resources Player Power and Color Change offer (whole units), and the
+-- comparisons — declared HERE, above their first use (LESSONS: a local named
+-- before its declaration reads a nil global).
+local POWERS = {
+  { "off", "Off" },
+  { 7,  "Soul Shards" },   { 4,  "Combo Points" },   { 9,  "Holy Power" },
+  { 12, "Chi" },           { 16, "Arcane Charges" }, { 19, "Essence" },
+  { 5,  "Runes" },         { 6,  "Runic Power" },    { 8,  "Astral Power" },
+  { 11, "Maelstrom" },     { 13, "Insanity" },       { 17, "Fury" },
+  { 18, "Pain" },          { 0,  "Mana" },           { 1,  "Rage" },
+  { 3,  "Energy" },        { 2,  "Focus" },
+}
+local OPS = { { "ge", "at least" }, { "le", "at most" }, { "eq", "exactly" } }
+
 -- THE GAME'S ART AND FLIPBOOKS (2026-10-05, the owner: "select those for
 -- texture auras, just like I can for overlays"): the Hub's texture browser
 -- (GloomsHub:PickTexture — Game Art, Sheets, My Media, Favorites) beside this
@@ -1234,7 +1323,7 @@ function P.browseArt()
 end
 
 local function BuildAppearance(parent)
-  local f = Section(parent, 419)
+  local f = Section(parent, 542)
   -- What applies (the audit, 2026-09-27 — Displays.lua's two branches): a BAR
   -- draws none of the artwork settings; EFFECTS ONLY hides the artwork, so
   -- nothing drawn on it matters either. Those dim; they never hide.
@@ -1258,7 +1347,7 @@ local function BuildAppearance(parent)
         c.texture = v
         -- a flipbook follows its texture (the same grid on the new art)
         local sh = c.sheet
-        if sh then c.sheet = v and GloomsHub:SheetFor(tostring(v), sh.cols, sh.rows, sh.frames, sh.fps) or nil end
+        if sh then c.sheet = v and GloomsHub:SheetFor(tostring(v), sh.cols, sh.rows, sh.frames, sh.fps, sh.dir) or nil end
         Reapply(); X.RefreshList(); P.syncHeader()
       end
     end,
@@ -1419,14 +1508,15 @@ local function BuildAppearance(parent)
   local function hasTex() local c = Cfg(); return hasArt() and c.texture ~= nil and c.texture ~= "" end
   local function anim() local c = Cfg(); local sh = c and c.sheet; return hasTex() and sh ~= nil and (sh.cols or 1) * (sh.rows or 1) > 1 end
   local function sheetGet(k, d) return function() local c = Cfg(); local sh = c and c.sheet; return (sh and sh[k]) or d end end
-  local function setSheet(cols, rows, frames, fps)
+  local function setSheet(cols, rows, frames, fps, dir)
     local c = Cfg(); if not (c and c.texture) then return end
     local old = c.sheet
+    if dir == nil then dir = old and old.dir end
     cols = cols or (old and old.cols) or 1
     rows = rows or (old and old.rows) or 1
     -- a new grid plays every frame of it; Frames trims the last ones off
     if not frames and (cols ~= (old and old.cols) or rows ~= (old and old.rows)) then frames = cols * rows end
-    c.sheet = GloomsHub:SheetFor(tostring(c.texture), cols, rows, frames or (old and old.frames), fps or (old and old.fps) or 15)
+    c.sheet = GloomsHub:SheetFor(tostring(c.texture), cols, rows, frames or (old and old.frames), fps or (old and old.fps) or 15, dir)
     Reapply(); P.sync()
   end
   add(tip(Dial(f, C1, 347, 170, { label = "Flipbook Columns", min = 1, max = 32, step = 1, dragPx = 300,
@@ -1441,6 +1531,43 @@ local function BuildAppearance(parent)
   add(tip(Dial(f, C2, 388, 170, { label = "Speed (frames per second)", min = 1, max = 60, step = 1, dragPx = 300,
     get = sheetGet("fps", 15), set = function(v) setSheet(nil, nil, nil, v) end }),
     "Speed", "How fast the flipbook plays, in frames per second."), anim)
+  -- DIRECTION (2026-10-06, the owner): Forward | Reverse | Ping-Pong, eased at each end
+  add(tip(Switch(f, C1, 429, 360, "Direction", { { "fwd", "Forward" }, { "rev", "Reverse" }, { "pong", "Ping-Pong" } },
+    function() local c = Cfg(); return (c and c.sheet and c.sheet.dir) or "fwd" end,
+    function(v) setSheet(nil, nil, nil, nil, (v ~= "fwd") and v or false) end),
+    "Direction", "Forward plays the frames in order; Reverse plays them backward; Ping-Pong plays forward, then back — slowing into each end and easing out of it, so the turn isn't a jolt."), anim)
+
+  -- COLOR CHANGE (2026-10-06, the owner): at N or more of a resource the art
+  -- takes another tint — one aura instead of one per color (Displays:TintFor)
+  local function ccOn() local c = Cfg(); return hasArt() and c.colorChange ~= nil end
+  local function ccPower() local c = Cfg(); return ccOn() and c.colorChange.power ~= nil end
+  -- Off, the STATES (strings), then the resources (power-type numbers)
+  local CC_STATES = { { "combat", "In Combat" }, { "nocombat", "Out of Combat" }, { "target", "Has Target" },
+                      { "casting", "While Casting" }, { "stealth", "Stealthed" } }
+  local isState = {}
+  local CHANGE_WHEN = { { "off", "Off" } }
+  for _, st in ipairs(CC_STATES) do CHANGE_WHEN[#CHANGE_WHEN + 1] = st; isState[st[1]] = true end
+  for _, pw in ipairs(POWERS) do if pw[1] ~= "off" then CHANGE_WHEN[#CHANGE_WHEN + 1] = { pw[1], pw[2] } end end
+  add(tip(Drop(f, C1, 470, 170, "Change When", CHANGE_WHEN,
+    function() local c = Cfg(); local cc = c and c.colorChange; return (cc and (cc.state or cc.power)) or "off" end,
+    function(v)
+      local c = Cfg(); if not c then return end
+      if v == "off" then c.colorChange = nil
+      else
+        c.colorChange = c.colorChange or { at = 5, color = { 1, 0.2, 0.2 } }
+        if isState[v] then c.colorChange.state, c.colorChange.power = v, nil
+        else c.colorChange.power, c.colorChange.state = v, nil end
+      end
+      Reapply(); P.sync()
+    end), "Change when", "Changes the art's tint while something is true: In Combat, Out of Combat, Has Target, While Casting or Stealthed — or when one of your resources (combo points, soul shards, holy power…) reaches the number beside it. The color goes below. Otherwise it keeps its own Recolor. Off: no change."), hasArt)
+  add(tip(Dial(f, C2, 470, 170, { label = "At or Above", min = 1, max = 10, step = 1, dragPx = 200,
+    get = function() local c = Cfg(); return (c and c.colorChange and c.colorChange.at) or 5 end,
+    set = function(v) local c = Cfg(); if c and c.colorChange then c.colorChange.at = v; Reapply() end end }),
+    "At or above", "With a resource picked: from this many points up, the art takes the color below. Not used by the states."), ccPower)
+  add(tip(Color(f, C1, 511, 170, "Change To", { title = "Color change",
+    get = function() local c = Cfg(); return c and c.colorChange and c.colorChange.color or { 1, 0.2, 0.2 } end,
+    set = function(v) local c = Cfg(); if c and c.colorChange then c.colorChange.color = v; Reapply() end end }),
+    "Change to", "The tint the art takes while Change When is true. It colors the art the same way Recolor does."), ccOn)
   return f
 end
 
@@ -1903,16 +2030,6 @@ end
 -- can't be unticked, because then nothing could ever load. That is exactly the
 -- model GA already stores (combat/target = "in"/"out"/nil, specs = a set or
 -- nil), so nothing saved changes meaning.
-local POWERS = {
-  { "off", "Off" },
-  { 7,  "Soul Shards" },   { 4,  "Combo Points" },   { 9,  "Holy Power" },
-  { 12, "Chi" },           { 16, "Arcane Charges" }, { 19, "Essence" },
-  { 5,  "Runes" },         { 6,  "Runic Power" },    { 8,  "Astral Power" },
-  { 11, "Maelstrom" },     { 13, "Insanity" },       { 17, "Fury" },
-  { 18, "Pain" },          { 0,  "Mana" },           { 1,  "Rage" },
-  { 3,  "Energy" },        { 2,  "Focus" },
-}
-local OPS = { { "ge", "at least" }, { "le", "at most" }, { "eq", "exactly" } }
 
 -- ---------------------------------------------------------------------------
 -- ★ WHAT THE GROUP ADDS (2026-10-05, the owner: a group's load conditions and
@@ -2432,6 +2549,7 @@ GloomsHub:RegisterTab{
       if P.refreshGroupSection then P.refreshGroupSection() end
       return true
     end
+    if Multi() then GA.Displays:NudgeMulti(dx, dy); return true end
     local id = Sel()
     if id and isOpen("appearance") then GA.Displays:NudgeAura(id, dx, dy); P.sync(); return true end
     return false
@@ -2468,7 +2586,7 @@ GloomsHub:RegisterTab{
     X.CloseSubWindows()   -- a docked picker must not linger
     if GloomsHub.ClosePicker then GloomsHub:ClosePicker() end   -- the texture browser too
     if P.groupLoad then P.groupLoad:Hide() end
-    if GA.Displays then GA.Displays.forced = false; GA.Displays:SetEditGroup(nil); GA.Displays:SetSelectedDisplay(nil) end
+    if GA.Displays then GA.Displays.forced = false; GA.Displays:SetMulti(nil); GA.Displays:SetEditGroup(nil); GA.Displays:SetSelectedDisplay(nil) end
     if GA.CDM and GA.CDM.Discover then GA.CDM:Discover() end
   end,
 }

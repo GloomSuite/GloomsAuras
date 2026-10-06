@@ -1,4 +1,21 @@
-# GloomsAuras — Session Handoff  (last updated 2026-10-05)
+# GloomsAuras — Session Handoff  (last updated 2026-10-06)
+
+> ## ▶▶▶ 2026-10-06 — COLOR CHANGE, FLIPBOOK DIRECTION, MULTI-SELECT, REORDER
+> - **Color Change** (foot of Appearance): `cfg.colorChange = { state | power, at, color }` — a STATE
+>   (`combat` / `nocombat` / `target` / `casting` / `stealth`) or a resource At or Above N swaps the
+>   art's tint (`D:TintFor`, used by ApplyConfig; `D:RefreshTints` on power / combat-edge / target /
+>   cast / stealth events — the combat edge is remembered, InCombatLockdown lags inside REGEN events).
+>   One condition per aura (the owner: multi-rule "too complex for a color change"). Not bars.
+> - **Flipbook Direction**: `cfg.sheet.dir` (nil / "rev" / "pong"); playback asks the Hub's
+>   `GloomsHub:SheetFrame(sheet, t)` — the one timing every tool uses (Ping-Pong is eased).
+> - **Multi-select** (`D.multi`, `P.toggleMulti`): shift-click in the list; ≥2 → lime brackets
+>   (`D:RefreshMultiHandle`) move the set by the saved numbers, arrow keys `D:NudgeMulti`, a list drag
+>   carries the set into a group; settings dim (Cfg() is nil); any SetSelected ends it. **Next session
+>   (Hub BACKLOG 26) changes both: edits apply to all selected; Shift = range, Alt = one.**
+> - **Reorder**: an aura dropped on a row lands before / after it (`auraDropTarget` returns the row and
+>   half; a lilac `P.auraLine`); the destination group's auras are renumbered `cfg.order` 1..n.
+>   `AurasInGroup` sorts by `order`, then the old spell-ID sort. `POWERS` / `OPS` now sit ABOVE
+>   BuildAppearance (the forward-reference trap — LESSONS).
 
 > ## ▶▶▶ 2026-10-05 — GROUPS AS ANCHORS, GROUP-CONFLICT NOTES, GAME ART & FLIPBOOKS
 > - **Groups work like Gloom's UI's** (the owner's pick; REVERSES "groups are no longer selected"):

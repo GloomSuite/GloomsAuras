@@ -337,7 +337,12 @@ local function AurasInGroup(gid)
       if cg == gid then out[#out + 1] = id end
     end
   end
+  -- ★ The OWNER's order first (2026-10-06: drag to reorder — `cfg.order`, set
+  -- by the list's drop); auras never placed by hand follow, as before by spell.
   table.sort(out, function(a, b)
+    local oa = (db and db[a] and db[a].order) or math.huge
+    local ob = (db and db[b] and db[b].order) or math.huge
+    if oa ~= ob then return oa < ob end
     local sa = (db and db[a] and db[a].spellID) or 0
     local sb = (db and db[b] and db[b].spellID) or 0
     if sa ~= sb then return sa < sb end
@@ -840,6 +845,7 @@ local function SetSelected(sid)
   selectedID = sid
   C.groupSel = nil                           -- an aura and a group are never both selected
   if GA.Displays and GA.Displays.SetEditGroup then GA.Displays:SetEditGroup(nil) end
+  if GA.Displays and GA.Displays.multi then GA.Displays.multi = nil; GA.Displays:RefreshMultiHandle() end   -- a selection ends a multi-select
   if C._trig then C._trig.editID = sid end   -- inline Trigger section edits the selected aura
   if GA.Displays then GA.Displays:SetSelectedDisplay(sid) end  -- only this one is draggable
   local cfg = Cfg()
