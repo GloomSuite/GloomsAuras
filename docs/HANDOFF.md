@@ -1,4 +1,20 @@
-# GloomsAuras — Session Handoff  (last updated 2026-10-06)
+# GloomsAuras — Session Handoff  (last updated 2026-11-04)
+
+> ## ▶▶▶ 2026-10-06 → 15 — MULTI-EDIT, CHARGED POINTS, TIMED COOLDOWNS, INTENSITY
+> - **Multi-select edits all** (`P.spread`, Pages.lua): the primary (`Sel()`, last clicked) is the real Cfg(); after any
+>   write (`C.OnReapply`, Poke, P.sync, TrigInlineRender) its diff against a snapshot is copied to the rest — only what
+>   changed. `SPREAD_SKIP`: label, group, order, preview, point. Lists: grow / shrink by one = append / remove.
+>   `P.setPos` = Position by delta. Shift = `P.rangeMulti`, Option = `P.toggleMulti`. `SetSelected(id, keepMulti)`.
+>   The eye: `D.multiShow`; toggling writes each member's `cfg.preview`.
+> - **Charged points:** `cfg.charged = { point = "auto" | N, color }` beats Color Change (`D:TintFor`, `D:ChargedPointOf`);
+>   trigger leaf `k = "charged"`, state `chgN`; `CDM:PointCharged` (FINDINGS §28).
+> - **Cooldown states:** `cd_readyagain` (`readyAgain`, armed in SetAvailable only IN COMBAT after a ≥ 2 s cooldown; wiped
+>   on REGEN_ENABLED) · `cd_soonN` (N typed on the trigger line; `CDM:CdLength` = GetSpellBaseCooldown, else measured;
+>   `ScheduleSoon`). Never reads the secret remaining time.
+> - **Effects:** `cfg.effects.intensity` = N hosts (`f.__fxEcho`) in step; a settled size change (0.15 s) restarts them.
+> - **Bars:** `b.textOnly` (Stack Count (Text Only)); `D:PreviewStacks` draws a sample while forced, cleared on close.
+> - **Player Power** re-checks at once (`_powerWatch`, FINDINGS §36). `Discover` also runs on panel OPEN.
+> - **Duplicate Group:** `P.duplicateGroup`. `/ga known` prefers the trigger's spell (old auras keep a stale cfg.spellID).
 
 > ## ▶▶▶ 2026-10-06 — COLOR CHANGE, FLIPBOOK DIRECTION, MULTI-SELECT, REORDER
 > - **Color Change** (foot of Appearance): `cfg.colorChange = { state | power, at, color }` — a STATE
@@ -10,8 +26,7 @@
 >   `GloomsHub:SheetFrame(sheet, t)` — the one timing every tool uses (Ping-Pong is eased).
 > - **Multi-select** (`D.multi`, `P.toggleMulti`): shift-click in the list; ≥2 → lime brackets
 >   (`D:RefreshMultiHandle`) move the set by the saved numbers, arrow keys `D:NudgeMulti`, a list drag
->   carries the set into a group; settings dim (Cfg() is nil); any SetSelected ends it. **Next session
->   (Hub BACKLOG 26) changes both: edits apply to all selected; Shift = range, Alt = one.**
+>   carries the set into a group; settings dim (Cfg() is nil); any SetSelected ends it. (Superseded: see the block above.)
 > - **Reorder**: an aura dropped on a row lands before / after it (`auraDropTarget` returns the row and
 >   half; a lilac `P.auraLine`); the destination group's auras are renumbered `cfg.order` 1..n.
 >   `AurasInGroup` sorts by `order`, then the old spell-ID sort. `POWERS` / `OPS` now sit ABOVE

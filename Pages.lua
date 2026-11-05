@@ -45,6 +45,7 @@ C.P = P
 local function Sel() return X.Selected() end
 local function Reapply() X.ReapplySelected() end
 local function Poke()
+  if P.spread then P.spread() end
   if GA.CDM then GA.CDM:UpdateVisibilityPoll(); GA.CDM:RefreshDisplays() end
   -- a load condition changed: the group note and the list's warnings follow
   if P.refreshInherited then P.refreshInherited() end
@@ -55,6 +56,7 @@ local function Relayout() if GloomsHub.RefreshWindows then GloomsHub:RefreshWind
 -- One refresh for everything: what SetSelected already does to the shared rows.
 -- Called after any change that another control's enabled state depends on.
 function P.sync()
+  if P.spread then P.spread() end
   local on = Cfg() ~= nil
   for _, r in ipairs(rows) do
     if r.refresh then r:refresh() end
@@ -151,15 +153,156 @@ local function SelGroup()
 end
 P.SelGroup = SelGroup
 
--- ★ MULTI-SELECT (2026-10-06): shift-click in the list builds a set of auras;
--- two or more move together (lime brackets on screen, the arrow keys) and drag
--- into a group together. The settings dim meanwhile. A plain click ends it.
+-- ★ MULTI-SELECT (2026-10-06): a set of auras in the list; two or more move
+-- together (lime brackets on screen, the arrow keys) and drag into a group
+-- together. A plain click ends it.
+-- ★ SECOND PASS (2026-10-06, Hub BACKLOG 26 — the owner reversed "fine if it
+-- disables settings"): Shift-click = a RANGE (from the anchor, the last plain or
+-- Alt click, to this one, in list order); Alt- (Option-) click = add / drop ONE. The
+-- settings stay live and show the PRIMARY (the last clicked); a change is copied
+-- to every other selected aura — ONLY the setting changed, never the whole look:
+-- P.spread diffs the primary against a snapshot taken after the last change.
+-- Name, group, order and the eye stay each aura's own; Position moves all by
+-- the same amount (P.setPos — the owner's pick).
 local function Multi() return (GA.Displays and GA.Displays.multi) or nil end
 local function InMulti(id)
   for _, m in ipairs(Multi() or {}) do if m == id then return true end end
   return false
 end
 P.Multi = Multi
+
+local SPREAD_SKIP = { label = true, group = true, order = true, preview = true, point = true }
+local snap   -- { id = primary, cfg = its copy after the last spread }
+local function isSeq(t)
+  local n = 0
+  for _ in pairs(t) do n = n + 1 end
+  return n == #t
+end
+local function same(a, b)
+  if type(a) ~= "table" or type(b) ~= "table" then return a == b end
+  for k, v in pairs(a) do if not same(v, b[k]) then return false end end
+  for k in pairs(b) do if a[k] == nil then return false end end
+  return true
+end
+-- What changed between `old` and `new`, as { path, op, v / i }. A list that
+-- grew or shrank by one (a trigger condition added / removed) is an append or
+-- a remove, so the others keep their own entries.
+local function diff(old, new, path, out, top)
+  if not top and isSeq(old) and isSeq(new) and #old ~= #new then
+    local n0, n1 = #old, #new
+    if n1 == n0 + 1 then
+      local ok = true
+      for i = 1, n0 do if not same(old[i], new[i]) then ok = false; break end end
+      if ok then out[#out + 1] = { path = path, op = "append", v = new[n1] }; return end
+    elseif n1 == n0 - 1 then
+      for i = 1, n0 do
+        local ok = true
+        for j = 1, n1 do if not same(old[j < i and j or j + 1], new[j]) then ok = false; break end end
+        if ok then out[#out + 1] = { path = path, op = "remove", i = i }; return end
+      end
+    end
+  end
+  local keys = {}
+  for k in pairs(old) do keys[k] = true end
+  for k in pairs(new) do keys[k] = true end
+  for k in pairs(keys) do
+    if not (top and SPREAD_SKIP[k]) then
+      local a, b = old[k], new[k]
+      local p = {}
+      for i, pk in ipairs(path) do p[i] = pk end
+      p[#p + 1] = k
+      if type(a) == "table" and type(b) == "table" then diff(a, b, p, out)
+      elseif not same(a, b) then out[#out + 1] = { path = p, op = "set", v = b } end
+    end
+  end
+end
+-- One change onto another aura. A list slot it doesn't have is skipped, never
+-- invented (its triggers may be shorter than the primary's).
+local function applyChange(cfg, ch)
+  local t, path = cfg, ch.path
+  local last = (ch.op == "set") and #path - 1 or #path
+  for i = 1, last do
+    local k = path[i]
+    if type(t[k]) ~= "table" then
+      if type(k) == "number" or (ch.op == "set" and ch.v == nil) then return end
+      t[k] = {}
+    end
+    t = t[k]
+  end
+  if ch.op == "append" then t[#t + 1] = X.DeepCopy(ch.v)
+  elseif ch.op == "remove" then if t[ch.i] ~= nil then table.remove(t, ch.i) end
+  else
+    local k = path[#path]
+    if type(k) == "number" and t[k] == nil and k > #t + 1 then return end
+    t[k] = X.DeepCopy(ch.v)
+  end
+end
+function P.resnap()
+  local db, pid = DB(), Sel()
+  snap = (Multi() and pid and db and db[pid]) and { id = pid, cfg = X.DeepCopy(db[pid]) } or nil
+end
+local spreading
+function P.spread()
+  if spreading then return end
+  local ids, pid, db = Multi(), Sel(), DB()
+  local prim = ids and pid and db and db[pid]
+  if not prim then snap = nil; return end
+  if not snap or snap.id ~= pid then P.resnap(); return end
+  local out = {}
+  diff(snap.cfg, prim, {}, out, true)
+  snap.cfg = X.DeepCopy(prim)
+  if #out == 0 then return end
+  spreading = true
+  local rebind
+  for _, ch in ipairs(out) do if ch.path[1] == "trigger" or ch.path[1] == "spellID" then rebind = true end end
+  for _, id in ipairs(ids) do
+    local cfg = id ~= pid and db[id]
+    if cfg then
+      for _, ch in ipairs(out) do applyChange(cfg, ch) end
+      if GA.Displays then GA.Displays:ApplyConfig(id) end
+    end
+  end
+  if GA.CDM then
+    if rebind then GA.CDM:Discover() end
+    GA.CDM:UpdateVisibilityPoll(); GA.CDM:RefreshDisplays()
+  end
+  if GA.Displays then GA.Displays:RefreshMultiHandle() end
+  if P.renderList then P.renderList() end
+  spreading = nil
+end
+C.OnReapply = P.spread
+
+-- Horizontal / Vertical Position (axis 2 / 3): several selected all move by
+-- the dial's change, each keeping its own place.
+function P.setPos(axis, v)
+  local c = Cfg(); if not c then return end
+  local d = v - ((c.point and c.point[axis]) or 0)
+  local db = DB()
+  for _, id in ipairs(Multi() or { Sel() }) do
+    local cfg = db[id]
+    if cfg then
+      local p = cfg.point or { "CENTER", 0, 0 }
+      local np = { "CENTER", p[2] or 0, p[3] or 0 }
+      np[axis] = np[axis] + d
+      cfg.point = np
+      if id ~= Sel() and GA.Displays then GA.Displays:ApplyConfig(id) end
+    end
+  end
+  Reapply()
+end
+
+-- the set becomes `list`, edited through `primary`
+function P.setMulti(list, primary)
+  if #list >= 2 then
+    X.SetSelected(primary, true)
+    GA.Displays:SetMulti(list)
+    P.resnap()
+    X.RefreshList(); P.syncHeader(); P.sync(); Relayout()
+  else
+    X.SetSelected(list[1])                            -- back to editing one
+  end
+end
+-- Alt- (Option-) click: add or drop one
 function P.toggleMulti(id)
   local list = {}
   for _, m in ipairs(Multi() or {}) do list[#list + 1] = m end
@@ -167,13 +310,24 @@ function P.toggleMulti(id)
   local found
   for i, m in ipairs(list) do if m == id then table.remove(list, i); found = true; break end end
   if not found then list[#list + 1] = id end
-  if #list >= 2 then
-    X.SetSelected(nil)                                -- clears a group and any old set first
-    GA.Displays:SetMulti(list)
-    X.RefreshList(); P.syncHeader(); P.sync(); Relayout()
-  else
-    X.SetSelected(list[1])                            -- back to editing one
+  P.anchor = id
+  local primary = found and ((Sel() ~= id and InMulti(Sel()) and Sel()) or list[#list]) or id
+  P.setMulti(list, primary)
+end
+-- Shift-click: every aura listed from the anchor to this one
+function P.rangeMulti(id)
+  local from = P.anchor or Sel()
+  if not from or from == id then return X.SetSelected(id) end
+  local list, on = {}, false
+  for _, e in ipairs(P.listEntries()) do
+    if e.kind == "aura" then
+      local edge = (e.id == from or e.id == id)
+      if edge or on then list[#list + 1] = e.id end
+      if edge then on = not on; if not on then break end end
+    end
   end
+  if #list < 2 then return X.SetSelected(id) end   -- the anchor is folded away
+  P.setMulti(list, id)
 end
 function P.selectGroup(gid)
   X.SetSelected(nil)
@@ -359,7 +513,9 @@ local function listRow(i)
     elseif self.kind == "ungrouped" then
       GA.db.ungroupedCollapsed = (not GA.db.ungroupedCollapsed) or nil; X.RefreshList()
     elseif self.kind == "aura" then
-      if button == "LeftButton" and IsShiftKeyDown() then P.toggleMulti(self.id); return end
+      if button == "LeftButton" and IsShiftKeyDown() then P.rangeMulti(self.id); return end
+      if button == "LeftButton" and IsAltKeyDown() then P.toggleMulti(self.id); return end
+      P.anchor = self.id
       if button == "RightButton" then X.SetSelected(self.id); P.auraContext(self); return end
       X.SetSelected(self.id)
     elseif button == "LeftButton" and self.kind == "add" then P.newAuraMenu(self, self.gid or false) end
@@ -410,6 +566,8 @@ local function listEntries()
   end
   return out
 end
+
+P.listEntries = listEntries
 
 -- "sub" is the mock's 6 between a group's header and its first aura.
 local function entryH(e) return (e.kind == "gap" and LIST_GAP) or (e.kind == "sub" and 6) or LIST_ROW_H end
@@ -525,6 +683,35 @@ end
 -- A group's RIGHT-CLICK menu: Rename · Enable/Disable · Load Conditions… ·
 -- Delete Group. (The kit's list, opened at the mouse.)
 -- ---------------------------------------------------------------------------
+-- DUPLICATE GROUP (the owner, 2026-10-06): the group's settings (anchor,
+-- scale, attach, load conditions, on/off) and a copy of every member, listed
+-- just under the original and sitting exactly on top of it, as Duplicate Aura
+-- does. Members keep their names; the group is "<name> (copy)".
+function P.duplicateGroup(gid)
+  local groups, db = X.Groups(), DB()
+  local src = groups and gid and groups[gid]; if not (src and db) then return end
+  local members = X.AurasInGroup(gid)
+  local nid = X.CreateGroup((src.name or "Group") .. " (copy)"); if not nid then return end
+  local g = groups[nid]
+  for k, v in pairs(src) do
+    if k ~= "id" and k ~= "name" and k ~= "order" then g[k] = X.DeepCopy(v) end
+  end
+  -- listed straight after the original
+  local at = src.order or 0
+  for id, grp in pairs(groups) do
+    if id ~= nid and (grp.order or 0) > at then grp.order = (grp.order or 0) + 1 end
+  end
+  g.order = at + 1
+  for _, id in ipairs(members) do
+    local copy = X.DeepCopy(db[id]); copy.group = nid
+    db[X.NewDisplayID()] = copy
+  end
+  if GA.CDM then GA.CDM:Discover() end
+  if GA.Displays and GA.Displays.ApplyGroup then GA.Displays:ApplyGroup(nid) end
+  P.selectGroup(nid)
+  Poke()
+end
+
 function P.groupContext(gid, anchor)
   local g = gid and X.Groups() and X.Groups()[gid]; if not g then return end
   local off = (g.enabled == false)
@@ -532,6 +719,7 @@ function P.groupContext(gid, anchor)
     { value = "rename", label = "Rename" },
     { value = "toggle", label = off and "Enable Group" or "Disable Group" },
     { value = "load", label = "Load Conditions…" },
+    { value = "dup", label = "Duplicate Group" },
     { value = "delete", label = "Delete Group", danger = true, divider = true },
   }, nil, function(v)
     local grp = X.Groups() and X.Groups()[gid]; if not grp then return end
@@ -548,6 +736,8 @@ function P.groupContext(gid, anchor)
       Poke(); X.RefreshList()
     elseif v == "load" then
       P.selectGroup(gid)   -- the Group section holds its load conditions (2026-10-05)
+    elseif v == "dup" then
+      P.duplicateGroup(gid)
     elseif v == "delete" then
       -- Deleting CONFIRMS (CONTRACTS §4); a group's auras are never deleted with it.
       C:OpenConfirm(("Delete the group \"%s\"?  Its auras aren't deleted — they move to Ungrouped."):format(grp.name or "?"), function()
@@ -996,7 +1186,10 @@ local function BuildTab(tab)
       return
     end
     if not Cfg() then return end
-    if button == "RightButton" then P.auraContext(self) else P.auraSwitch(self) end
+    if button == "RightButton" then
+      if Multi() then return end   -- several selected: the list's own menu, one at a time
+      P.auraContext(self)
+    else P.auraSwitch(self) end
   end)
   UI.attachTip(hit, "The aura you're editing", "Click to switch to another aura. Right-click to rename, duplicate, move or delete this one.")
   function t:refresh()
@@ -1005,7 +1198,7 @@ local function BuildTab(tab)
     local multi = Multi()
     if multi then
       icon:Hide(); name:SetText(#multi .. " auras selected"); name:SetAlpha(1)
-      kind:SetText("Shift-click to add or drop")
+      kind:SetText(cfg and ("Showing " .. (cfg.label or "Aura")) or "")
     elseif gid then
       icon:Hide(); name:SetText(GroupName(gid)); name:SetAlpha(1)
       kind:SetText("Group")
@@ -1071,6 +1264,7 @@ local function StateDrop(parent, r)
   return d
 end
 
+local FillLeaf
 local function MakeLeaf(parent, nested)
   local r = CreateFrame("Button", nil, parent); r:SetHeight(TRIG_ROW_H)
   r.bg = r:CreateTexture(nil, "BACKGROUND"); r.bg:SetAllPoints()
@@ -1083,6 +1277,19 @@ local function MakeLeaf(parent, nested)
   r.is = UI.newText(r, FONT.sa, 10, COLOR.paper, "LEFT"); r.is:SetText("is"); r.is:SetPoint("LEFT", r.icon, "RIGHT", 4, 0)
   r.pill = StateDrop(r, r)
   r.pill:SetPoint("LEFT", r.is, "RIGHT", 4, 0)
+  -- READY IN N SEC (timed from use): N typed here, beside the choice (the owner,
+  -- 2026-10-08: "why isn't it a field") — seconds of cooldown LEFT
+  r.soon = UI.gField(r, 40, { numeric = true, maxLetters = 4, justify = "CENTER",
+    commit = function(text)
+      local n = tonumber(text)
+      if n and n > 0 then C:TrigSetState(r._ti, r._ci, "cd_soon" .. math.floor(n)) end
+      FillLeaf(r, r._ti, r._ci, r._node)
+    end,
+    revert = function(self) FillLeaf(r, r._ti, r._ci, r._node) end })
+  r.soon:SetPoint("LEFT", r.pill, "RIGHT", 6, 0); r.soon:Hide()
+  r.soonSuf = UI.newText(r, FONT.sa, 10, COLOR.paper, "LEFT"); r.soonSuf:SetText("sec left")
+  r.soonSuf:SetPoint("LEFT", r.soon, "RIGHT", 6, 0); r.soonSuf:Hide()
+  UI.attachTip(r.soon, "Seconds left", "How many seconds of cooldown are left when this turns on — counted from the moment you used the spell. 10: the last 10 seconds before it's ready. Press Enter to apply.")
   r.x = UI.gX(r, function() C:TrigRemove(r._ti, r._ci) end); r.x:SetPoint("RIGHT", nested and 0 or -10, 0)
   UI.attachTip(r.x, "Remove", "Removes this condition.")
   r:RegisterForDrag("LeftButton")
@@ -1091,15 +1298,18 @@ local function MakeLeaf(parent, nested)
   return r
 end
 
-local function FillLeaf(r, ti, ci, leaf)
+function FillLeaf(r, ti, ci, leaf)
   r._ti, r._ci, r._node = ti, ci, leaf
   local sid = leaf.spellID
   r.name:SetText(leaf.name or (sid and C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(sid)) or "?")
   local iconID = sid or leaf.buffID   -- a Buff Running Low condition: its buff's icon
   r.icon:SetTexture((leaf.k == "tcast" and 132219)   -- Kick's icon for a Target Casting condition
+    or (leaf.k == "charged" and "Interface\\Icons\\Ability_Rogue_Eviscerate")
     or (leaf.k == "item" and leaf.itemID and C_Item and C_Item.GetItemIconByID and C_Item.GetItemIconByID(leaf.itemID))
     or (iconID and C_Spell and C_Spell.GetSpellTexture and C_Spell.GetSpellTexture(iconID)) or 134400)
-  r.pill:SetLabel(StateText(leaf.state, leaf.k))
+  local soon = type(leaf.state) == "string" and leaf.state:match("^cd_soon(%d+)$")
+  r.pill:SetLabel(soon and "Ready in" or StateText(leaf.state, leaf.k))
+  if r.soon then r.soon:SetShown(soon ~= nil); r.soonSuf:SetShown(soon ~= nil); if soon then r.soon:SetText(soon) end end
   r:SetAlpha(1)
 end
 
@@ -1269,8 +1479,13 @@ local function BuildTriggersFooter(parent)
       { value = "tcast", label = "Target Casting" },
       { value = "blow",  label = "Buff Running Low" },
       { value = "item",  label = "Trinket Ready" },
+      { value = "charged", label = "Charged Combo Point" },
     }, nil, function(v)
-      if v == "item" then
+      if v == "charged" then
+        local pts = {}
+        for n = 1, 7 do pts[#pts + 1] = { value = n, label = "Combo point " .. n } end
+        C_Timer.After(0, function() UI.gList(TR.addC, pts, nil, function(n) C:TrigAddCharged(n, nil) end) end)
+      elseif v == "item" then
         local list = C:EquippedTrinkets()
         if #list == 0 then UI.confirm("You don't have a trinket equipped.", function() end); return end
         C_Timer.After(0, function() UI.gList(TR.addC, list, nil, function(id) C:TrigAddItem(id, nil) end) end)
@@ -1278,7 +1493,7 @@ local function BuildTriggersFooter(parent)
       else UI.nameDialog("Which buff? Name or spell ID", "", function(text) C:TrigAddBuffLow(text, nil) end) end
     end)
   end)
-  tip(TR.addC, "Other triggers", "Conditions that don't come from your Cooldown Manager.\n\nTarget Casting: your target is casting anything, something you can interrupt, or something you can't. The interrupt choice fades the whole aura in or out with the cast, whatever Match All / Any / None says — so it works best as the aura's only condition, or with Match All.\n\nBuff Running Low: one of your buffs is missing or has under 5–30 minutes left — checked out of combat only, so it never shows mid-pull. Type the buff's name or spell ID. One per poison, with Match Any, for a rogue's poisons.\n\nTrinket Ready: one of your equipped trinkets is off (or on) cooldown — read from the trinket itself, so it works where the Cooldown Manager leaves trinkets out (delves).")
+  tip(TR.addC, "Other triggers", "Conditions that don't come from your Cooldown Manager.\n\nTarget Casting: your target is casting anything, something you can interrupt, or something you can't. The interrupt choice fades the whole aura in or out with the cast, whatever Match All / Any / None says — so it works best as the aura's only condition, or with Match All.\n\nBuff Running Low: one of your buffs is missing or has under 5–30 minutes left — checked out of combat only, so it never shows mid-pull. Type the buff's name or spell ID. One per poison, with Match Any, for a rogue's poisons.\n\nTrinket Ready: one of your equipped trinkets is off (or on) cooldown — read from the trinket itself, so it works where the Cooldown Manager leaves trinkets out (delves).\n\nCharged Combo Point: one of your combo points is charged (a Subtlety rogue's supercharged points).")
   TR.addG = UI.gButton(f, "Create Trigger Group")
   TR.addG:SetPoint("TOPRIGHT", 0, 0)
   TR.addG:SetScript("OnClick", function() C:TrigAddGroup() end)
@@ -1323,7 +1538,7 @@ function P.browseArt()
 end
 
 local function BuildAppearance(parent)
-  local f = Section(parent, 542)
+  local f = Section(parent, 583)
   -- What applies (the audit, 2026-09-27 — Displays.lua's two branches): a BAR
   -- draws none of the artwork settings; EFFECTS ONLY hides the artwork, so
   -- nothing drawn on it matters either. Those dim; they never hide.
@@ -1422,11 +1637,11 @@ local function BuildAppearance(parent)
   -- POSITION (the left column)
   add(tip(Dial(f, C1, 143, 170, { label = "Horizontal Offset", min = -2000, max = 2000, step = 1, unit = "px", dragPx = 1600,
     get = function() local c = Cfg(); return c and c.point and c.point[2] or 0 end,
-    set = function(v) local c = Cfg(); if c then c.point = { "CENTER", v, (c.point and c.point[3]) or 0 }; Reapply() end end }),
+    set = function(v) P.setPos(2, v) end }),
     "Horizontal offset", "Where the aura sits, left (−) or right (+) of the screen's center — or, in a group, of the group's anchor. You can also drag the selected aura on screen, or nudge it with the arrow keys while this section is open."))
   add(tip(Dial(f, C1, 184, 170, { label = "Vertical Offset", min = -2000, max = 2000, step = 1, unit = "px", dragPx = 1600,
     get = function() local c = Cfg(); return c and c.point and c.point[3] or 0 end,
-    set = function(v) local c = Cfg(); if c then c.point = { "CENTER", (c.point and c.point[2]) or 0, v }; Reapply() end end }),
+    set = function(v) P.setPos(3, v) end }),
     "Vertical offset", "Where the aura sits, below (−) or above (+) the screen's center — or, in a group, of the group's anchor. You can also drag the selected aura on screen, or nudge it with the arrow keys while this section is open."))
   -- Fixed rotation, positive = clockwise; it shares one AnimationGroup with the
   -- spin (Effects section), so the angle is where a spin starts from.
@@ -1486,6 +1701,7 @@ local function BuildAppearance(parent)
     local c = Cfg(); if not c then return end
     local on = not c.lockAspect; c.lockAspect = on or nil
     if on then local w, h = (c.width or c.size or 64), (c.height or c.size or 64); c.aspect = (h > 0) and (w / h) or 1 end
+    P.spread()
     self:refresh()
   end)
   UI.attachTip(link, "Link width and height", "While linked, changing the width changes the height with it, and the other way round. Click to switch.")
@@ -1568,6 +1784,26 @@ local function BuildAppearance(parent)
     get = function() local c = Cfg(); return c and c.colorChange and c.colorChange.color or { 1, 0.2, 0.2 } end,
     set = function(v) local c = Cfg(); if c and c.colorChange then c.colorChange.color = v; Reapply() end end }),
     "Change to", "The tint the art takes while Change When is true. It colors the art the same way Recolor does."), ccOn)
+
+  -- CHARGED COLOR (2026-10-08, the owner: his combo points are several layered
+  -- auras each — a charged point recolors them, no extra auras). Wins over
+  -- Color Change and Recolor (Displays:TintFor). Auto = the point its own
+  -- Player Power "Combo Points at least N" condition names.
+  local function chOn() local c = Cfg(); return hasArt() and c.charged ~= nil end
+  local CH_POINTS = { { "off", "Off" }, { "auto", "Auto (its Player Power)" } }
+  for n = 1, 7 do CH_POINTS[#CH_POINTS + 1] = { n, "Combo Point " .. n } end
+  add(tip(Drop(f, C1, 552, 170, "Charged Point", CH_POINTS,
+    function() local c = Cfg(); return (c and c.charged and c.charged.point) or "off" end,
+    function(v)
+      local c = Cfg(); if not c then return end
+      if v == "off" then c.charged = nil
+      else c.charged = c.charged or { color = { 1, 0.85, 0.3 } }; c.charged.point = v end
+      Reapply(); P.sync()
+    end), "Charged point", "While this combo point is charged (a Subtlety rogue's supercharged points), the art takes the Charged Color — over Color Change and Recolor. Auto: the point from this aura's Player Power condition (Combo Points at least 3 → point 3), so one setting covers every point when several auras are selected. Off: no change."), hasArt)
+  add(tip(Color(f, C2, 552, 170, "Charged Color", { title = "Charged color",
+    get = function() local c = Cfg(); return c and c.charged and c.charged.color or { 1, 0.85, 0.3 } end,
+    set = function(v) local c = Cfg(); if c and c.charged then c.charged.color = v; Reapply() end end }),
+    "Charged color", "The tint the art takes while its combo point is charged."), chOn)
   return f
 end
 
@@ -1609,15 +1845,21 @@ local function BuildBar(parent)
     return ok.pandemic ~= false
   end
 
-  local MODES = { { "aura_dur", "Aura Duration" }, { "cd_dur", "Cooldown" }, { "stacks", "Stack Count" } }
-  add(tip(Drop(f, C1, 0, 170, "Bar Type", MODES, mode, function(v)
+  -- ★ TEXT ONLY (2026-10-08, the owner: the stack number without the bar) — a
+  -- Stack Count bar whose fill and background draw nothing (cfg.bar.textOnly);
+  -- every gate still reads mode() == "stacks"
+  local MODES = { { "aura_dur", "Aura Duration" }, { "cd_dur", "Cooldown" }, { "stacks", "Stack Count" },
+                  { "stacktext", "Stack Count (Text Only)" } }
+  local function modeSel() local b = get(); return (mode() == "stacks" and b and b.textOnly) and "stacktext" or mode() end
+  add(tip(Drop(f, C1, 0, 170, "Bar Type", MODES, modeSel, function(v)
     local b = ensure(); if not b then return end
-    b.mode = v
+    if v == "stacktext" then b.mode, b.textOnly, b.showStacks = "stacks", true, true
+    else b.mode, b.textOnly = v, nil end
     -- Leaving duration mode must RELEASE the engine's slot, or its button keeps
     -- painting a drain over a bar that now means something else.
     if GA.AuraDuration and Sel() then GA.AuraDuration:Detach(Sel()) end
     repaint(); P.sync()
-  end), "Bar type", "What the bar measures, from the FIRST trigger's spell: Aura Duration (a buff or debuff's time left), Cooldown (time until a spell is ready) or Stack Count. The first trigger has to be that kind of spell, or the bar won't move."), isBar)
+  end), "Bar type", "What the bar measures, from the FIRST trigger's spell: Aura Duration (a buff or debuff's time left), Cooldown (time until a spell is ready) or Stack Count. Stack Count (Text Only) shows just the number — no bar behind it. The first trigger has to be that kind of spell, or the bar won't move."), isBar)
   -- Changing the axis SWAPS width and height: a 220 × 24 bar stood on end is 24
   -- wide and 220 tall, which is what anyone means by it.
   local ORIENT = { { "HORIZONTAL", "Horizontal" }, { "VERTICAL", "Vertical" } }
@@ -1890,6 +2132,17 @@ local function BuildEffects(parent)
         end
         b.rows[#b.rows + 1] = d
       end
+    end
+    -- ★ INTENSITY (2026-10-08, the owner: "soooo faint" — Rim Flash). Every
+    -- animation, the same setting: 2× / 3× / 4× plays that many copies in step
+    -- on top of each other (Displays:ApplyEffects), so each beat lands bolder.
+    do
+      local x, y = place()
+      local d = Drop(b, x, y, 170, "Intensity", { { 1, "1× (normal)" }, { 2, "2×" }, { 3, "3×" }, { 4, "4×" } },
+        function() local c = Cfg(); return (c and c.effects and c.effects.intensity) or 1 end,
+        function(v) local c = Cfg(); if c and c.effects then c.effects.intensity = (v ~= 1) and v or nil; Reapply() end end)
+      UI.attachTip(d, "Intensity", "Makes the animation bolder: 2× to 4× draws that many copies of it exactly on top of each other. 1× is the normal look.")
+      b.rows[#b.rows + 1] = d
     end
     -- An animation with no color of its own still shows the color spot, dimmed,
     -- so the section keeps the mock's shape.
@@ -2454,7 +2707,7 @@ function C:AccordionLayout() end
 function C:AccordionSetHeight() end
 function C:AccordionOpen() end
 function C:AccordionToggle() end
-function C:TrigInlineRender() P.renderTriggers() end
+function C:TrigInlineRender() P.spread(); P.renderTriggers() end
 function C:ShowGroupPane() end
 -- (every selection passes here) — the settings window re-lays out too, so a
 -- section that locks by the aura's type (Bar Fill) opens or shuts with it
@@ -2579,6 +2832,10 @@ GloomsHub:RegisterTab{
   onBuilt  = function(sel, set) X.SetContainer(set) end,
   onOpen   = function()
     if GA.Displays then GA.Displays.forced = true; GA.Displays:SetInteractive(true) end
+    -- look at the Cooldown Manager again on OPEN too (the owner, 2026-10-08: Kick
+    -- warned "not in your Cooldown Manager" while it was — matched later, on a
+    -- close), so the list's warnings are true when you're reading them
+    if GA.CDM and GA.CDM.Discover then GA.CDM:Discover() end
     C:SelectInitial()   -- straight into the last-edited aura
     P.show()
   end,

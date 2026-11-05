@@ -249,6 +249,43 @@ local function LogAvail(spellID, old, v, quiet)
       or (quiet and "  (quiet: reconciler)" or ""))
 end
 
+-- ★ READY IN N SECONDS, TIMED FROM USE (2026-10-08, the owner: Shadow Blades, a
+-- fixed 90 s). The time left on a cooldown is SECRET in combat, so this never
+-- reads it: it counts from the moment GA saw the spell go on cooldown, over the
+-- spell's BASE cooldown (GetSpellBaseCooldown — static data), or else the length
+-- last measured. Exact for a fixed cooldown; anything that shortens or resets
+-- one mid-fight makes it early or late — the trigger's wording says "timed".
+function CDM:CdLength(spellID)
+  local ms
+  pcall(function() ms = GetSpellBaseCooldown and GetSpellBaseCooldown(spellID) end)
+  if type(ms) == "number" and not issecret(ms) and ms > 0 then return ms / 1000 end
+  return self.cdLen and self.cdLen[spellID]
+end
+function CDM:SoonActive(spellID, n)
+  if self.available[spellID] ~= false then return false end
+  local start = self._cdStart and self._cdStart[spellID]
+  local len = self:CdLength(spellID)
+  if not (start and len) then return false end
+  return GetTime() >= start + len - n - 0.05
+end
+-- On going on cooldown: a refresh at (length − N) for each N a trigger asks of this spell.
+function CDM:ScheduleSoon(spellID)
+  local db = GA.db and GA.db.displays; if not db then return end
+  local ns = {}
+  local function walk(node)
+    if type(node) ~= "table" then return end
+    if node.conditions then for _, c in ipairs(node.conditions) do walk(c) end; return end
+    local n = node.spellID == spellID and type(node.state) == "string" and node.state:match("^cd_soon(%d+)$")
+    if n then ns[tonumber(n)] = true end
+  end
+  for _, cfg in pairs(db) do if cfg.enabled ~= false then walk(cfg.trigger) end end
+  if not next(ns) then return end
+  local len = self:CdLength(spellID); if not len then return end
+  for n in pairs(ns) do
+    C_Timer.After(math.max(0, len - n), function() CDM:RefreshDisplays() end)
+  end
+end
+
 function CDM:SetAvailable(spellID, v, quiet)
   local old = self.available[spellID]
   self.available[spellID] = v
@@ -257,6 +294,25 @@ function CDM:SetAvailable(spellID, v, quiet)
   if v == false and old ~= false then
     self._cdStart = self._cdStart or {}
     self._cdStart[spellID] = GetTime()
+    self:ScheduleSoon(spellID)   -- "ready in N sec": re-check when each N comes due
+  end
+  -- the length of a cooldown that really ran (the fallback for CdLength)
+  if v == true and old == false and self._cdStart and self._cdStart[spellID] then
+    local ran = GetTime() - self._cdStart[spellID]
+    if ran >= MIN_CD_FOR_SOUND then self.cdLen = self.cdLen or {}; self.cdLen[spellID] = ran end
+  end
+  -- ★ READY AGAIN (2026-10-08, the owner: not at the pull, when nothing has been
+  -- used — only once it comes back after you've used it; reset on leaving
+  -- combat). Armed when a cooldown that really ran (MIN_CD_FOR_SOUND, the
+  -- cast-flicker test below) ends; cleared on PLAYER_REGEN_ENABLED.
+  -- ⚠ IN COMBAT ONLY (the owner, 2026-10-08: "does not reset after leaving
+  -- combat" — a cooldown still running when the fight ended came back OUT of
+  -- combat and armed it again). A use just before a pull still counts: it
+  -- comes back mid-fight.
+  if v == true and old == false and InCombatLockdown() and self._cdStart and self._cdStart[spellID]
+     and GetTime() - self._cdStart[spellID] >= MIN_CD_FOR_SOUND then
+    self.readyAgain = self.readyAgain or {}
+    self.readyAgain[spellID] = true
   end
   if quiet or old ~= false or v ~= true then return end
   -- ★ THE DURATION IS THE TEST — not which writer noticed (owner-reported,
@@ -345,9 +401,32 @@ function CDM:WatchedSpells()
   return set
 end
 
+-- ★ CHARGED COMBO POINTS (2026-10-08, the owner; Unit Frames' Charged Points):
+-- is point N charged? The game lists the charged POSITIONS, plain in combat too
+-- (Hub FINDINGS §28, TESTED 2026-10-02). A secret list or entry is never compared
+-- — it reads as not charged.
+function CDM:PointCharged(n)
+  if not (n and GetUnitChargedPowerPoints) then return false end
+  local ok, list = pcall(GetUnitChargedPowerPoints, "player")
+  if not ok or type(list) ~= "table" or issecret(list) then return false end
+  for _, v in ipairs(list) do
+    if issecret(v) then return false end
+    if v == n then return true end
+  end
+  return false
+end
+do
+  local f = CreateFrame("Frame")
+  f:RegisterUnitEvent("UNIT_POWER_POINT_CHARGE", "player")
+  f:SetScript("OnEvent", function() if GA.CDM and GA.CDM.RefreshDisplays then GA.CDM:RefreshDisplays() end end)
+end
+
 -- One leaf condition: { spellID = N, state = "buff_active"|"buff_inactive"|"cd_ready"|"cd_oncd" }
 function CDM:EvalCondition(cond)
   local sid, state = cond.spellID, cond.state
+  -- CHARGED COMBO POINT (2026-10-08): "chgN" = point N is charged
+  local chg = type(state) == "string" and state:match("^chg(%d)$")
+  if chg then return self:PointCharged(tonumber(chg)) end
   -- TARGET CASTING (2026-10-03): plain — is the target casting at all. Whether
   -- the cast can be interrupted is NOT decided here (it may be secret); it
   -- fades the whole display through the game instead (CDM:KickGate).
@@ -401,6 +480,10 @@ function CDM:EvalCondition(cond)
     return self.buffActive[sid] == true
   elseif state == "buff_inactive" then
     return self.buffActive[sid] ~= true
+  elseif type(state) == "string" and state:match("^cd_soon%d+$") then
+    return self:SoonActive(sid, tonumber(state:match("^cd_soon(%d+)$")))
+  elseif state == "cd_readyagain" then
+    return self.available[sid] == true and (self.readyAgain and self.readyAgain[sid]) == true
   elseif state == "cd_ready" then
     -- Match EvalDisplay's auto default: for a NON-charge cooldown we reliably detect
     -- going ON cd (CooldownFrame_Set), but an idle-available spell never fires a
@@ -583,6 +666,33 @@ function CDM:UpdateVisibilityPoll()
     if self.frameKind[frame] == "buff" then usesBuff = true; break end
   end
   self._pollVis, self._pollBuff = usesVis, usesBuff
+  -- ★ PLAYER POWER AT ONCE (2026-10-08, the owner: combo-point layers lagging —
+  -- "a fifth of a second is HUGELY problematic"). The 0.2 s poll was the only
+  -- thing re-checking a Player Power load condition. Now the power types the
+  -- conditions name (auras + groups) re-check the moment they change; a type
+  -- nothing asks for (energy, for a rogue's combo-point setup) never does.
+  local POWER_TOKEN = { [0] = "MANA", [1] = "RAGE", [2] = "FOCUS", [3] = "ENERGY", [4] = "COMBO_POINTS",
+    [5] = "RUNES", [6] = "RUNIC_POWER", [7] = "SOUL_SHARDS", [8] = "LUNAR_POWER", [9] = "HOLY_POWER",
+    [11] = "MAELSTROM", [12] = "CHI", [13] = "INSANITY", [16] = "ARCANE_CHARGES", [17] = "FURY",
+    [18] = "PAIN", [19] = "ESSENCE" }
+  local watchPw = {}
+  local function addPw(v)
+    local pw = v and v.power
+    local tok = pw and POWER_TOKEN[tonumber(pw.type)]
+    if tok then watchPw[tok] = true end
+  end
+  if db then for _, cfg in pairs(db) do if cfg.enabled ~= false then addPw(cfg.visibility) end end end
+  if groups then for _, g in pairs(groups) do addPw(g.visibility) end end
+  self._powerWatch = watchPw
+  if not self._powerFrame then
+    local pf = CreateFrame("Frame")
+    pf:RegisterUnitEvent("UNIT_POWER_FREQUENT", "player")
+    pf:RegisterUnitEvent("UNIT_MAXPOWER", "player")
+    pf:SetScript("OnEvent", function(_, _, _, token)
+      if token and CDM._powerWatch and CDM._powerWatch[token] then CDM:RefreshDisplays() end
+    end)
+    self._powerFrame = pf
+  end
   if not self._visFrame then
     local fr = CreateFrame("Frame"); fr._acc = 0
     fr:SetScript("OnUpdate", function(self2, dt)
@@ -1963,6 +2073,7 @@ function CDM:Init()
     elseif event == "PLAYER_REGEN_ENABLED" then
       CDM:SeedAvailability()
       CDM:FeedAllChargeShadows()
+      CDM.readyAgain = nil   -- Ready Again resets when you leave combat
       CDM:RefreshDisplays()
     elseif event == "UNIT_AURA" then
       -- Registered while a bar exists OR a buff is bound (UpdateBarEvents). A DoT refresh/
@@ -2175,7 +2286,7 @@ function CDM:Trace()
       print(("%s[%s] %s (item %s) equipped=%s route=%s onCooldown=%s => %s"):format(indent, tostring(node.state),
         tostring(node.name), tostring(node.itemID), tostring(eq), tostring(self.itemSrc[node.itemID]),
         tostring(self.itemLast[node.itemID]), tostring(self:EvalCondition(node))))
-    elseif node.k == "tcast" or node.k == "blow" then
+    elseif node.k == "tcast" or node.k == "blow" or node.k == "charged" then
       print(("%s[%s] %s => %s"):format(indent, tostring(node.state), tostring(node.name), tostring(self:EvalCondition(node))))
     else
       local sid = node.spellID

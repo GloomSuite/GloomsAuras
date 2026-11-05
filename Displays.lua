@@ -62,7 +62,24 @@ local function StateOn(state)
   if state == "stealth" then return IsStealthed() and true or false end
   return false
 end
+-- ★ CHARGED COLOR (2026-10-08, the owner): while the aura's combo point is
+-- charged its art takes `cfg.charged.color` — over Color Change and Recolor.
+-- `cfg.charged.point`: a number, or "auto" = the N of its own Player Power
+-- "Combo Points at least / exactly N" load condition (so a multi-select can set
+-- it on every point at once).
+function D:ChargedPointOf(cfg)
+  local ch = cfg and cfg.charged; if not ch then return nil end
+  if type(ch.point) == "number" then return ch.point end
+  local pw = cfg.visibility and cfg.visibility.power
+  if pw and pw.type == 4 and (pw.op == nil or pw.op == "ge" or pw.op == "eq") then return tonumber(pw.value) end
+  return nil
+end
 function D:TintFor(cfg)
+  local ch = cfg and cfg.charged
+  if ch and ch.color and GA.CDM and GA.CDM.PointCharged then
+    local n = self:ChargedPointOf(cfg)
+    if n and GA.CDM:PointCharged(n) then return ch.color end
+  end
   local cc = cfg and cfg.colorChange
   if cc and cc.color then
     if cc.state then
@@ -80,7 +97,7 @@ function D:RefreshTints()
   local db = DB(); if not db then return end
   for id, f in pairs(self.frames) do
     local cfg = db[id]
-    if cfg and cfg.colorChange and cfg.kind ~= "bar" and f.tex then
+    if cfg and (cfg.colorChange or cfg.charged) and cfg.kind ~= "bar" and f.tex then
       local c = self:TintFor(cfg)
       if c then f.tex:SetVertexColor(c[1] or 1, c[2] or 1, c[3] or 1) else f.tex:SetVertexColor(1, 1, 1) end
     end
@@ -91,6 +108,7 @@ do
   tintEv:RegisterUnitEvent("UNIT_POWER_UPDATE", "player")
   tintEv:RegisterUnitEvent("UNIT_POWER_FREQUENT", "player")
   tintEv:RegisterUnitEvent("UNIT_MAXPOWER", "player")
+  tintEv:RegisterUnitEvent("UNIT_POWER_POINT_CHARGE", "player")   -- Charged Color
   tintEv:RegisterEvent("PLAYER_ENTERING_WORLD")
   -- the states: combat edges (InCombatLockdown can still read the old state
   -- inside these, so the edge itself is remembered), target, casting, stealth
@@ -274,8 +292,8 @@ end
 -- pieces in concert within the group"). Shift-click in the list builds
 -- `D.multi` (display ids); with two or more, lime brackets round all of them
 -- move them TOGETHER — each by the same screen distance, in its own group's
--- offset units (÷ its group's scale). The settings dim meanwhile (the owner:
--- "fine if it disables settings"). Moved from the saved numbers, like the group.
+-- offset units (÷ its group's scale). Settings stay live and edit all (Pages.lua P.spread; the owner
+-- reversed "fine if it disables settings"). Moved from the saved numbers, like the group.
 local multiHandle
 local function MultiIDs()
   local out, db = {}, DB()
@@ -342,6 +360,7 @@ function D:RefreshMultiHandle()
 end
 -- the list's multi-selection (nil / fewer than 2 = none)
 function D:SetMulti(ids)
+  if not self.multi then self.multiShow = true end   -- a new set shows; a changed one keeps its eye
   self.multi = (ids and #ids >= 2) and ids or nil
   self:ApplyInteractivity()
   self:RefreshForced()
@@ -636,15 +655,43 @@ function D:ApplyEffects(displayID)
   -- later — so an unguarded re-push storm leaves an animation flickering or
   -- invisible rather than merely costing time. GB never met this because its
   -- Reconcile skips when the winning trigger is unchanged; this is GA's equivalent.
-  local sig = EffectsKey(want, key, merged or {})
-  if f.__fxKey == sig then return end
-  f.__fxKey = sig
+  -- INTENSITY: N copies of the module in step, on N stacked hosts (the frame
+  -- itself + echo frames the frame's own size) — each instance is per host
+  local n = math.max(1, math.min(4, math.floor(tonumber(fx and fx.intensity) or 1)))
+  local sig = EffectsKey(want, key, merged or {}) .. "|x" .. n
+  -- ★ SIZE (2026-10-08, the owner: resizing an Effects Only slant with Burst
+  -- Ring didn't follow until hidden and shown). Every module measures the host
+  -- ONCE, in Start — so a new size restarts it, but only once the size has
+  -- settled (0.15 s), or dragging Width would re-prime it on every step.
+  local fw, fh = f:GetSize()
+  local size = math.floor((fw or 0) + 0.5) .. "x" .. math.floor((fh or 0) + 0.5)
+  if f.__fxKey == sig then
+    if not want or f.__fxSize == size then return end
+    f.__fxSize = size
+    f.__fxGen = (f.__fxGen or 0) + 1
+    local gen = f.__fxGen
+    C_Timer.After(0.15, function()
+      if f.__fxGen ~= gen then return end
+      f.__fxKey = nil
+      D:ApplyEffects(displayID)
+    end)
+    return
+  end
+  f.__fxKey, f.__fxSize = sig, size
 
+  f.__fxEcho = f.__fxEcho or {}
+  for i = #f.__fxEcho + 1, n - 1 do
+    local echo = CreateFrame("Frame", nil, f); echo:SetAllPoints(f)
+    f.__fxEcho[i] = echo
+  end
+  local hosts = { f }
+  for _, echo in ipairs(f.__fxEcho) do
+    echo:SetFrameLevel(f:GetFrameLevel())   -- each copy layers exactly as the original
+    hosts[#hosts + 1] = echo
+  end
   E:Each(function(mod)
-    if want == mod.id then
-      mod:Start(f, f, key, merged)
-    else
-      mod:Stop(f)
+    for i, h in ipairs(hosts) do
+      if want == mod.id and i <= n then mod:Start(h, f, key, merged) else mod:Stop(h) end
     end
   end)
 end
@@ -840,6 +887,7 @@ function D:ApplyBarBackground(f, cfg, id)
     -- borrows the normal backdrop's — the tint changes, the weight does not.
     bgc = { pan[1] or 0, pan[2] or 0, pan[3] or 0, pan[4] or bgc[4] or 0.55 }
   end
+  if b.textOnly and b.mode == "stacks" then bgc = { 0, 0, 0, 0 } end   -- Text Only: no backdrop
   bar.bg:SetColorTexture(bgc[1] or 0, bgc[2] or 0, bgc[3] or 0, bgc[4] or 0.55)
 end
 
@@ -884,7 +932,9 @@ function D:ApplyBarStyle(f, cfg, id)
   if bar.SetRotatesTexture then bar:SetRotatesTexture(b.rotateTexture and true or false) end
   local oc = GA.COLOR and GA.COLOR.orange
   local col = b.color or (oc and { oc.r, oc.g, oc.b }) or { 1, 0.47, 0.16 }
-  bar:SetStatusBarColor(col[1] or 1, col[2] or 1, col[3] or 1)
+  -- Stack Count (Text Only): the fill draws nothing — the number is the aura
+  local textOnly = b.textOnly and b.mode == "stacks"
+  bar:SetStatusBarColor(col[1] or 1, col[2] or 1, col[3] or 1, textOnly and 0 or 1)
   self:ApplyBarBackground(f, cfg, id)
   -- Initial state depends on mode: a stacks bar spans 0..max and starts empty; a duration bar
   -- spans 0..1 and starts full — both are corrected by the first CDM:UpdateBar feed.
@@ -922,6 +972,7 @@ function D:ApplyBarStyle(f, cfg, id)
   end
   bar:SetAlpha(cfg.alpha or 1)
   bar:Show()
+  self:PreviewStacks(f, cfg)   -- the panel open and no real stacks: a sample to style
 end
 
 -- Feed the source aura's live duration OBJECT so the bar drains itself (no polling). Resolved
@@ -937,6 +988,36 @@ end
 -- The stack count on a DURATION bar (cfg.bar.showStacks). Kept separate from the fill: the
 -- engine owns the drain, we own the number. The value arrives as a SECRET on 12.1, so it goes
 -- straight into SetText — which renders a secret — and is never compared or formatted.
+-- ★ PREVIEW STACKS (2026-10-08, the owner: no Shadow Techniques stacks out of
+-- combat, so the stack text couldn't be styled). While the panel is open and
+-- there's no real count, a bar shows a SAMPLE: the stack text reads a number
+-- and a Stack Count bar fills to it (about 60% of Max Stacks). A real count,
+-- when there is one, always wins.
+function D:PreviewStacks(f, cfg)
+  if not (f and f.bar and cfg) then return end
+  local b = cfg.bar or {}
+  if not self.forced then
+    -- the panel closed: a sample never stays on screen in play
+    if f.bar.__sample then
+      f.bar.__sample = nil
+      if b.mode == "stacks" then f.bar:SetValue(0) end
+      -- ⚠ a readout that was never shown has no font, and SetText then raises
+      -- ("Font not set" — the owner's BugSack, closing the panel on Garrote)
+      local vt = f.bar.valueText
+      if vt and vt:GetFont() then vt:SetText("") end
+    end
+    return
+  end
+  local vt = f.bar.valueText
+  local showText = vt and b.showStacks and vt:GetFont()
+  if b.mode ~= "stacks" and not showText then return end   -- nothing here to sample
+  if GA.CDM and GA.CDM.BarStackValue and GA.CDM:BarStackValue(cfg) ~= nil then return end
+  f.bar.__sample = true
+  local n = math.max(1, math.ceil((b.max or 10) * 0.6))
+  if b.mode == "stacks" then f.bar:SetMinMaxValues(0, b.max or 10); f.bar:SetValue(n) end
+  if showText then vt:SetText(tostring(n)) end
+end
+
 function D:UpdateStackText(spellID, cfg)
   local f = self.frames[spellID]; if not f or not f.bar then return end
   local b = cfg.bar or {}
@@ -944,7 +1025,7 @@ function D:UpdateStackText(spellID, cfg)
   if not vt or not b.showStacks then return end
   if not (GA.CDM and GA.CDM.BarStackValue) then return end
   local v = GA.CDM:BarStackValue(cfg)
-  if v == nil then vt:SetText("") return end
+  if v == nil then vt:SetText(""); self:PreviewStacks(f, cfg); return end
   pcall(function()
     if issecret(v) then vt:SetText(v)          -- SetText accepts the secret directly
     else vt:SetText(tostring(v)) end
@@ -962,7 +1043,8 @@ function D:UpdateBar(spellID)
     -- We never operate on it; both sinks are AllowedWhenTainted so they render a secret in combat.
     if not GA.CDM.BarStackValue then return end
     local v = GA.CDM:BarStackValue(cfg)
-    if v == nil then return end
+    if v == nil then self:PreviewStacks(f, cfg); return end
+    f.bar.__sample = nil
     pcall(function()
       f.bar:SetMinMaxValues(0, b.max or 10)
       f.bar:SetValue(v)
@@ -1318,12 +1400,26 @@ end
 -- unaffected, and cfg.preview has nothing to do with whether the aura runs.
 function D:EyeOn(id)
   if id == nil then return false end
-  if self.multi then for _, m in ipairs(self.multi) do if m == id then return true end end end
+  if self.multi then for _, m in ipairs(self.multi) do if m == id then return self.multiShow ~= false end end end
   if id == self.selectedID then return self.selShow ~= false end
   local db = DB(); local cfg = db and db[id]
   return (cfg and cfg.preview) and true or false
 end
 function D:ToggleEye(id)
+  -- ★ one of a multi-selection (the owner, 2026-10-08): the eye switches the
+  -- WHOLE set, and each member keeps that as its saved eye afterwards
+  local inMulti
+  for _, m in ipairs(self.multi or {}) do if m == id then inMulti = true; break end end
+  if inMulti then
+    local on = not self:EyeOn(id)
+    self.multiShow = on
+    local db = DB()
+    for _, m in ipairs(self.multi) do if db and db[m] then db[m].preview = on or nil end end
+    if self.selectedID then self.selShow = on end
+    self:RefreshForced()
+    self:RefreshMultiHandle()
+    return
+  end
   if id == self.selectedID then self.selShow = not self:EyeOn(id)
   else
     local db = DB(); local cfg = db and db[id]; if not cfg then return end
@@ -1337,7 +1433,7 @@ function D:RefreshForced()
   local db = DB(); if not db then return end
   for id in pairs(db) do
     if self:EyeOn(id) then
-      local f = self:GetOrCreate(id); if f then f:SetAlpha(1); f:Show() end
+      local f = self:GetOrCreate(id); if f then f:SetAlpha(1); f:Show(); self:PreviewStacks(f, db[id]) end
     else
       local f = self.frames[id]; if f then f:Hide() end
     end

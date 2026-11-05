@@ -131,11 +131,12 @@ local STRATA_MODES = {
 -- fonts lack ▼/▶ → tofu boxes). GA's own Media/triangle.png is no longer drawn.
 local CARET_DOWN = UI.CARET_DOWN   -- rotate a right-pointing source to point down (expanded)
 
-local STATE_ORDER = { "buff_active", "buff_inactive", "cd_ready", "cd_castable", "cd_oncd", "charges_max", "charges_notmax" }
+local STATE_ORDER = { "buff_active", "buff_inactive", "cd_ready", "cd_readyagain", "cd_castable", "cd_oncd", "charges_max", "charges_notmax" }
 local STATE_LABEL = {
   buff_active    = "buff is active",
   buff_inactive  = "buff is NOT active",
   cd_ready       = "cooldown is ready",
+  cd_readyagain  = "ready again (after use this fight)",
   cd_castable    = "castable right now",
   cd_oncd        = "cooldown is NOT ready",
   charges_max    = "at max charges",
@@ -152,10 +153,14 @@ local TCAST_LABEL = {
 local BLOW_MINUTES = { 5, 10, 15, 20, 30 }
 local function StateLabel(state, k)
   if TCAST_LABEL[state] then return TCAST_LABEL[state] end
+  local soon = type(state) == "string" and state:match("^cd_soon(%d+)$")
+  if soon then return "ready in " .. soon .. " sec (timed from use)" end
+  local chg = type(state) == "string" and state:match("^chg(%d)$")
+  if chg then return "combo point " .. chg .. " is charged" end
   local bm = type(state) == "string" and state:match("^blow(%d+)$")
   if bm then return "missing or under " .. bm .. " min (out of combat)" end
   if state == "item_ready" then return "ready (trinket)" elseif state == "item_oncd" then return "on cooldown (trinket)" end
-  if state == "cd_ready" or state == "cd_castable" or state == "cd_oncd"
+  if state == "cd_ready" or state == "cd_readyagain" or state == "cd_castable" or state == "cd_oncd"
      or state == "charges_max" or state == "charges_notmax" then return STATE_LABEL[state] or "?" end
   local active = (state == "buff_active")
   if k == "proc" then
@@ -170,6 +175,10 @@ end
 -- Trigger state PILL wording (redesign): a bold main part + a regular "(suffix)".
 -- e.g. buff_active+debuff → "ACTIVE on Target" , " (Debuff)".
 local function TrigPill(state, k)
+  local soon = type(state) == "string" and state:match("^cd_soon(%d+)$")
+  if soon then return "READY IN " .. soon .. " SEC", " (timed from use)" end
+  local chg = type(state) == "string" and state:match("^chg(%d)$")
+  if chg then return "Point " .. chg .. " CHARGED", " (Combo Points)" end
   if state == "tcast_any" then return "Casting anything", ""
   elseif state == "tcast_kick" then return "Casting something interruptible", ""
   elseif state == "tcast_nokick" then return "Casting something NOT interruptible", "" end
@@ -177,6 +186,7 @@ local function TrigPill(state, k)
   if bm then return "Missing or under " .. bm .. " min", " (out of combat)" end
   if state == "item_ready" then return "Ready", " (Trinket)" elseif state == "item_oncd" then return "On cooldown", " (Trinket)" end
   if state == "cd_ready" then return "READY", " (Cooldown)"
+  elseif state == "cd_readyagain" then return "READY AGAIN", " (after use)"
   elseif state == "cd_castable" then return "CASTABLE", " (Cooldown)"
   elseif state == "cd_oncd" then return "ON COOLDOWN", " (Cooldown)"
   elseif state == "charges_max" then return "AT MAX", " (Charges)"
@@ -258,6 +268,7 @@ end
 
 local function ReapplySelected()
   if GA.Displays and selectedID then GA.Displays:ApplyConfig(selectedID) end
+  if C.OnReapply then C.OnReapply() end   -- a multi-select copies the change to the rest
 end
 
 -- --------------------------------------------------------------------------
@@ -841,11 +852,12 @@ end
 -- --------------------------------------------------------------------------
 -- Selection
 -- --------------------------------------------------------------------------
-local function SetSelected(sid)
+local function SetSelected(sid, keepMulti)
   selectedID = sid
   C.groupSel = nil                           -- an aura and a group are never both selected
   if GA.Displays and GA.Displays.SetEditGroup then GA.Displays:SetEditGroup(nil) end
-  if GA.Displays and GA.Displays.multi then GA.Displays.multi = nil; GA.Displays:RefreshMultiHandle() end   -- a selection ends a multi-select
+  -- keepMulti: the multi-select's PRIMARY changing (Pages.lua's P.setMulti)
+  if not keepMulti and GA.Displays and GA.Displays.multi then GA.Displays.multi = nil; GA.Displays:RefreshMultiHandle() end   -- a selection ends a multi-select
   if C._trig then C._trig.editID = sid end   -- inline Trigger section edits the selected aura
   if GA.Displays then GA.Displays:SetSelectedDisplay(sid) end  -- only this one is draggable
   local cfg = Cfg()
@@ -1632,6 +1644,14 @@ function C:TrigAddItem(itemID, ti)
   table.insert(list, { k = "item", state = "item_ready", itemID = itemID, useSpell = useSpell, name = name })
   self:TrigRebind()
 end
+-- A CHARGED COMBO POINT condition (CDM:PointCharged): point N is charged —
+-- no spell, so Discover never tries to bind it.
+function C:TrigAddCharged(n, ti)
+  local t = self:TrigTree(); if not t then return end
+  local list = (ti and t.conditions[ti] and t.conditions[ti].conditions) or t.conditions
+  table.insert(list, { k = "charged", state = "chg" .. (n or 1), name = "Charged Combo Point" })
+  self:TrigRebind()
+end
 -- The equipped trinkets, for the menu: { value = itemID, label = "Top: name" }.
 function C:EquippedTrinkets()
   local out = {}
@@ -1668,15 +1688,20 @@ function C:TrigStates(ti, ci)
   local s = leaf.state
   if leaf.k == "tcast" then return { "tcast_any", "tcast_kick", "tcast_nokick" } end
   if leaf.k == "item" then return { "item_ready", "item_oncd" } end
+  if leaf.k == "charged" then return { "chg1", "chg2", "chg3", "chg4", "chg5", "chg6", "chg7" } end
   if leaf.k == "blow" then
     local out = {}
     for _, m in ipairs(BLOW_MINUTES) do out[#out + 1] = "blow" .. m end
     return out
   end
-  if s == "cd_ready" or s == "cd_castable" or s == "cd_oncd" or s == "charges_max" or s == "charges_notmax" then
+  if s == "cd_ready" or s == "cd_readyagain" or s == "cd_castable" or s == "cd_oncd" or s == "charges_max" or s == "charges_notmax"
+     or s:match("^cd_soon%d+$") then
     local isCharge = GA.CDM and GA.CDM.isCharge and GA.CDM.isCharge[leaf.spellID]
-    return isCharge and { "cd_ready", "cd_castable", "cd_oncd", "charges_max", "charges_notmax" }
-                     or { "cd_ready", "cd_castable", "cd_oncd" }
+    if isCharge then return { "cd_ready", "cd_readyagain", "cd_castable", "cd_oncd", "charges_max", "charges_notmax" } end
+    local out = { "cd_ready", "cd_readyagain", "cd_castable", "cd_oncd" }
+    -- "ready in N sec", timed from use: ONE choice; N is typed in the box on the line (Pages.lua)
+    out[#out + 1] = s:match("^cd_soon%d+$") and s or "cd_soon10"
+    return out
   end
   return { "buff_active", "buff_inactive" }
 end
@@ -1697,13 +1722,14 @@ function C:TrigCycleState(ti, ci)
   --    ★ CASTABLE is not a synonym for READY: ready mirrors the cooldown alone,
   --    castable also requires the game to say the spell can be pressed (cost,
   --    target requirements, and the procs that waive them). See EvalCondition.
-  local cdStates = (leaf.state == "cd_ready" or leaf.state == "cd_castable" or leaf.state == "cd_oncd"
+  local cdStates = (leaf.state == "cd_ready" or leaf.state == "cd_readyagain" or leaf.state == "cd_castable" or leaf.state == "cd_oncd"
+                    or leaf.state:match("^cd_soon%d+$")
                     or leaf.state == "charges_max" or leaf.state == "charges_notmax")
   local list
   if cdStates then
     local isCharge = GA.CDM and GA.CDM.isCharge and GA.CDM.isCharge[leaf.spellID]
-    list = isCharge and { "cd_ready", "cd_castable", "cd_oncd", "charges_max", "charges_notmax" }
-                     or { "cd_ready", "cd_castable", "cd_oncd" }
+    list = isCharge and { "cd_ready", "cd_readyagain", "cd_castable", "cd_oncd", "charges_max", "charges_notmax" }
+                     or { "cd_ready", "cd_readyagain", "cd_castable", "cd_oncd" }
   else
     list = { "buff_active", "buff_inactive" }
   end

@@ -538,7 +538,9 @@ local function SlashHandler(input)
     msg("known-spell trace (display · spell · known · playerSpell · knownOrOverride · override · bound · avail):")
     local rows = {}
     for id, cfg in pairs(db) do
-      local sid = CDM and CDM.DisplaySpellID and CDM:DisplaySpellID(cfg)
+      -- the TRIGGER's spell first: an old aura's own cfg.spellID can be a leftover
+      -- its trigger no longer uses (Stealth Active carried 257621, 2026-10-08)
+      local sid = CDM and CDM.DisplaySpellID and ((cfg.trigger and CDM:DisplaySpellID({ trigger = cfg.trigger })) or CDM:DisplaySpellID(cfg))
       if sid then
         local nm = C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(sid) or "?"
         local known = IsSpellKnown and IsSpellKnown(sid)
