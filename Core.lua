@@ -110,12 +110,23 @@ local function InitGlobal()
 end
 
 -- Per-character key used as the default profile name ("Name - Realm").
+-- The name comes from the Hub: in WoW Forever UnitName is the FIRST name only,
+-- shared by alts, so the Hub appends the character's own ID there (retail: UnitName).
 local function CharKey()
-  local name  = UnitName("player") or "Unknown"
+  local name  = (GloomsHub and GloomsHub.CharacterKeyName and GloomsHub.CharacterKeyName()) or UnitName("player") or "Unknown"
   local realm = GetRealmName() or "Unknown"
   return name .. " - " .. realm
 end
 GA.CharKey = CharKey
+-- A binding saved under the pre-2026-11-16 key (first name only, Forever):
+-- adopt it once, for the first character to log in, then drop the old key.
+local function AdoptLegacyBinding(g)
+  local old = ((GloomsHub and GloomsHub.LegacyCharacterKeyName and GloomsHub.LegacyCharacterKeyName()) or UnitName("player") or "Unknown") .. " - " .. (GetRealmName() or "Unknown")
+  local key = CharKey()
+  if g.profileKeys and old ~= key and g.profileKeys[key] == nil and g.profileKeys[old] ~= nil then
+    g.profileKeys[key] = g.profileKeys[old]; g.profileKeys[old] = nil
+  end
+end
 
 local function NewProfile()
   return { displays = {}, groups = {}, seq = 0, groupSeq = 0 }
@@ -175,6 +186,7 @@ local function SetupActiveProfile()
       end
     end
   end
+  AdoptLegacyBinding(g)
   local pkey = g.profileKeys[charKey] or charKey   -- default: this char's own profile
   if not g.profiles[pkey] then g.profiles[pkey] = NewProfile() end
   g.profileKeys[charKey] = pkey

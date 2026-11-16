@@ -2015,6 +2015,23 @@ function CDM:HookViewers()
         if GA.db and GA.db.hideBlizzardCDM and not EditModeActive() then self2:SetAlpha(0) end
       end)
     end
+    -- ★ WoW Forever (2026-11-16, the owner): the viewers came BACK after every
+    -- /reload with the hide on, until the switch was flipped off and on. Something
+    -- there restores their alpha without going through UpdateSystemSettingOpacity.
+    -- Trap the write itself: any SetAlpha on a hidden viewer outside Edit Mode is
+    -- answered with 0 (guarded, so our own answer does not re-enter). Same code on
+    -- both games; in retail the opacity hook above already wins, so this is idle.
+    if v and not v.__gaAlphaHooked then
+      v.__gaAlphaHooked = true
+      hooksecurefunc(v, "SetAlpha", function(self2, a)
+        if self2.__gaReassert or a == 0 then return end
+        if GA.db and GA.db.hideBlizzardCDM and not EditModeActive() then
+          self2.__gaReassert = true
+          self2:SetAlpha(0)
+          self2.__gaReassert = nil
+        end
+      end)
+    end
   end
 end
 
@@ -2087,6 +2104,12 @@ function CDM:Init()
     else
       CDM:HookViewers()
       CDM:Discover()
+      if event == "PLAYER_ENTERING_WORLD" then
+        -- the hide, re-asserted on arrival and once the login settle is over
+        -- (Forever restores the viewers' alpha some time after our init)
+        CDM:ApplyBlizzardHide()
+        C_Timer.After(2, function() CDM:ApplyBlizzardHide() end)
+      end
     end
   end)
   self._events = ev

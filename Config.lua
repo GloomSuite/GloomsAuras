@@ -1928,7 +1928,9 @@ local COL2_X = COL_W + 20                       -- second column x
 -- only caller, so it moved out here rather than dying with the drawer.)
 local function PlayerSpecs()
   local out = {}
-  local n = (GetNumSpecializations and GetNumSpecializations()) or 0
+  -- WoW Forever answers GetNumSpecializations but has no GetSpecializationInfo
+  -- (2026-11-16, the owner's BugSack): no lookup, no specs.
+  local n = (GetNumSpecializations and GetSpecializationInfo and GetNumSpecializations()) or 0
   for i = 1, n do
     local id, name, _, icon = GetSpecializationInfo(i)
     if id then out[#out + 1] = { id = id, name = name, icon = icon } end
