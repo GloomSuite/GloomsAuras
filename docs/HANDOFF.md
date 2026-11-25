@@ -1,4 +1,16 @@
-# GloomsAuras — Session Handoff  (last updated 2026-11-04)
+# GloomsAuras — Session Handoff  (last updated 2026-11-25)
+
+> ## ▶▶▶ 2026-11-16 → 20 — WOW FOREVER (dropped 2026-11-25), CHARACTER KEYS
+> Suite-wide: Hub ARCHIVE ("WoW Forever support"), FINDINGS §39–§40, CONTRACTS §9. Auras detail only:
+> - **`PlayerSpecs()`** (Config.lua) returns nothing where `GetSpecializationInfo` is missing (Forever) — the `/ga` crash.
+> - **Hide Blizzard CDM** (`CDM:HookViewers`): a `SetAlpha` hook re-sets 0 on a hidden viewer, and `ApplyBlizzardHide`
+>   runs again on `PLAYER_ENTERING_WORLD` (+2 s) — the viewers came back after every `/reload` in Forever.
+> - **Character keys** (Core.lua): `CharKey` = Hub `CharacterKeyName .. " - " .. CharacterRealm`; `AdoptLegacyBinding`
+>   is the Hub's `AdoptCharacterBinding`; `SetupActiveProfile` sets a bound character up AT ONCE and only waits (≤ 10 s,
+>   a seeded scratch profile in `GA.db` meanwhile, then `RefreshForProfile`) for an UNBOUND one, whose new profile is
+>   named by `GloomsHub.DefaultProfileName` (retail "Name - Realm" as before; Forever "First Last"); an auto-named
+>   profile renames itself through `GA:RenameActiveProfile` once `GloomsHub.FullNameFor` says so; the empty junk profile
+>   of 2026-11-20 is deleted at login. ✓ in Forever.
 
 > ## ▶▶▶ 2026-10-06 → 15 — MULTI-EDIT, CHARGED POINTS, TIMED COOLDOWNS, INTENSITY
 > - **Multi-select edits all** (`P.spread`, Pages.lua): the primary (`Sel()`, last clicked) is the real Cfg(); after any

@@ -114,17 +114,16 @@ end
 -- shared by alts, so the Hub appends the character's own ID there (retail: UnitName).
 local function CharKey()
   local name  = (GloomsHub and GloomsHub.CharacterKeyName and GloomsHub.CharacterKeyName()) or UnitName("player") or "Unknown"
-  local realm = GetRealmName() or "Unknown"
+  local realm = (GloomsHub and GloomsHub.CharacterRealm and GloomsHub.CharacterRealm()) or GetRealmName() or "Unknown"
   return name .. " - " .. realm
 end
 GA.CharKey = CharKey
 -- A binding saved under the pre-2026-11-16 key (first name only, Forever):
 -- adopt it once, for the first character to log in, then drop the old key.
+-- (and the 2026-11-20 spellings: the realm name, or none — the Hub's helper)
 local function AdoptLegacyBinding(g)
-  local old = ((GloomsHub and GloomsHub.LegacyCharacterKeyName and GloomsHub.LegacyCharacterKeyName()) or UnitName("player") or "Unknown") .. " - " .. (GetRealmName() or "Unknown")
-  local key = CharKey()
-  if g.profileKeys and old ~= key and g.profileKeys[key] == nil and g.profileKeys[old] ~= nil then
-    g.profileKeys[key] = g.profileKeys[old]; g.profileKeys[old] = nil
+  if GloomsHub and GloomsHub.AdoptCharacterBinding and g.profileKeys then
+    GloomsHub.AdoptCharacterBinding(g.profileKeys, " - ", function(p) return g.profiles and g.profiles[p] ~= nil end)
   end
 end
 
@@ -167,6 +166,21 @@ end
 -- PLAYER_LOGIN (character name guaranteed available); migrates schema 1 → 2 first.
 local function SetupActiveProfile()
   local g = GA.global
+  -- ★ A character that already has a profile is set up RIGHT NOW. Only a
+  -- brand-new one waits (Hub: WhenCharacterKeyReady, at most 10 s) — for the
+  -- full "First Last" its new profile is named after, which Forever hands out a
+  -- moment after PLAYER_LOGIN. A scratch profile stands in meanwhile (GA.db is
+  -- never nil) and the engine is refreshed the moment the real one is made.
+  if g.profileKeys then AdoptLegacyBinding(g) end
+  local hasProfile = g.profileKeys and g.profiles and g.profileKeys[CharKey()] ~= nil and g.profiles[g.profileKeys[CharKey()]] ~= nil
+  if not hasProfile and GloomsHub and GloomsHub.CharacterKeyReady and not GloomsHub.CharacterKeyReady() then
+    if not GA.db then
+      local scratch = NewProfile(); SeedProfile(scratch)
+      GA.db, GA.activeProfile = scratch, nil
+      GloomsHub.WhenCharacterKeyReady(function() SetupActiveProfile(); GA.RefreshForProfile() end)
+    end
+    return
+  end
   local charKey = CharKey()
   if (g.schema or 1) < 2 and g.displays then
     MigrateToProfiles(g, charKey)   -- flat → profiles, one time
@@ -187,7 +201,13 @@ local function SetupActiveProfile()
     end
   end
   AdoptLegacyBinding(g)
-  local pkey = g.profileKeys[charKey] or charKey   -- default: this char's own profile
+  do   -- the empty profile the empty-realm key of 2026-11-20 was given
+    local junk = ((GloomsHub and GloomsHub.CharacterKeyName and GloomsHub.CharacterKeyName()) or "?") .. " - "
+    local jp = g.profiles[junk]
+    if jp and next(jp.displays or {}) == nil and next(jp.groups or {}) == nil then g.profiles[junk] = nil end
+  end
+  -- default: this char's own profile ("Name - Realm"; Forever: the full name)
+  local pkey = g.profileKeys[charKey] or (GloomsHub and GloomsHub.DefaultProfileName and GloomsHub.DefaultProfileName()) or charKey
   if not g.profiles[pkey] then g.profiles[pkey] = NewProfile() end
   g.profileKeys[charKey] = pkey
   local prof = g.profiles[pkey]
@@ -203,6 +223,14 @@ local function SetupActiveProfile()
   end
   GA.activeProfile = pkey
   GA.db = prof
+  -- Forever: an auto-named profile takes the character's full name once that
+  -- is known (the Hub's FullNameFor says which names qualify).
+  if GloomsHub and GloomsHub.FullNameFor and GloomsHub.WhenCharacterKeyReady then
+    GloomsHub.WhenCharacterKeyReady(function()
+      local full = GloomsHub.FullNameFor(GA.activeProfile, function(n) return g.profiles[n] ~= nil end)
+      if full then GA:RenameActiveProfile(full) end
+    end)
+  end
 end
 GA.SetupActiveProfile = SetupActiveProfile
 

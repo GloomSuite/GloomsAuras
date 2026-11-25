@@ -51,7 +51,7 @@
 > Full rule + ownership table: `~/GloomsHub/CLAUDE.md`.
 
 Bespoke WoW addon: shows custom textures + sounds when specific buffs/cooldowns are
-active, tracked via the Blizzard **Cooldown Manager** (CDM). Target: **Midnight 12.1** (Interface `120100, 120105`), retail only. Sibling to GloomsBuildBarn (same author "Gloom").
+active, tracked via the Blizzard **Cooldown Manager** (CDM). Target: **Midnight 12.1** (Interface `120100, 120105`), retail. (The TOC also carries `16001`, WoW Forever — supported 2026-11, dropped by the owner 2026-11-25; the Hub's ARCHIVE has the record.) Sibling to GloomsBuildBarn (same author "Gloom").
 
 ## The one idea that matters
 Midnight makes combat aura data **secret** — tainted (addon) code throws if it does
